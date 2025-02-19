@@ -22,6 +22,13 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/klog/v2"
+
+	configprocessor "github.com/oam-dev/kubevela/pkg/builtin/config"
+	externalprocessor "github.com/oam-dev/kubevela/pkg/builtin/external"
+
+	"github.com/kubevela/pkg/cue/cuex"
+
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/kubevela/pkg/multicluster"
@@ -111,9 +118,25 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		return err
 	}
 
-	val := cuecontext.New().CompileString(strings.Join([]string{
+	val, err := cuex.CompileStringWithOptions(context.Background(), strings.Join([]string{
 		renderTemplate(abstractTemplate), paramFile, c,
 	}, "\n"))
+
+	config := val.LookupPath(value.FieldPath("config"))
+	if config.Exists() {
+		klog.Info("executing config task")
+		if val, err = configprocessor.Process(val); err != nil {
+			return errors.WithMessagef(err, "invalid process of workload %s", wd.name)
+		}
+	}
+
+	external := val.LookupPath(value.FieldPath("external"))
+	if external.Exists() {
+		klog.Info("executing external task")
+		if val, err = externalprocessor.Process(val); err != nil {
+			return errors.WithMessagef(err, "invalid process of workload %s", wd.name)
+		}
+	}
 
 	if err := val.Validate(); err != nil {
 		return errors.WithMessagef(err, "invalid cue template of workload %s after merge parameter and context", wd.name)
