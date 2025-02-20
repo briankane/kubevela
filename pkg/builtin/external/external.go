@@ -38,7 +38,9 @@ func (c Cmd) Run(meta *registry.Meta) (results interface{}, err error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return cuex.DefaultCompiler.Get().Resolve(ctx, val)
+	resolved, err := cuex.DefaultCompiler.Get().Resolve(ctx, val)
+	klog.Infof("Resolved: %s", resolved)
+	return resolved, err
 }
 
 func newCmd(_ cue.Value) (registry.Runner, error) {
@@ -53,9 +55,11 @@ func Process(val cue.Value) (cue.Value, error) {
 			break
 		}
 		externalObj := fields.Value()
+		klog.Infof("Processing with.. %s", externalObj)
 
 		_, _ = exec(externalObj)
 	}
+	klog.Infof("Processed: %s", val)
 	return val, nil
 }
 
