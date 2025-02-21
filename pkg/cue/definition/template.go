@@ -148,7 +148,7 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 
 	componentsAttr := val.LookupPath(value.FieldPath("components"))
 	if componentsAttr.Exists() {
-		val, err = processComponents(ctx, val, componentsAttr)
+		val, err = processComponents(ctx, wd.name, val, componentsAttr)
 		if err != nil {
 			return errors.WithMessagef(err, "invalid process of workload %s: %s", wd.name, err.Error())
 		}
@@ -566,44 +566,59 @@ func getClient() client.Client {
 	return k8sClient
 }
 
-func processComponents(ctx process.Context, val cue.Value, components cue.Value) (cue.Value, error) {
+func processComponents(ctx process.Context, name string, val cue.Value, components cue.Value) (cue.Value, error) {
 	klog.Infof("Loading referenced components..")
 	componentsList, _ := components.List()
-
+	val = val.FillPath(value.FieldPath("context", "composition"), struct{}{})
 	for {
 		if !componentsList.Next() {
 			break
 		}
-		component := componentsList.Value()
-		name, _ := component.LookupPath(value.FieldPath("type")).String()
-		typ, _ := component.LookupPath(value.FieldPath("type")).String()
-		// TODO need a means to merge the explicitly set parameters with the parent components defaults
-		compParams := component.LookupPath(value.FieldPath("params"))
-		compParams = compParams.FillPath(value.FieldPath("$type"), val.LookupPath(value.FieldPath("parameter", "$type")))
-		klog.Infof("Component Params Value: %s", compParams)
-		tmpl, _ := template.LoadTemplate(ctx.GetCtx(), getClient(), typ, types.TypeComponentDefinition, make(map[string]string))
-
-		var compParamFile = velaprocess.ParameterFieldName + ": {}"
-		if compParams.Exists() {
-			bt, err := json.Marshal(compParams)
-			klog.Infof("Component Params: %s", bt)
-			if err != nil {
-				return cue.Value{}, errors.WithMessagef(err, "marshal parameter of workload %s", name)
-			}
-			if string(bt) != "null" {
-				compParamFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
-			}
-		}
-
-		c, _ := ctx.BaseContextFile()
-		compVal, _ := cuex.CompileStringWithOptions(context.Background(), strings.Join([]string{
-			renderTemplate(tmpl.TemplateStr), compParamFile, c,
-		}, "\n"))
-
-		klog.Infof("Component Value: %s", compVal)
+		rootType, _ := val.LookupPath(value.FieldPath("parameter", "$type")).String()
+		ctx.PushData("compositionRoot", rootType)
+		ctx.PushData("compositionId", name)
+		compVal, _ := processComponent(ctx, componentsList.Value())
 		val = val.FillPath(value.FieldPath("output"), compVal.LookupPath(value.FieldPath("output")))
-
 		klog.Infof("Result: %s", val)
 	}
 	return val, nil
+}
+
+func processComponent(ctx process.Context, component cue.Value) (cue.Value, error) {
+	klog.Infof("Component: %s", component)
+	name, _ := component.LookupPath(value.FieldPath("name")).String()
+	typ, _ := component.LookupPath(value.FieldPath("type")).String()
+
+	compositionId := ctx.GetData("compositionId").(string)
+	klog.Infof("Current CompositionID: %s", compositionId)
+	newCompositionId := strings.Join([]string{compositionId, name}, ".")
+	klog.Infof("New CompositionID: %s", newCompositionId)
+
+	ctx.PushData("compositionId", newCompositionId)
+	// TODO need a means to merge the explicitly set parameters with the parent components defaults
+	klog.Infof("Name: %s, Type: %s", name, typ)
+	compParams := component.LookupPath(value.FieldPath("params"))
+	klog.Infof("Component Params Value: %s", compParams)
+	tmpl, _ := template.LoadTemplate(ctx.GetCtx(), getClient(), typ, types.TypeComponentDefinition, make(map[string]string))
+
+	var compParamFile = velaprocess.ParameterFieldName + ": {}"
+	if compParams.Exists() {
+		bt, err := json.Marshal(compParams)
+		klog.Infof("Component Params: %s", bt)
+		if err != nil {
+			return cue.Value{}, errors.WithMessagef(err, "marshal parameter of workload %s", name)
+		}
+		if string(bt) != "null" {
+			compParamFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
+		}
+	}
+
+	c, _ := ctx.BaseContextFile()
+	compVal, _ := cuex.CompileStringWithOptions(context.Background(), strings.Join([]string{
+		renderTemplate(tmpl.TemplateStr), compParamFile, c,
+	}, "\n"))
+
+	klog.Infof("Component Value: %s", compVal)
+
+	return compVal, nil
 }
