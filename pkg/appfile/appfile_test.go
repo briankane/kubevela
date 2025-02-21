@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 	"github.com/google/go-cmp/cmp"
@@ -137,7 +139,7 @@ variable "password" {
 
 		wl := &Component{
 			Name: "sample-db",
-			FullTemplate: &Template{
+			FullTemplate: &template.Template{
 				Terraform: &common.Terraform{
 					Configuration: configuration,
 					Type:          "hcl",
@@ -327,7 +329,7 @@ var _ = Describe("Test evalWorkloadWithContext", func() {
 		args := appArgs{
 			wl: &Component{
 				Name: compName,
-				FullTemplate: &Template{
+				FullTemplate: &template.Template{
 					Terraform: &common.Terraform{
 						Configuration: `
 module "rds" {
@@ -519,14 +521,14 @@ func TestGenerateTerraformConfigurationWorkload(t *testing.T) {
 		t.Run(tcName, func(t *testing.T) {
 
 			var (
-				template   *Template
+				tmpl       *template.Template
 				configSpec terraformapi.ConfigurationSpec
 			)
 			data, _ := json.Marshal(variable)
 			raw := &runtime.RawExtension{}
 			raw.Raw = data
 			if tc.args.hcl != "" {
-				template = &Template{
+				tmpl = &template.Template{
 					Terraform: &common.Terraform{
 						Configuration: tc.args.hcl,
 						Type:          "hcl",
@@ -539,7 +541,7 @@ func TestGenerateTerraformConfigurationWorkload(t *testing.T) {
 				configSpec.WriteConnectionSecretToReference = tc.args.writeConnectionSecretToRef
 			}
 			if tc.args.remote != "" {
-				template = &Template{
+				tmpl = &template.Template{
 					Terraform: &common.Terraform{
 						Configuration: tc.args.remote,
 						Type:          "remote",
@@ -552,7 +554,7 @@ func TestGenerateTerraformConfigurationWorkload(t *testing.T) {
 				configSpec.WriteConnectionSecretToReference = tc.args.writeConnectionSecretToRef
 			}
 			if tc.args.hcl == "" && tc.args.remote == "" {
-				template = &Template{
+				tmpl = &template.Template{
 					Terraform: &common.Terraform{},
 				}
 
@@ -575,7 +577,7 @@ func TestGenerateTerraformConfigurationWorkload(t *testing.T) {
 			}
 
 			if tc.args.providerRef != nil || tc.args.writeConnectionSecretToRef != nil {
-				template.ComponentDefinition = &v1beta1.ComponentDefinition{
+				tmpl.ComponentDefinition = &v1beta1.ComponentDefinition{
 					Spec: v1beta1.ComponentDefinitionSpec{
 						Schematic: &common.Schematic{
 							Terraform: tf,
@@ -596,7 +598,7 @@ func TestGenerateTerraformConfigurationWorkload(t *testing.T) {
 			}
 
 			wl := &Component{
-				FullTemplate: template,
+				FullTemplate: tmpl,
 				Name:         name,
 				Params:       tc.args.params,
 			}
@@ -760,7 +762,7 @@ var _ = Describe("Test use context.appLabels& context.appAnnotations in componen
 						"cmd":   []interface{}{"sleep", "1000"},
 					},
 					engine: definition.NewWorkloadAbstractEngine("myweb"),
-					FullTemplate: &Template{
+					FullTemplate: &template.Template{
 						TemplateStr: `
 						  output: {
 							apiVersion: "apps/v1"

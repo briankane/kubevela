@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -54,7 +56,7 @@ var expectedExceptApp = &Appfile{
 				"image": "busybox",
 				"cmd":   []interface{}{"sleep", "1000"},
 			},
-			FullTemplate: &Template{
+			FullTemplate: &template.Template{
 				TemplateStr: `
       output: {
         apiVersion: "apps/v1"
@@ -334,7 +336,7 @@ var _ = Describe("Test application parser", func() {
 					Params: map[string]interface{}{
 						"image": "nginx",
 					},
-					FullTemplate: &Template{
+					FullTemplate: &template.Template{
 						TemplateStr: `
       output: {
         apiVersion: "apps/v1"
@@ -519,7 +521,7 @@ func TestParser_parseTraits(t *testing.T) {
 		name                 string
 		args                 args
 		wantErr              assert.ErrorAssertionFunc
-		mockTemplateLoaderFn TemplateLoaderFn
+		mockTemplateLoaderFn template.TemplateLoaderFn
 		validateFunc         func(w *Component) bool
 	}{
 		{
@@ -559,7 +561,7 @@ func TestParser_parseTraits(t *testing.T) {
 					},
 				},
 			},
-			mockTemplateLoaderFn: func(context.Context, client.Client, string, types.CapType, map[string]string) (*Template, error) {
+			mockTemplateLoaderFn: func(context.Context, client.Client, string, types.CapType, map[string]string) (*template.Template, error) {
 				return nil, fmt.Errorf("unsupported key not found")
 			},
 			wantErr: assert.Error,
@@ -580,8 +582,8 @@ func TestParser_parseTraits(t *testing.T) {
 				workload: &Component{},
 			},
 			wantErr: assert.NoError,
-			mockTemplateLoaderFn: func(ctx context.Context, reader client.Client, s string, capType types.CapType, annotations map[string]string) (*Template, error) {
-				return &Template{
+			mockTemplateLoaderFn: func(ctx context.Context, reader client.Client, s string, capType types.CapType, annotations map[string]string) (*template.Template, error) {
+				return &template.Template{
 					TemplateStr:        "template",
 					CapabilityCategory: "network",
 					Health:             "true",

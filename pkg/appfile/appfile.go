@@ -35,6 +35,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	velaclient "github.com/kubevela/pkg/controller/client"
 	workflowv1alpha1 "github.com/kubevela/workflow/api/v1alpha1"
 	"github.com/kubevela/workflow/pkg/cue/model/value"
@@ -84,7 +86,7 @@ type Component struct {
 	CapabilityCategory types.CapabilityCategory
 	Params             map[string]interface{}
 	Traits             []*Trait
-	FullTemplate       *Template
+	FullTemplate       *template.Template
 	Ctx                process.Context
 	Patch              *cue.Value
 	engine             definition.AbstractEngine
@@ -141,7 +143,7 @@ type Trait struct {
 	// RequiredSecrets stores secret names which the trait needs from cloud resource component and its context
 	RequiredSecrets []process.RequiredSecrets
 
-	FullTemplate *Template
+	FullTemplate *template.Template
 	engine       definition.AbstractEngine
 }
 

@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,7 +37,7 @@ func TestIsNotFoundInAppFile(t *testing.T) {
 }
 
 func TestIsNotFoundInAppRevision(t *testing.T) {
-	require.True(t, IsNotFoundInAppRevision(fmt.Errorf("ComponentDefinition XXX not found in app revision")))
+	require.True(t, template.IsNotFoundInAppRevision(fmt.Errorf("ComponentDefinition XXX not found in app revision")))
 }
 
 func TestParseComponentFromRevisionAndClient(t *testing.T) {
@@ -43,7 +45,7 @@ func TestParseComponentFromRevisionAndClient(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(scheme).Build()
 	p := &Parser{
 		client:     cli,
-		tmplLoader: LoadTemplate,
+		tmplLoader: template.LoadTemplate,
 	}
 	comp := common.ApplicationComponent{
 		Name:       "test",

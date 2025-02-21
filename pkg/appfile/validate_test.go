@@ -20,6 +20,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
 )
@@ -52,7 +54,7 @@ var _ = Describe("Test validate CUE schematic Appfile", func() {
 					engine:             definition.NewTraitAbstractEngine("myingress"),
 				},
 			},
-			FullTemplate: &Template{
+			FullTemplate: &template.Template{
 				TemplateStr: tc.compDefTmpl,
 			},
 			engine: definition.NewWorkloadAbstractEngine("myweb"),

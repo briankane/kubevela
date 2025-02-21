@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/pkg/errors"
 	admissionv1 "k8s.io/api/admission/v1"
 	"k8s.io/klog/v2"
@@ -30,7 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	"github.com/oam-dev/kubevela/pkg/appfile"
 	controller "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	webhookutils "github.com/oam-dev/kubevela/pkg/webhook/utils"
@@ -148,7 +149,7 @@ func ValidateDefinitionReference(_ context.Context, td v1beta1.TraitDefinition) 
 	if len(td.Spec.Reference.Name) > 0 {
 		return nil
 	}
-	capability, err := appfile.ConvertTemplateJSON2Object(td.Name, td.Spec.Extension, td.Spec.Schematic)
+	capability, err := template.ConvertTemplateJSON2Object(td.Name, td.Spec.Extension, td.Spec.Schematic)
 	if err != nil {
 		return errors.WithMessage(err, errValidateDefRef)
 	}

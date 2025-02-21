@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/pkg/errors"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -51,25 +53,17 @@ import (
 	"github.com/oam-dev/kubevela/pkg/workflow/step"
 )
 
-// TemplateLoaderFn load template of a capability definition
-type TemplateLoaderFn func(context.Context, client.Client, string, types.CapType, map[string]string) (*Template, error)
-
-// LoadTemplate load template of a capability definition
-func (fn TemplateLoaderFn) LoadTemplate(ctx context.Context, c client.Client, capName string, capType types.CapType, annotations map[string]string) (*Template, error) {
-	return fn(ctx, c, capName, capType, annotations)
-}
-
 // Parser is an application parser
 type Parser struct {
 	client     client.Client
-	tmplLoader TemplateLoaderFn
+	tmplLoader template.TemplateLoaderFn
 }
 
 // NewApplicationParser create appfile parser
 func NewApplicationParser(cli client.Client) *Parser {
 	return &Parser{
 		client:     cli,
-		tmplLoader: LoadTemplate,
+		tmplLoader: template.LoadTemplate,
 	}
 }
 
@@ -77,7 +71,7 @@ func NewApplicationParser(cli client.Client) *Parser {
 func NewDryRunApplicationParser(cli client.Client, defs []*unstructured.Unstructured) *Parser {
 	return &Parser{
 		client:     cli,
-		tmplLoader: DryRunTemplateLoader(defs),
+		tmplLoader: template.DryRunTemplateLoader(defs),
 	}
 }
 
@@ -488,7 +482,7 @@ func (p *Parser) makeComponent(ctx context.Context, name, typ string, capType ty
 }
 
 func (p *Parser) makeComponentFromRevision(name, typ string, capType types.CapType, props *runtime.RawExtension, appRev *v1beta1.ApplicationRevision) (*Component, error) {
-	templ, err := LoadTemplateFromRevision(typ, capType, appRev, p.client.RESTMapper())
+	templ, err := template.LoadTemplateFromRevision(typ, capType, appRev, p.client.RESTMapper())
 	if err != nil {
 		return nil, errors.WithMessagef(err, "fetch component/policy type of %s from revision", name)
 	}
@@ -496,7 +490,7 @@ func (p *Parser) makeComponentFromRevision(name, typ string, capType types.CapTy
 	return p.convertTemplate2Component(name, typ, props, templ)
 }
 
-func (p *Parser) convertTemplate2Component(name, typ string, props *runtime.RawExtension, templ *Template) (*Component, error) {
+func (p *Parser) convertTemplate2Component(name, typ string, props *runtime.RawExtension, templ *template.Template) (*Component, error) {
 	settings, err := util.RawExtension2Map(props)
 	if err != nil {
 		return nil, errors.WithMessagef(err, "fail to parse settings for %s", name)
@@ -649,7 +643,7 @@ func (p *Parser) parseTraitsFromRevision(comp common.ApplicationComponent, appRe
 // load external definitions if not found
 func (p *Parser) ParseComponentFromRevisionAndClient(ctx context.Context, c common.ApplicationComponent, appRev *v1beta1.ApplicationRevision) (*Component, error) {
 	comp, err := p.makeComponentFromRevision(c.Name, c.Type, types.TypeComponentDefinition, c.Properties, appRev)
-	if IsNotFoundInAppRevision(err) {
+	if template.IsNotFoundInAppRevision(err) {
 		comp, err = p.makeComponent(ctx, c.Name, c.Type, types.TypeComponentDefinition, c.Properties, appRev.Annotations)
 	}
 	if err != nil {
@@ -662,7 +656,7 @@ func (p *Parser) ParseComponentFromRevisionAndClient(ctx context.Context, c comm
 			return nil, errors.Errorf("fail to parse properties of %s for %s", traitValue.Type, c.Name)
 		}
 		trait, err := p.parseTraitFromRevision(traitValue.Type, properties, appRev)
-		if IsNotFoundInAppRevision(err) {
+		if template.IsNotFoundInAppRevision(err) {
 			trait, err = p.parseTrait(ctx, traitValue.Type, properties, appRev.Annotations)
 		}
 		if err != nil {
@@ -687,14 +681,14 @@ func (p *Parser) parseTrait(ctx context.Context, name string, properties map[str
 }
 
 func (p *Parser) parseTraitFromRevision(name string, properties map[string]interface{}, appRev *v1beta1.ApplicationRevision) (*Trait, error) {
-	templ, err := LoadTemplateFromRevision(name, types.TypeTrait, appRev, p.client.RESTMapper())
+	templ, err := template.LoadTemplateFromRevision(name, types.TypeTrait, appRev, p.client.RESTMapper())
 	if err != nil {
 		return nil, err
 	}
 	return p.convertTemplate2Trait(name, properties, templ)
 }
 
-func (p *Parser) convertTemplate2Trait(name string, properties map[string]interface{}, templ *Template) (*Trait, error) {
+func (p *Parser) convertTemplate2Trait(name string, properties map[string]interface{}, templ *template.Template) (*Trait, error) {
 	traitName, err := util.ConvertDefinitionRevName(name)
 	if err != nil {
 		traitName = name

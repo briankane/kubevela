@@ -26,12 +26,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	tmpl "github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/kubevela/workflow/pkg/tasks/template"
 	wfTypes "github.com/kubevela/workflow/pkg/types"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
-	"github.com/oam-dev/kubevela/pkg/appfile"
 )
 
 var (
@@ -45,7 +46,7 @@ const (
 
 // WorkflowStepLoader load workflowStep task definition template.
 type WorkflowStepLoader struct {
-	loadCapabilityDefinition func(ctx context.Context, capName string) (*appfile.Template, error)
+	loadCapabilityDefinition func(ctx context.Context, capName string) (*tmpl.Template, error)
 }
 
 // LoadTemplate gets the workflowStep definition.
@@ -81,8 +82,8 @@ func (loader *WorkflowStepLoader) LoadTemplate(ctx context.Context, name string)
 // NewWorkflowStepTemplateLoader create a task template loader.
 func NewWorkflowStepTemplateLoader(client client.Client, annotations map[string]string) template.Loader {
 	return &WorkflowStepLoader{
-		loadCapabilityDefinition: func(ctx context.Context, capName string) (*appfile.Template, error) {
-			return appfile.LoadTemplate(ctx, client, capName, types.TypeWorkflowStep, annotations)
+		loadCapabilityDefinition: func(ctx context.Context, capName string) (*tmpl.Template, error) {
+			return tmpl.LoadTemplate(ctx, client, capName, types.TypeWorkflowStep, annotations)
 		},
 	}
 }
@@ -90,8 +91,8 @@ func NewWorkflowStepTemplateLoader(client client.Client, annotations map[string]
 // NewWorkflowStepTemplateRevisionLoader create a task template loader from ApplicationRevision.
 func NewWorkflowStepTemplateRevisionLoader(rev *v1beta1.ApplicationRevision, mapper meta.RESTMapper) template.Loader {
 	return &WorkflowStepLoader{
-		loadCapabilityDefinition: func(ctx context.Context, capName string) (*appfile.Template, error) {
-			return appfile.LoadTemplateFromRevision(capName, types.TypeWorkflowStep, rev, mapper)
+		loadCapabilityDefinition: func(ctx context.Context, capName string) (*tmpl.Template, error) {
+			return tmpl.LoadTemplateFromRevision(capName, types.TypeWorkflowStep, rev, mapper)
 		},
 	}
 }

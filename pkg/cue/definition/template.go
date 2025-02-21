@@ -20,7 +20,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/oam-dev/kubevela/apis/types"
+	"github.com/oam-dev/kubevela/pkg/template"
+
+	"k8s.io/client-go/tools/clientcmd"
 
 	"k8s.io/klog/v2"
 
@@ -135,6 +143,14 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		klog.Info("executing external task")
 		if val, err = externalprocessor.Process(val); err != nil {
 			return errors.WithMessagef(err, "invalid process of workload %s", wd.name)
+		}
+	}
+
+	componentsAttr := val.LookupPath(value.FieldPath("components"))
+	if componentsAttr.Exists() {
+		val, err = processComponents(ctx, val, componentsAttr)
+		if err != nil {
+			return errors.WithMessagef(err, "invalid process of workload %s: %s", wd.name, err.Error())
 		}
 	}
 
@@ -533,4 +549,61 @@ func getResourceFromObj(ctx context.Context, pctx process.Context, obj *unstruct
 		}
 	}
 	return nil, errors.Errorf("no resources found gvk(%v) labels(%v)", obj.GroupVersionKind(), labels)
+}
+
+func getClient() client.Client {
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		homeDir, _ := os.UserHomeDir()
+		kubeconfig = filepath.Join(homeDir, ".kube", "config")
+	}
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		log.Fatalf("Failed to load kubeconfig: %v", err)
+	}
+
+	k8sClient, err := client.New(config, client.Options{})
+	return k8sClient
+}
+
+func processComponents(ctx process.Context, val cue.Value, components cue.Value) (cue.Value, error) {
+	klog.Infof("Loading referenced components..")
+	componentsList, _ := components.List()
+
+	for {
+		if !componentsList.Next() {
+			break
+		}
+		component := componentsList.Value()
+		name, _ := component.LookupPath(value.FieldPath("type")).String()
+		typ, _ := component.LookupPath(value.FieldPath("type")).String()
+		// TODO need a means to merge the explicitly set parameters with the parent components defaults
+		compParams := component.LookupPath(value.FieldPath("params"))
+		compParams = compParams.FillPath(value.FieldPath("$type"), val.LookupPath(value.FieldPath("parameter", "$type")))
+		klog.Infof("Component Params Value: %s", compParams)
+		tmpl, _ := template.LoadTemplate(ctx.GetCtx(), getClient(), typ, types.TypeComponentDefinition, make(map[string]string))
+
+		var compParamFile = velaprocess.ParameterFieldName + ": {}"
+		if compParams.Exists() {
+			bt, err := json.Marshal(compParams)
+			klog.Infof("Component Params: %s", bt)
+			if err != nil {
+				return cue.Value{}, errors.WithMessagef(err, "marshal parameter of workload %s", name)
+			}
+			if string(bt) != "null" {
+				compParamFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
+			}
+		}
+
+		c, _ := ctx.BaseContextFile()
+		compVal, _ := cuex.CompileStringWithOptions(context.Background(), strings.Join([]string{
+			renderTemplate(tmpl.TemplateStr), compParamFile, c,
+		}, "\n"))
+
+		klog.Infof("Component Value: %s", compVal)
+		val = val.FillPath(value.FieldPath("output"), compVal.LookupPath(value.FieldPath("output")))
+
+		klog.Infof("Result: %s", val)
+	}
+	return val, nil
 }

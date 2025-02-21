@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-git/go-git/v5"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -39,7 +41,6 @@ import (
 	commontypes "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
-	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/schema"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
@@ -122,7 +123,7 @@ func NewCapabilityComponentDef(componentDefinition *v1beta1.ComponentDefinition)
 
 // GetOpenAPISchema gets OpenAPI v3 schema by WorkloadDefinition name
 func (def *CapabilityComponentDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
-	capability, err := appfile.ConvertTemplateJSON2Object(name, def.ComponentDefinition.Spec.Extension, def.ComponentDefinition.Spec.Schematic)
+	capability, err := template.ConvertTemplateJSON2Object(name, def.ComponentDefinition.Spec.Extension, def.ComponentDefinition.Spec.Schematic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert ComponentDefinition to Capability Object")
 	}
@@ -442,7 +443,7 @@ func NewCapabilityTraitDef(traitdefinition *v1beta1.TraitDefinition) CapabilityT
 
 // GetOpenAPISchema gets OpenAPI v3 schema by TraitDefinition name
 func (def *CapabilityTraitDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
-	capability, err := appfile.ConvertTemplateJSON2Object(name, def.TraitDefinition.Spec.Extension, def.TraitDefinition.Spec.Schematic)
+	capability, err := template.ConvertTemplateJSON2Object(name, def.TraitDefinition.Spec.Extension, def.TraitDefinition.Spec.Schematic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert WorkloadDefinition to Capability Object")
 	}
@@ -508,7 +509,7 @@ func NewCapabilityStepDef(stepdefinition *v1beta1.WorkflowStepDefinition) Capabi
 
 // GetOpenAPISchema gets OpenAPI v3 schema by StepDefinition name
 func (def *CapabilityStepDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
-	capability, err := appfile.ConvertTemplateJSON2Object(name, nil, def.StepDefinition.Spec.Schematic)
+	capability, err := template.ConvertTemplateJSON2Object(name, nil, def.StepDefinition.Spec.Schematic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert WorkflowStepDefinition to Capability Object")
 	}
@@ -577,7 +578,7 @@ func NewCapabilityPolicyDef(policydefinition *v1beta1.PolicyDefinition) Capabili
 
 // GetOpenAPISchema gets OpenAPI v3 schema by StepDefinition name
 func (def *CapabilityPolicyDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
-	capability, err := appfile.ConvertTemplateJSON2Object(name, nil, def.PolicyDefinition.Spec.Schematic)
+	capability, err := template.ConvertTemplateJSON2Object(name, nil, def.PolicyDefinition.Spec.Schematic)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert WorkflowStepDefinition to Capability Object")
 	}

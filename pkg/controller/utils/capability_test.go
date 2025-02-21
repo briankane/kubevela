@@ -24,6 +24,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
@@ -32,7 +34,6 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
@@ -186,7 +187,7 @@ parameter: [string]: string
 					Template: tc.data,
 				},
 			}
-			capability, _ := appfile.ConvertTemplateJSON2Object(tc.name, nil, schematic)
+			capability, _ := template.ConvertTemplateJSON2Object(tc.name, nil, schematic)
 			schema, err := getOpenAPISchema(context.Background(), capability)
 			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\ngetOpenAPISchema(...): -want error, +got error:\n%s", tc.reason, diff)

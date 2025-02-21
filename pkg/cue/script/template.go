@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/oam-dev/kubevela/pkg/template"
+
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/kubevela/pkg/cue/cuex"
 
@@ -32,7 +34,6 @@ import (
 	"github.com/kubevela/workflow/pkg/cue/model/sets"
 	"github.com/kubevela/workflow/pkg/cue/model/value"
 
-	"github.com/oam-dev/kubevela/pkg/appfile"
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	"github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
@@ -371,11 +372,11 @@ func FixOpenAPISchema(name string, schema *openapi3.Schema) {
 	}
 
 	description := schema.Description
-	if strings.Contains(description, appfile.UsageTag) {
-		description = strings.Split(description, appfile.UsageTag)[1]
+	if strings.Contains(description, template.UsageTag) {
+		description = strings.Split(description, template.UsageTag)[1]
 	}
-	if strings.Contains(description, appfile.ShortTag) {
-		description = strings.Split(description, appfile.ShortTag)[0]
+	if strings.Contains(description, template.ShortTag) {
+		description = strings.Split(description, template.ShortTag)[0]
 		description = strings.TrimSpace(description)
 	}
 	schema.Description = description

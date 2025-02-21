@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package appfile
+package template
 
 import (
 	"context"
@@ -397,4 +397,12 @@ func ConvertTemplateJSON2Object(capabilityName string, in *runtime.RawExtension,
 		t.CueTemplate = capTemplate.TemplateStr
 	}
 	return t, nil
+}
+
+// TemplateLoaderFn load template of a capability definition
+type TemplateLoaderFn func(context.Context, client.Client, string, types.CapType, map[string]string) (*Template, error)
+
+// LoadTemplate load template of a capability definition
+func (fn TemplateLoaderFn) LoadTemplate(ctx context.Context, c client.Client, capName string, capType types.CapType, annotations map[string]string) (*Template, error) {
+	return fn(ctx, c, capName, capType, annotations)
 }
