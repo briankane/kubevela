@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/oam-dev/kubevela/apis/types"
@@ -126,9 +127,9 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		return err
 	}
 
-	klog.Infof("Compiling")
+	tmpl := wrapCompositionReferences(abstractTemplate)
 	val, err := cuex.CompileStringWithOptions(context.Background(), strings.Join([]string{
-		renderTemplate(abstractTemplate), paramFile, c,
+		renderTemplate(tmpl), paramFile, c,
 	}, "\n"))
 
 	config := val.LookupPath(value.FieldPath("config"))
@@ -155,7 +156,10 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		}
 	}
 
-	klog.Infof("Validating")
+	tmpl = unwrapCompositionReferences(val)
+	val, err = cuex.CompileStringWithOptions(context.Background(), tmpl) // late render
+	val, _ = dedupeOutput(val)
+
 	if err := val.Validate(); err != nil {
 		return errors.WithMessagef(err, "invalid cue template of workload %s after merge parameter and context", wd.name)
 	}
@@ -475,6 +479,29 @@ func renderTemplate(templ string) string {
 context: _
 parameter: _
 `
+}
+
+func wrapCompositionReferences(input string) string {
+	re := regexp.MustCompile(`composition(?:\.[a-zA-Z0-9_]+)+`)
+	result := re.ReplaceAllStringFunc(input, func(match string) string {
+		return fmt.Sprintf(`"@lateRender(%s)"`, match)
+	})
+	return result
+}
+
+func unwrapCompositionReferences(val cue.Value) string {
+	input := fmt.Sprintf("%s", val)
+	re := regexp.MustCompile(`"@lateRender\(([^)]+)\)"`)
+	matches := re.FindAllStringSubmatch(input, -1)
+	for _, match := range matches {
+		parts := strings.Split(match[1], ".")
+
+		toBeReplaced := fmt.Sprintf("\"@lateRender(%s)\"", match[1])
+		replacement := fmt.Sprintf("%s", val.LookupPath(value.FieldPath(parts...)))
+
+		input = strings.ReplaceAll(input, toBeReplaced, replacement)
+	}
+	return input
 }
 
 func (td *traitDef) getTemplateContext(ctx process.Context, cli client.Reader, accessor util.NamespaceAccessor) (map[string]interface{}, error) {

@@ -2,7 +2,6 @@ package definition
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -39,21 +38,45 @@ func processComposition(ctx process.Context, name string, val cue.Value, composi
 
 		val, _ = processComponent(ctx, val, componentKey, component)
 	}
+	return val, nil
+}
 
-	//refresh data
-	compositions = val.LookupPath(value.FieldPath("composition"))
-	components = compositions.LookupPath(value.FieldPath("components"))
+func processComponent(ctx process.Context, val cue.Value, componentKey string, component cue.Value) (cue.Value, error) {
+	klog.Infof("Processing Component: %s", componentKey)
+	c, _ := ctx.BaseContextFile()
+	var compParamFile = velaprocess.ParameterFieldName + ": {}"
+	typ, _ := component.LookupPath(value.FieldPath("type")).String()
+	compParams := component.LookupPath(value.FieldPath("properties"))
+	klog.Infof("Component Params Value: %s", compParams)
+	tmpl, _ := template.LoadTemplate(ctx.GetCtx(), getClient(), typ, types.TypeComponentDefinition, make(map[string]string))
 
-	compositionOutputRef := compositions.LookupPath(value.FieldPath("output"))
-	if compositionOutputRef.Exists() {
-		if val.LookupPath(value.FieldPath("output")).Exists() {
-			return cue.Value{}, errors.New("cannot declare output in base template and composition")
+	if compParams.Exists() {
+		bt, _ := json.Marshal(compParams)
+		klog.Infof("Component Params: %s", bt)
+		if string(bt) != "null" {
+			compParamFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
 		}
-		compositionOutputPath, _ := compositionOutputRef.String()
-
-		compOutput := components.LookupPath(value.FieldPath(strings.Split(compositionOutputPath, ",")...))
-		val = val.FillPath(value.FieldPath("output"), compOutput)
 	}
+
+	compVal, _ := cuex.CompileStringWithOptions(ctx.GetCtx(), strings.Join([]string{
+		renderTemplate(tmpl.TemplateStr), compParamFile, c,
+	}, "\n"))
+	val = val.FillPath(value.FieldPath("composition", "components", componentKey, "output"), compVal.LookupPath(value.FieldPath("output")))
+	outputs := compVal.LookupPath(value.FieldPath("outputs"))
+	if outputs.Exists() {
+		val = val.FillPath(value.FieldPath("composition", "components", componentKey, "outputs"), outputs)
+	}
+	return val, nil
+}
+
+func dedupeOutput(val cue.Value) (cue.Value, error) {
+	composition := val.LookupPath(value.FieldPath("composition"))
+	if !composition.Exists() {
+		return val, nil
+	}
+
+	components := composition.LookupPath(value.FieldPath("components"))
+	componentsIter, _ := components.Fields()
 
 	outputs := make(map[string]cue.Value)
 	standardOutput := val.LookupPath(value.FieldPath("output"))
@@ -97,34 +120,5 @@ func processComposition(ctx process.Context, name string, val cue.Value, composi
 		}
 	}
 	val = val.FillPath(value.FieldPath("outputs"), outputs)
-	klog.Infof("Result: %s", val)
-	return val, nil
-}
-
-func processComponent(ctx process.Context, val cue.Value, componentKey string, component cue.Value) (cue.Value, error) {
-	klog.Infof("Processing Component: %s", componentKey)
-	c, _ := ctx.BaseContextFile()
-	var compParamFile = velaprocess.ParameterFieldName + ": {}"
-	typ, _ := component.LookupPath(value.FieldPath("type")).String()
-	compParams := component.LookupPath(value.FieldPath("properties"))
-	klog.Infof("Component Params Value: %s", compParams)
-	tmpl, _ := template.LoadTemplate(ctx.GetCtx(), getClient(), typ, types.TypeComponentDefinition, make(map[string]string))
-
-	if compParams.Exists() {
-		bt, _ := json.Marshal(compParams)
-		klog.Infof("Component Params: %s", bt)
-		if string(bt) != "null" {
-			compParamFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
-		}
-	}
-
-	compVal, _ := cuex.CompileStringWithOptions(ctx.GetCtx(), strings.Join([]string{
-		renderTemplate(tmpl.TemplateStr), compParamFile, c,
-	}, "\n"))
-	val = val.FillPath(value.FieldPath("composition", "components", componentKey, "output"), compVal.LookupPath(value.FieldPath("output")))
-	outputs := compVal.LookupPath(value.FieldPath("outputs"))
-	if outputs.Exists() {
-		val = val.FillPath(value.FieldPath("composition", "components", componentKey, "outputs"), outputs)
-	}
 	return val, nil
 }
