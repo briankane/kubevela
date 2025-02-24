@@ -126,6 +126,7 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		return err
 	}
 
+	klog.Infof("Compiling")
 	val, err := cuex.CompileStringWithOptions(context.Background(), strings.Join([]string{
 		renderTemplate(abstractTemplate), paramFile, c,
 	}, "\n"))
@@ -146,14 +147,15 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		}
 	}
 
-	componentsAttr := val.LookupPath(value.FieldPath("components"))
-	if componentsAttr.Exists() {
-		val, err = processComponents(ctx, wd.name, val, componentsAttr)
+	compositions := val.LookupPath(value.FieldPath("composition"))
+	if compositions.Exists() {
+		val, _ = processComposition(ctx, wd.name, val, compositions)
 		if err != nil {
 			return errors.WithMessagef(err, "invalid process of workload %s: %s", wd.name, err.Error())
 		}
 	}
 
+	klog.Infof("Validating")
 	if err := val.Validate(); err != nil {
 		return errors.WithMessagef(err, "invalid cue template of workload %s after merge parameter and context", wd.name)
 	}
@@ -566,38 +568,60 @@ func getClient() client.Client {
 	return k8sClient
 }
 
-func processComponents(ctx process.Context, name string, val cue.Value, components cue.Value) (cue.Value, error) {
-	klog.Infof("Loading referenced components..")
-	componentsList, _ := components.List()
-	val = val.FillPath(value.FieldPath("context", "composition"), struct{}{})
+func processCompositions(ctx process.Context, name string, val cue.Value, compositions cue.Value) (cue.Value, error) {
+	klog.Infof("Loading referenced compositions..")
+	compositionsList, _ := compositions.List()
 	for {
-		if !componentsList.Next() {
+		if !compositionsList.Next() {
 			break
 		}
 		rootType, _ := val.LookupPath(value.FieldPath("parameter", "$type")).String()
 		ctx.PushData("compositionRoot", rootType)
-		ctx.PushData("compositionId", name)
-		compVal, _ := processComponent(ctx, componentsList.Value())
-		val = val.FillPath(value.FieldPath("output"), compVal.LookupPath(value.FieldPath("output")))
+		ctx.PushData("compositionPath", rootType)
+		compVal, _ := processCompositions_old(ctx, compositionsList.Value())
+		val, _ = mergeOutputs(ctx, compVal, val)
 		klog.Infof("Result: %s", val)
 	}
 	return val, nil
 }
 
-func processComponent(ctx process.Context, component cue.Value) (cue.Value, error) {
-	klog.Infof("Component: %s", component)
-	name, _ := component.LookupPath(value.FieldPath("name")).String()
-	typ, _ := component.LookupPath(value.FieldPath("type")).String()
+func mergeOutputs(ctx process.Context, source cue.Value, dest cue.Value) (cue.Value, error) {
+	sourceOutput := source.LookupPath(value.FieldPath("output"))
+	sourceOutputs := source.LookupPath(value.FieldPath("outputs"))
 
-	compositionId := ctx.GetData("compositionId").(string)
-	klog.Infof("Current CompositionID: %s", compositionId)
-	newCompositionId := strings.Join([]string{compositionId, name}, ".")
-	klog.Infof("New CompositionID: %s", newCompositionId)
+	outputs := make(map[string]cue.Value)
+	if sourceOutputs.Exists() {
+		iter, _ := sourceOutputs.List()
+		for {
+			if !iter.Next() {
+				break
+			}
+			label, _ := sourceOutputs.Label()
+			outputs[ctx.GetData("compositionPath").(string)+"."+label] = iter.Value()
+		}
+	}
 
-	ctx.PushData("compositionId", newCompositionId)
+	outputs[ctx.GetData("compositionPath").(string)+"."+"main"] = sourceOutput
+
+	if len(outputs) > 0 {
+		dest = dest.FillPath(value.FieldPath("outputs"), outputs)
+	}
+	return dest, nil
+}
+
+func processCompositions_old(ctx process.Context, composition cue.Value) (cue.Value, error) {
+	klog.Infof("Component: %s", composition)
+	name, _ := composition.LookupPath(value.FieldPath("name")).String()
+	typ, _ := composition.LookupPath(value.FieldPath("type")).String()
+
+	compositionPath := ctx.GetData("compositionPath").(string)
+	newCompositionPath := strings.Join([]string{compositionPath, name}, ".")
+
+	ctx.PushData("compositionId", name)
+	ctx.PushData("compositionPath", newCompositionPath)
 	// TODO need a means to merge the explicitly set parameters with the parent components defaults
 	klog.Infof("Name: %s, Type: %s", name, typ)
-	compParams := component.LookupPath(value.FieldPath("params"))
+	compParams := composition.LookupPath(value.FieldPath("params"))
 	klog.Infof("Component Params Value: %s", compParams)
 	tmpl, _ := template.LoadTemplate(ctx.GetCtx(), getClient(), typ, types.TypeComponentDefinition, make(map[string]string))
 
