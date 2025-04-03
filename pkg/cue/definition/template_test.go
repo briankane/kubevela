@@ -17,6 +17,7 @@ limitations under the License.
 package definition
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,46 @@ import (
 
 	"github.com/oam-dev/kubevela/pkg/features"
 )
+
+func TestWorkloadConfig(t *testing.T) {
+	ctx := process.NewContext(process.ContextData{
+		AppName:         "myapp",
+		CompName:        "test",
+		Namespace:       "default",
+		AppRevisionName: "myapp-v1",
+		ClusterVersion:  types.ClusterVersion{Minor: "19+"},
+	})
+	wt := NewWorkloadAbstractEngine("testWorkload")
+	params := map[string]interface{}{}
+	err := wt.Complete(ctx, strings.TrimSpace(`
+		config: {
+			test: {
+				namespace: "vela-system"
+				name: "quadrant"
+			}
+		}
+
+		output: {
+			apiVersion: "apps/v1"
+			kind: "Deployment"
+			metadata: name: config.test.output.quadrant-name
+			spec: replicas: 1
+		}
+	`), params)
+	assert.NoError(t, err)
+
+	expectObj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]interface{}{"name": "test:value"},
+		"spec":       map[string]interface{}{"replicas": int64(1)},
+	}}
+
+	base, _ := ctx.Output()
+
+	baseObj, err := base.Unstructured()
+	assert.Equal(t, expectObj, baseObj)
+}
 
 func TestWorkloadTemplateComplete(t *testing.T) {
 	testCases := map[string]struct {

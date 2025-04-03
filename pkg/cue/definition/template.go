@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/config/configreader"
 	"strings"
 
 	"github.com/kubevela/pkg/cue/cuex"
@@ -76,6 +77,8 @@ type AbstractEngine interface {
 	HealthCheck(templateContext map[string]interface{}, healthPolicyTemplate string, parameter interface{}) (bool, error)
 	Status(templateContext map[string]interface{}, customStatusTemplate string, parameter interface{}) (string, error)
 	GetTemplateContext(ctx process.Context, cli client.Client, accessor util.NamespaceAccessor) (map[string]interface{}, error)
+	PreRender(ctx process.Context, tmpl string) (cue.Value, error)
+	Render(ctx process.Context, tmpl string) (cue.Value, error)
 }
 
 type def struct {
@@ -93,6 +96,47 @@ func NewWorkloadAbstractEngine(name string) AbstractEngine {
 			name: name,
 		},
 	}
+}
+
+func (wd *workloadDef) PreRender(ctx process.Context, tmpl string) (cue.Value, error) {
+	preRender := cuecontext.New().CompileString(tmpl)
+	config := preRender.LookupPath(value.FieldPath("config"))
+	if config.Exists() {
+		iter, err := config.Fields()
+		if err != nil {
+			panic(err)
+		}
+
+		for iter.Next() {
+			configKey := iter.Label()
+			config := iter.Value()
+
+			cfgName := config.LookupPath(value.FieldPath("name"))
+			if !cfgName.Exists() {
+				continue
+			}
+			cfgNameStr, _ := cfgName.String()
+
+			cfgNamespace := config.LookupPath(value.FieldPath("namespace"))
+			cfgNamespaceStr := oam.SystemDefinitionNamespace
+			if cfgNamespace.Exists() {
+				cfgNamespaceStr, err = cfgNamespace.String()
+			}
+
+			println(cfgNameStr)
+			println(cfgNamespaceStr)
+
+			content, _ := configreader.ReadConfig(ctx.GetCtx(), cfgNamespaceStr, cfgNameStr)
+
+			fieldPath := fmt.Sprintf("%s.%s.%s", "config", configKey, OutputFieldName)
+			preRender = preRender.FillPath(value.FieldPath(fieldPath), content)
+		}
+	}
+	return preRender, nil
+}
+
+func (wd *workloadDef) Render(ctx process.Context, tmpl string) (cue.Value, error) {
+	return cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), tmpl)
 }
 
 // Complete do workload definition's rendering
@@ -113,9 +157,16 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		return err
 	}
 
-	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), strings.Join([]string{
+	tmpl := strings.Join([]string{
 		renderTemplate(abstractTemplate), paramFile, c,
-	}, "\n"))
+	}, "\n")
+
+	preRender, _ := wd.PreRender(ctx, tmpl)
+
+	bytes, _ := preRender.MarshalJSON()
+	preRenderedStr := string(bytes)
+
+	val, err := wd.Render(ctx, preRenderedStr)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile workload %s after merge parameter and context", wd.name)
@@ -305,6 +356,21 @@ func NewTraitAbstractEngine(name string) AbstractEngine {
 	}
 }
 
+func (td *traitDef) PreRender(ctx process.Context, tmpl string) (cue.Value, error) {
+	preRender := cuecontext.New().CompileString(tmpl)
+	config := preRender.LookupPath(value.FieldPath("config"))
+	if config.Exists() {
+		cfgName, _ := config.LookupPath(value.FieldPath("name")).String()
+		cfgNamespace, _ := config.LookupPath(value.FieldPath("namespace")).String()
+		preRender = preRender.FillPath(value.FieldPath("config.output"), fmt.Sprintf("%s:%s", cfgNamespace, cfgName))
+	}
+	return preRender, nil
+}
+
+func (td *traitDef) Render(ctx process.Context, tmpl string) (cue.Value, error) {
+	return cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), tmpl)
+}
+
 // Complete do trait definition's rendering
 // nolint:gocyclo
 func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, params interface{}) error {
@@ -324,7 +390,12 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 	}
 	buff += c
 
-	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), buff)
+	preRender, _ := td.PreRender(ctx, buff)
+
+	bytes, _ := preRender.MarshalJSON()
+	preRenderedStr := string(bytes)
+
+	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), preRenderedStr)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile trait %s after merge parameter and context", td.name)
