@@ -48,16 +48,13 @@ func TestWorkloadConfig(t *testing.T) {
 	params := map[string]interface{}{}
 	err := wt.Complete(ctx, strings.TrimSpace(`
 		config: {
-			test: {
-				namespace: "vela-system"
-				name: "quadrant"
-			}
+			test: name: "quadrant"
 		}
 
 		output: {
 			apiVersion: "apps/v1"
 			kind: "Deployment"
-			metadata: name: config.test.output.quadrant-name
+			metadata: name: config.test.output."quadrant-name"
 			spec: replicas: 1
 		}
 	`), params)
@@ -66,7 +63,7 @@ func TestWorkloadConfig(t *testing.T) {
 	expectObj := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "apps/v1",
 		"kind":       "Deployment",
-		"metadata":   map[string]interface{}{"name": "test:value"},
+		"metadata":   map[string]interface{}{"name": "dev"},
 		"spec":       map[string]interface{}{"replicas": int64(1)},
 	}}
 

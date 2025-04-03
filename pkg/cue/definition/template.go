@@ -123,9 +123,6 @@ func (wd *workloadDef) PreRender(ctx process.Context, tmpl string) (cue.Value, e
 				cfgNamespaceStr, err = cfgNamespace.String()
 			}
 
-			println(cfgNameStr)
-			println(cfgNamespaceStr)
-
 			content, _ := configreader.ReadConfig(ctx.GetCtx(), cfgNamespaceStr, cfgNameStr)
 
 			fieldPath := fmt.Sprintf("%s.%s.%s", "config", configKey, OutputFieldName)
@@ -161,7 +158,7 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		renderTemplate(abstractTemplate), paramFile, c,
 	}, "\n")
 
-	preRender, _ := wd.PreRender(ctx, tmpl)
+	preRender, err := wd.PreRender(ctx, tmpl)
 
 	bytes, _ := preRender.MarshalJSON()
 	preRenderedStr := string(bytes)
@@ -593,4 +590,16 @@ func getResourceFromObj(ctx context.Context, pctx process.Context, obj *unstruct
 		}
 	}
 	return nil, errors.Errorf("no resources found gvk(%v) labels(%v)", obj.GroupVersionKind(), labels)
+}
+
+type ConfigProvider interface {
+	ReadConfig(ctx context.Context, namespace, name string) (map[string]interface{}, error)
+}
+
+func ReadConfig(ctx context.Context, namespace string, name string, provider ConfigProvider) (map[string]interface{}, error) {
+	content, err := provider.ReadConfig(ctx, namespace, name)
+	if err != nil {
+		return make(map[string]interface{}), err
+	}
+	return content, nil
 }

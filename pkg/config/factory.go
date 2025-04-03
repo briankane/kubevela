@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	configcommon "github.com/oam-dev/kubevela/pkg/config/common"
 	"strings"
 	"time"
 
@@ -572,19 +573,7 @@ func (k *kubeConfigFactory) ParseConfig(ctx context.Context,
 
 // ReadConfig read the config secret
 func (k *kubeConfigFactory) ReadConfig(ctx context.Context, namespace, name string) (map[string]interface{}, error) {
-	var secret v1.Secret
-	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: namespace, Name: name}, &secret); err != nil {
-		return nil, err
-	}
-	if secret.Annotations[types.AnnotationConfigSensitive] == "true" {
-		return nil, ErrSensitiveConfig
-	}
-	properties := secret.Data[SaveInputPropertiesKey]
-	var input = map[string]interface{}{}
-	if err := json.Unmarshal(properties, &input); err != nil {
-		return nil, err
-	}
-	return input, nil
+	return configcommon.ReadConfig(ctx, k.cli, namespace, name)
 }
 
 func (k *kubeConfigFactory) GetConfig(ctx context.Context, namespace, name string, withStatus bool) (*Config, error) {
