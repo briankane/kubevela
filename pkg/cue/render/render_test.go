@@ -55,6 +55,8 @@ func TestComponentRenderer(t *testing.T) {
 		return
 	}
 
+	println(render.StrValue())
+
 	expected := strings.TrimSpace(dedent.Dedent(`
 		// Context Definition
 		context: [string]: _
@@ -109,7 +111,6 @@ func TestComponentRenderer(t *testing.T) {
 			value: "hello-world"
 		}
 
-		
 		// Output
 		output: {
 			apiVersion: "v1"
@@ -122,7 +123,7 @@ func TestComponentRenderer(t *testing.T) {
 			}
 		}
 
-		// Outputs (Ancillary)
+		// Outputs
 		outputs: {}
 	`))
 
@@ -156,6 +157,7 @@ func TestComponentRenderer_NoParams(t *testing.T) {
 		return
 	}
 
+	println(render.StrValue())
 	expected := strings.TrimSpace(dedent.Dedent(`
 		// Context Definition
 		context: [string]: _
@@ -199,13 +201,10 @@ func TestComponentRenderer_NoParams(t *testing.T) {
 		// Parameter Values
 		parameter: {}
 
-		// Fields
-
-
 		// Output
 		output: {}
 
-		// Outputs (Ancillary)
+		// Outputs
 		outputs: {}
 	`))
 
@@ -277,13 +276,10 @@ func TestComponentRenderer_BlankParams(t *testing.T) {
 		// Parameter Values
 		parameter: {}
 
-		// Fields
-
-
 		// Output
 		output: {}
 
-		// Outputs (Ancillary)
+		// Outputs
 		outputs: {}
 	`))
 

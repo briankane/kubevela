@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/format"
@@ -15,8 +16,10 @@ import (
 	"github.com/oam-dev/kubevela/pkg/config/common"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/pkg/errors"
+	"regexp"
 	"slices"
 	"strings"
+	"text/template"
 )
 
 var reserved = []string{
@@ -53,13 +56,13 @@ func (rt RenderedTemplate) Compile(ctx process.Context) (cue.Value, error) {
 
 type renderEngine interface {
 	PreRender(ctx process.Context, abstractTmpl string) (cue.Value, error)
-	GetContext(ctx process.Context, preRender cue.Value) (string, error)
-	GetConfiguration(ctx process.Context, preRender cue.Value) (string, error)
-	GetParameterTemplate(ctx process.Context, preRender cue.Value) (string, error)
-	GetParameters(ctx process.Context, preRender cue.Value, params map[string]interface{}) (string, error)
-	GetFields(ctx process.Context, preRender cue.Value) (string, error)
-	GetOutput(ctx process.Context, preRender cue.Value) (string, error)
-	GetOutputs(ctx process.Context, preRender cue.Value) (string, error)
+	GetContext(ctx process.Context, tmplCue cue.Value) (string, error)
+	GetConfiguration(ctx process.Context, tmplCue cue.Value) (string, error)
+	GetParameterTemplate(ctx process.Context, tmplCue cue.Value) (string, error)
+	GetParameters(ctx process.Context, tmplCue cue.Value, params map[string]interface{}) (string, error)
+	GetFields(ctx process.Context, tmplCue cue.Value) (string, error)
+	GetOutput(ctx process.Context, tmplCue cue.Value) (string, error)
+	GetOutputs(ctx process.Context, tmplCue cue.Value) (string, error)
 }
 
 func Render(re renderEngine, ctx process.Context, abstractTmpl string, params map[string]interface{}) (RenderedTemplate, error) {
@@ -73,47 +76,70 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 	output, _ := re.GetOutput(ctx, render)
 	outputs, _ := re.GetOutputs(ctx, render)
 
-	return RenderedTemplate(
-		fmt.Sprintf(
-			strings.TrimSpace(
-				dedent.Dedent(`
-					// Context Definition
-					context: [string]: _
+	data := struct {
+		Context           string
+		Config            string
+		ParameterTemplate string
+		Parameters        string
+		Fields            string
+		Output            string
+		Outputs           string
+	}{
+		Context:           context,
+		Config:            config,
+		ParameterTemplate: parameterTemplate,
+		Parameters:        parameters,
+		Fields:            fields,
+		Output:            output,
+		Outputs:           outputs,
+	}
 
-					// Context Values
-					context: %s
+	var tmpl = strings.TrimSpace(dedent.Dedent(`
+		// Context Definition
+		context: [string]: _
 
-					// Configuration Definition
-					config: [string]: _
+		// Context Values
+		context: {{.Context}}
 
-					// Configuration Values
-					config: %s
+		// Configuration Definition
+		config: [string]: _
 
-					// Parameter Definition
-					parameter: %s
+		// Configuration Values
+		config: {{.Config}}
 
-					// Parameter Values
-					parameter: %s
+		// Parameter Definition
+		parameter: {{.ParameterTemplate}}
 
-					// Fields
-					%s
+		// Parameter Values
+		parameter: {{.Parameters}}
 
-					// Output
-					output: %s
+		{{- if .Fields }}
 
-					// Outputs (Ancillary)
-					outputs: %s
-				`),
-			),
-			context,
-			config,
-			parameterTemplate,
-			parameters,
-			fields,
-			output,
-			outputs,
-		),
-	), nil
+		// Fields
+		{{ .Fields}}
+
+		{{- end }}
+
+		// Output
+		output: {{.Output}}
+
+		// Outputs
+		outputs: {{.Outputs}}
+	`))
+
+	t, err := template.New("render").Parse(tmpl)
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+
+	str := regexp.MustCompile(`\n{3,}`).ReplaceAllString(buf.String(), "\n\n")
+
+	return RenderedTemplate(str), nil
 }
 
 type ComponentRenderEngine struct{}
@@ -126,8 +152,8 @@ func (re ComponentRenderEngine) PreRender(ctx process.Context, abstractTmpl stri
 	return val, nil
 }
 
-func (re ComponentRenderEngine) GetContext(ctx process.Context, preRender cue.Value) (string, error) {
-	ctxField := preRender.LookupPath(cue.ParsePath("context"))
+func (re ComponentRenderEngine) GetContext(ctx process.Context, tmplCue cue.Value) (string, error) {
+	ctxField := tmplCue.LookupPath(cue.ParsePath("context"))
 	if !ctxField.Exists() {
 		return "{}", nil
 	}
@@ -136,9 +162,9 @@ func (re ComponentRenderEngine) GetContext(ctx process.Context, preRender cue.Va
 	return string(b), nil
 }
 
-func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, preRender cue.Value) (string, error) {
+func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, tmplCue cue.Value) (string, error) {
 	var configMap = make(map[string]interface{})
-	configField := preRender.LookupPath(cue.ParsePath("config"))
+	configField := tmplCue.LookupPath(cue.ParsePath("config"))
 	if configField.Exists() {
 		iter, err := configField.Fields()
 		if err != nil {
@@ -172,8 +198,8 @@ func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, preRender 
 	return string(b), nil
 }
 
-func (re ComponentRenderEngine) GetParameterTemplate(ctx process.Context, preRender cue.Value) (string, error) {
-	paramField := preRender.LookupPath(cue.ParsePath("parameter"))
+func (re ComponentRenderEngine) GetParameterTemplate(ctx process.Context, tmplCue cue.Value) (string, error) {
+	paramField := tmplCue.LookupPath(cue.ParsePath("parameter"))
 	if !paramField.Exists() {
 		return "{}", nil
 	}
@@ -198,9 +224,9 @@ func (re ComponentRenderEngine) GetParameters(ctx process.Context, _ cue.Value, 
 	return "{}", nil
 }
 
-func (re ComponentRenderEngine) GetFields(ctx process.Context, preRender cue.Value) (string, error) {
+func (re ComponentRenderEngine) GetFields(ctx process.Context, tmplCue cue.Value) (string, error) {
 	output := ""
-	iter, _ := preRender.Fields()
+	iter, _ := tmplCue.Fields()
 	for iter.Next() {
 		fieldName := iter.Selector().String()
 		if !slices.Contains(reserved, fieldName) {
@@ -212,8 +238,8 @@ func (re ComponentRenderEngine) GetFields(ctx process.Context, preRender cue.Val
 	return output, nil
 }
 
-func (re ComponentRenderEngine) GetOutput(ctx process.Context, preRender cue.Value) (string, error) {
-	outputField := preRender.LookupPath(cue.ParsePath("output"))
+func (re ComponentRenderEngine) GetOutput(ctx process.Context, tmplCue cue.Value) (string, error) {
+	outputField := tmplCue.LookupPath(cue.ParsePath("output"))
 	if !outputField.Exists() {
 		return "{}", nil
 	}
@@ -222,8 +248,8 @@ func (re ComponentRenderEngine) GetOutput(ctx process.Context, preRender cue.Val
 	return string(b), nil
 }
 
-func (re ComponentRenderEngine) GetOutputs(ctx process.Context, preRender cue.Value) (string, error) {
-	outputsField := preRender.LookupPath(cue.ParsePath("outputs"))
+func (re ComponentRenderEngine) GetOutputs(ctx process.Context, tmplCue cue.Value) (string, error) {
+	outputsField := tmplCue.LookupPath(cue.ParsePath("outputs"))
 	if !outputsField.Exists() {
 		return "{}", nil
 	}
