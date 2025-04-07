@@ -20,8 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/oam-dev/kubevela/pkg/config/configreader"
-	"strings"
+	"github.com/oam-dev/kubevela/pkg/cue/render"
 
 	"github.com/kubevela/pkg/cue/cuex"
 
@@ -77,8 +76,6 @@ type AbstractEngine interface {
 	HealthCheck(templateContext map[string]interface{}, healthPolicyTemplate string, parameter interface{}) (bool, error)
 	Status(templateContext map[string]interface{}, customStatusTemplate string, parameter interface{}) (string, error)
 	GetTemplateContext(ctx process.Context, cli client.Client, accessor util.NamespaceAccessor) (map[string]interface{}, error)
-	PreRender(ctx process.Context, tmpl string) (cue.Value, error)
-	Render(ctx process.Context, tmpl string) (cue.Value, error)
 }
 
 type def struct {
@@ -98,72 +95,13 @@ func NewWorkloadAbstractEngine(name string) AbstractEngine {
 	}
 }
 
-func (wd *workloadDef) PreRender(ctx process.Context, tmpl string) (cue.Value, error) {
-	preRender := cuecontext.New().CompileString(tmpl)
-	config := preRender.LookupPath(value.FieldPath("config"))
-	if config.Exists() {
-		iter, err := config.Fields()
-		if err != nil {
-			panic(err)
-		}
-
-		for iter.Next() {
-			configKey := iter.Label()
-			config := iter.Value()
-
-			cfgName := config.LookupPath(value.FieldPath("name"))
-			if !cfgName.Exists() {
-				continue
-			}
-			cfgNameStr, _ := cfgName.String()
-
-			cfgNamespace := config.LookupPath(value.FieldPath("namespace"))
-			cfgNamespaceStr := oam.SystemDefinitionNamespace
-			if cfgNamespace.Exists() {
-				cfgNamespaceStr, err = cfgNamespace.String()
-			}
-
-			content, _ := configreader.ReadConfig(ctx.GetCtx(), cfgNamespaceStr, cfgNameStr)
-
-			fieldPath := fmt.Sprintf("%s.%s.%s", "config", configKey, OutputFieldName)
-			preRender = preRender.FillPath(value.FieldPath(fieldPath), content)
-		}
-	}
-	return preRender, nil
-}
-
-func (wd *workloadDef) Render(ctx process.Context, tmpl string) (cue.Value, error) {
-	return cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), tmpl)
-}
-
 // Complete do workload definition's rendering
 func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, params interface{}) error {
-	var paramFile = velaprocess.ParameterFieldName + ": {}"
-	if params != nil {
-		bt, err := json.Marshal(params)
-		if err != nil {
-			return errors.WithMessagef(err, "marshal parameter of workload %s", wd.name)
-		}
-		if string(bt) != "null" {
-			paramFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
-		}
-	}
-
-	c, err := ctx.BaseContextFile()
+	rendered, err := render.ComponentEngine.Render(ctx, abstractTemplate, params)
 	if err != nil {
 		return err
 	}
-
-	tmpl := strings.Join([]string{
-		renderTemplate(abstractTemplate), paramFile, c,
-	}, "\n")
-
-	preRender, err := wd.PreRender(ctx, tmpl)
-
-	bytes, _ := preRender.MarshalJSON()
-	preRenderedStr := string(bytes)
-
-	val, err := wd.Render(ctx, preRenderedStr)
+	val, err := rendered.Compile(ctx)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile workload %s after merge parameter and context", wd.name)
@@ -353,17 +291,6 @@ func NewTraitAbstractEngine(name string) AbstractEngine {
 	}
 }
 
-func (td *traitDef) PreRender(ctx process.Context, tmpl string) (cue.Value, error) {
-	preRender := cuecontext.New().CompileString(tmpl)
-	config := preRender.LookupPath(value.FieldPath("config"))
-	if config.Exists() {
-		cfgName, _ := config.LookupPath(value.FieldPath("name")).String()
-		cfgNamespace, _ := config.LookupPath(value.FieldPath("namespace")).String()
-		preRender = preRender.FillPath(value.FieldPath("config.output"), fmt.Sprintf("%s:%s", cfgNamespace, cfgName))
-	}
-	return preRender, nil
-}
-
 func (td *traitDef) Render(ctx process.Context, tmpl string) (cue.Value, error) {
 	return cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), tmpl)
 }
@@ -387,12 +314,12 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 	}
 	buff += c
 
-	preRender, _ := td.PreRender(ctx, buff)
+	//preRender, _ := td.GetConfig(ctx, buff)
+	//
+	//bytes, _ := preRender.MarshalJSON()
+	//preRenderedStr := string(bytes)
 
-	bytes, _ := preRender.MarshalJSON()
-	preRenderedStr := string(bytes)
-
-	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), preRenderedStr)
+	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), buff)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile trait %s after merge parameter and context", td.name)

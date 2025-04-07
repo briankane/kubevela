@@ -18,9 +18,10 @@ package config
 
 import (
 	"context"
-	"github.com/oam-dev/kubevela/pkg/config/common"
 	"os"
 	"testing"
+
+	"github.com/oam-dev/kubevela/pkg/config/common"
 
 	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo/v2"

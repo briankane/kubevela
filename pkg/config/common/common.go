@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/oam-dev/kubevela/apis/types"
 	v1 "k8s.io/api/core/v1"
 	pkgtypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/oam-dev/kubevela/apis/types"
 )
 
 func ReadConfig(ctx context.Context, client client.Client, namespace string, name string) (map[string]interface{}, error) {

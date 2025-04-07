@@ -45,7 +45,9 @@ func TestWorkloadConfig(t *testing.T) {
 		ClusterVersion:  types.ClusterVersion{Minor: "19+"},
 	})
 	wt := NewWorkloadAbstractEngine("testWorkload")
-	params := map[string]interface{}{}
+	params := map[string]interface{}{
+		"hello": "world",
+	}
 	err := wt.Complete(ctx, strings.TrimSpace(`
 		config: {
 			test: name: "quadrant"
@@ -54,8 +56,12 @@ func TestWorkloadConfig(t *testing.T) {
 		output: {
 			apiVersion: "apps/v1"
 			kind: "Deployment"
-			metadata: name: config.test.output."quadrant-name"
+			metadata: name: config.test."quadrant-name"
 			spec: replicas: 1
+		}
+
+		parameter: {
+			hello: string
 		}
 	`), params)
 	assert.NoError(t, err)
