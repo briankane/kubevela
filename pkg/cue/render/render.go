@@ -3,8 +3,11 @@ package render
 import (
 	"bytes"
 	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/format"
+	"cuelang.org/go/cue/parser"
+	"cuelang.org/go/tools/fix"
 	"encoding/json"
 	"fmt"
 	"github.com/kubevela/pkg/cue/cuex"
@@ -16,6 +19,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/config/common"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/pkg/errors"
+	"k8s.io/klog"
 	"regexp"
 	"slices"
 	"strings"
@@ -55,6 +59,7 @@ func (rt RenderedTemplate) Compile(ctx process.Context) (cue.Value, error) {
 }
 
 type renderEngine interface {
+	GetImports(ctx process.Context, abstractTmpl string) (string, error)
 	PreRender(ctx process.Context, abstractTmpl string) (cue.Value, error)
 	GetContext(ctx process.Context, tmplCue cue.Value) (string, error)
 	GetConfiguration(ctx process.Context, tmplCue cue.Value) (string, error)
@@ -66,9 +71,16 @@ type renderEngine interface {
 }
 
 func Render(re renderEngine, ctx process.Context, abstractTmpl string, params map[string]interface{}) (RenderedTemplate, error) {
-	render, _ := re.PreRender(ctx, abstractTmpl)
-	context, _ := re.GetContext(ctx, render)
+	imports, err := re.GetImports(ctx, abstractTmpl)
+	if err != nil {
+		return "", err
+	}
+	render, err := re.PreRender(ctx, abstractTmpl)
+	if err != nil {
+		return "", err
+	}
 
+	context, _ := re.GetContext(ctx, render)
 	config, _ := re.GetConfiguration(ctx, render)
 	parameterTemplate, _ := re.GetParameterTemplate(ctx, render)
 	parameters, _ := re.GetParameters(ctx, render, params)
@@ -77,6 +89,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 	outputs, _ := re.GetOutputs(ctx, render)
 
 	data := struct {
+		Imports           string
 		Context           string
 		Config            string
 		ParameterTemplate string
@@ -85,6 +98,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 		Output            string
 		Outputs           string
 	}{
+		Imports:           imports,
 		Context:           context,
 		Config:            config,
 		ParameterTemplate: parameterTemplate,
@@ -95,6 +109,11 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 	}
 
 	var tmpl = strings.TrimSpace(dedent.Dedent(`
+		{{- if .Imports }}
+		// Imports
+		{{.Imports}}
+
+		{{- end}}
 		// Context Definition
 		context: [string]: _
 
@@ -138,6 +157,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 	}
 
 	str := regexp.MustCompile(`\n{3,}`).ReplaceAllString(buf.String(), "\n\n")
+	str = strings.TrimSpace(str)
 
 	return RenderedTemplate(str), nil
 }
@@ -146,9 +166,47 @@ type ComponentRenderEngine struct{}
 
 type TraitRenderEngine struct{}
 
+func (re ComponentRenderEngine) GetImports(ctx process.Context, abstractTmpl string) (string, error) {
+	var packageImports []string
+	for _, i := range cuex.DefaultCompiler.Get().GetImports() {
+		packageImports = append(packageImports, i.ImportPath)
+	}
+
+	var imports []string
+	file, err := parser.ParseFile("input.cue", abstractTmpl, parser.ImportsOnly)
+	if err != nil {
+		fmt.Printf("failed to parse abstract template: %v\n", err)
+		return "", err
+	}
+	n := fix.File(file)
+	for _, decl := range n.Decls {
+		if importDecl, ok := decl.(*ast.ImportDecl); ok {
+			imports = append(imports, importDecl.Specs[0].Path.Value)
+		}
+	}
+	if len(imports) > 0 {
+		var lines []string
+		for _, imp := range imports {
+			if !slices.Contains(packageImports, imp) {
+				return "", errors.New("package %s is not imported into compiler")
+			}
+			lines = append(lines, fmt.Sprintf("    %s", imp))
+		}
+		return "import (\n" + strings.Join(lines, ",\n") + "\n)", nil
+	}
+	return "", nil
+}
+
 func (re ComponentRenderEngine) PreRender(ctx process.Context, abstractTmpl string) (cue.Value, error) {
-	baseCtx, _ := ctx.BaseContextFile()
-	val := cuecontext.New().CompileString(abstractTmpl + "\n" + baseCtx)
+	baseCtx, err := ctx.BaseContextFile()
+	if err != nil {
+		klog.Errorf("failed to load base context file\n%v", err)
+		return cue.Value{}, err
+	}
+	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), abstractTmpl+"\n"+baseCtx)
+	if err != nil {
+		return cue.Value{}, err
+	}
 	return val, nil
 }
 
@@ -158,7 +216,10 @@ func (re ComponentRenderEngine) GetContext(ctx process.Context, tmplCue cue.Valu
 		return "{}", nil
 	}
 	syntax := ctxField.Syntax(cue.Raw())
-	b, _ := format.Node(syntax)
+	b, err := format.Node(syntax)
+	if err != nil {
+		klog.Errorf("failed to load context! \n%v", err)
+	}
 	return string(b), nil
 }
 
@@ -168,34 +229,29 @@ func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, tmplCue cu
 	if configField.Exists() {
 		iter, err := configField.Fields()
 		if err != nil {
-			panic(err)
+			klog.Errorf("couldn't load config fields\n%s", err)
+			return "", err
 		}
-
 		for iter.Next() {
 			configKey := iter.Label()
 			config := iter.Value()
-
-			cfgName := config.LookupPath(value.FieldPath("name"))
-			if !cfgName.Exists() {
-				continue
+			content, err := getConfigFromCueVal(ctx, configKey, config)
+			if err != nil {
+				klog.Errorf("couldn't load config `config.%s`\n%s", configKey, err)
+				return "", err
 			}
-			cfgNameStr, _ := cfgName.String()
-
-			cfgNamespace := config.LookupPath(value.FieldPath("namespace"))
-			cfgNamespaceStr := oam.SystemDefinitionNamespace
-			if cfgNamespace.Exists() {
-				cfgNamespaceStr, err = cfgNamespace.String()
-			}
-
-			content, _ := common.ReadConfig(ctx.GetCtx(), singleton.KubeClient.Get(), cfgNamespaceStr, cfgNameStr)
 			configMap[configKey] = content
 		}
 	}
-	cueStr, _ := json.Marshal(configMap)
+	cueStr, err := json.Marshal(configMap)
+	if err != nil {
+		klog.Errorf("failed to marshal field `config`\n%v", err)
+		return "", err
+	}
 	cueVal := cuecontext.New().CompileString(string(cueStr))
 	syntax := cueVal.Syntax(cue.Final())
-	b, _ := format.Node(syntax)
-	return string(b), nil
+	b, err := format.Node(syntax)
+	return string(b), err
 }
 
 func (re ComponentRenderEngine) GetParameterTemplate(ctx process.Context, tmplCue cue.Value) (string, error) {
@@ -204,8 +260,8 @@ func (re ComponentRenderEngine) GetParameterTemplate(ctx process.Context, tmplCu
 		return "{}", nil
 	}
 	syntax := paramField.Syntax(cue.Raw())
-	b, _ := format.Node(syntax)
-	return string(b), nil
+	b, err := format.Node(syntax)
+	return string(b), err
 }
 
 func (re ComponentRenderEngine) GetParameters(ctx process.Context, _ cue.Value, params map[string]interface{}) (string, error) {
@@ -218,8 +274,8 @@ func (re ComponentRenderEngine) GetParameters(ctx process.Context, _ cue.Value, 
 		cueStr := string(bt)
 		cueVal := cuecontext.New().CompileString(cueStr)
 		syntax := cueVal.Syntax(cue.Raw())
-		b, _ := format.Node(syntax)
-		return string(b), nil
+		b, err := format.Node(syntax)
+		return string(b), err
 	}
 	return "{}", nil
 }
@@ -230,9 +286,9 @@ func (re ComponentRenderEngine) GetFields(ctx process.Context, tmplCue cue.Value
 	for iter.Next() {
 		fieldName := iter.Selector().String()
 		if !slices.Contains(reserved, fieldName) {
-			syntax := iter.Value().Syntax(cue.Raw())
+			syntax := iter.Value().Syntax(cue.Final())
 			b, _ := format.Node(syntax)
-			output = output + fmt.Sprintf("%s: %s\n", fieldName, string(b))
+			output = output + fmt.Sprintf("%s: %s\n\n", fieldName, string(b))
 		}
 	}
 	return output, nil
@@ -244,7 +300,10 @@ func (re ComponentRenderEngine) GetOutput(ctx process.Context, tmplCue cue.Value
 		return "{}", nil
 	}
 	syntax := outputField.Syntax(cue.Raw())
-	b, _ := format.Node(syntax)
+	b, err := format.Node(syntax)
+	if err != nil {
+		return "", err
+	}
 	return string(b), nil
 }
 
@@ -256,4 +315,24 @@ func (re ComponentRenderEngine) GetOutputs(ctx process.Context, tmplCue cue.Valu
 	syntax := outputsField.Syntax(cue.Raw())
 	b, _ := format.Node(syntax)
 	return string(b), nil
+}
+
+func getConfigFromCueVal(ctx process.Context, key string, config cue.Value) (map[string]interface{}, error) {
+	cfgName := config.LookupPath(value.FieldPath("name"))
+	if !cfgName.Exists() {
+		return nil, errors.New(
+			fmt.Sprintf("Invalid configuration provided in field `config.%s`. Must specify `name` field.", key))
+	}
+	cfgNameStr, _ := cfgName.String()
+	cfgNamespace := config.LookupPath(value.FieldPath("namespace"))
+	cfgNamespaceStr := oam.SystemDefinitionNamespace
+	if cfgNamespace.Exists() {
+		ns, err := cfgNamespace.String()
+		if err != nil {
+			klog.Errorf("invalid string value supplied for `config.%s.name`\n%v", key, err)
+			return nil, err
+		}
+		cfgNamespaceStr = ns
+	}
+	return common.ReadConfig(ctx.GetCtx(), singleton.KubeClient.Get(), cfgNamespaceStr, cfgNameStr)
 }

@@ -32,6 +32,10 @@ func TestComponentRenderer(t *testing.T) {
 			value: "hello-world"
 		}
 
+		another: {
+			value: "another-\(test.value)"
+		}
+
 		parameter: {
 			"param1": string | "default"
 			"param2": string
@@ -54,8 +58,6 @@ func TestComponentRenderer(t *testing.T) {
 	if err != nil {
 		return
 	}
-
-	println(render.StrValue())
 
 	expected := strings.TrimSpace(dedent.Dedent(`
 		// Context Definition
@@ -111,6 +113,10 @@ func TestComponentRenderer(t *testing.T) {
 			value: "hello-world"
 		}
 
+		another: {
+			value: "another-hello-world"
+		}
+
 		// Output
 		output: {
 			apiVersion: "v1"
@@ -157,7 +163,6 @@ func TestComponentRenderer_NoParams(t *testing.T) {
 		return
 	}
 
-	println(render.StrValue())
 	expected := strings.TrimSpace(dedent.Dedent(`
 		// Context Definition
 		context: [string]: _

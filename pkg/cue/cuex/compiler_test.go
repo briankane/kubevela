@@ -154,7 +154,7 @@ func TestWorkloadCompiler(t *testing.T) {
 			expectedObj:            getExpectedObj(true),
 			expectedAdditionalObjs: make(map[string]runtime.Object),
 			hasCompileErr:          true,
-			errorString:            "builtin package \"cuex/ext\" undefined",
+			errorString:            "package %s is not imported into compiler",
 		},
 		"cuex enabled with external packages": {
 			cuexEnabled:            true,
@@ -166,31 +166,33 @@ func TestWorkloadCompiler(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		cuex.EnableExternalPackageForDefaultCompiler = tc.cuexEnabled
-		cuex.DefaultCompiler.Reload()
+	for id, tc := range testCases {
+		t.Run(id, func(t *testing.T) {
+			cuex.EnableExternalPackageForDefaultCompiler = tc.cuexEnabled
+			cuex.DefaultCompiler.Reload()
 
-		ctx := process.NewContext(process.ContextData{
-			AppName:         "test-app",
-			CompName:        "test-component",
-			Namespace:       testCtx.Namespace,
-			AppRevisionName: "test-app-v1",
-			ClusterVersion:  types.ClusterVersion{Minor: "19+"},
+			ctx := process.NewContext(process.ContextData{
+				AppName:         "test-app",
+				CompName:        "test-component",
+				Namespace:       testCtx.Namespace,
+				AppRevisionName: "test-app-v1",
+				ClusterVersion:  types.ClusterVersion{Minor: "19+"},
+			})
+
+			wt := definition.NewWorkloadAbstractEngine("test-workload")
+			err := wt.Complete(ctx, tc.workloadTemplate, tc.params)
+			assert.Equal(t, tc.hasCompileErr, err != nil)
+			if tc.hasCompileErr {
+				assert.NotNil(t, err)
+				assert.Contains(t, err.Error(), tc.errorString)
+			} else {
+				output, _ := ctx.Output()
+				assert.Nil(t, err)
+				assert.NotNil(t, output)
+				outputObj, _ := output.Unstructured()
+				assert.Equal(t, tc.expectedObj, outputObj)
+			}
 		})
-
-		wt := definition.NewWorkloadAbstractEngine("test-workload")
-		err := wt.Complete(ctx, tc.workloadTemplate, tc.params)
-		assert.Equal(t, tc.hasCompileErr, err != nil)
-		if tc.hasCompileErr {
-			assert.NotNil(t, err)
-			assert.Contains(t, err.Error(), tc.errorString)
-		} else {
-			output, _ := ctx.Output()
-			assert.Nil(t, err)
-			assert.NotNil(t, output)
-			outputObj, _ := output.Unstructured()
-			assert.Equal(t, tc.expectedObj, outputObj)
-		}
 	}
 }
 
