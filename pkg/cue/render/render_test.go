@@ -1,6 +1,7 @@
 package render
 
 import (
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 
@@ -21,10 +22,20 @@ func TestComponentRenderer(t *testing.T) {
 	})
 
 	render, err := ComponentEngine.Render(ctx, dedent.Dedent(`
-		config: {
+		$config: {
 			test: {
 				name: "quadrant"
 				namespace: "vela-system"
+			}
+		}
+
+		$data: {
+			"external-data": {
+				provider: "cuex-package-guidewire-data"
+				function: "getQuadrant"
+				params: {
+					quadrant: "dev"
+				}
 			}
 		}
 
@@ -48,16 +59,14 @@ func TestComponentRenderer(t *testing.T) {
 				"name": test.value
 			}
 			data: {
-				value: config.test."quadrant-name"
+				value: $config.test."quadrant-name"
 			}
 		}
 	`), map[string]interface{}{
 		"param1": "value",
 		"param2": "another",
 	})
-	if err != nil {
-		return
-	}
+	require.NoError(t, err)
 
 	expected := strings.TrimSpace(dedent.Dedent(`
 		// Context Definition
@@ -87,14 +96,20 @@ func TestComponentRenderer(t *testing.T) {
 		}
 
 		// Configuration Definition
-		config: [string]: _
+		$config: [string]: _
 
 		// Configuration Values
-		config: {
+		$config: {
 			test: {
 				"quadrant-name": "dev"
 			}
 		}
+
+		// Data Definition
+		$data: [string]: _
+
+		// Data Values
+		$data: {}
 
 		// Parameter Definition
 		parameter: {
@@ -125,7 +140,7 @@ func TestComponentRenderer(t *testing.T) {
 				name: test.value
 			}
 			data: {
-				value: config.test."quadrant-name"
+				value: $config.test."quadrant-name"
 			}
 		}
 
@@ -151,7 +166,7 @@ func TestComponentRenderer_NoParams(t *testing.T) {
 
 	render, err := ComponentEngine.Render(ctx, strings.TrimSpace(dedent.Dedent(`
 	context: {appName: "test-app"}
-		config: {
+		$config: {
 			test: {
 				name: "quadrant"
 				namespace: "vela-system"
@@ -191,14 +206,20 @@ func TestComponentRenderer_NoParams(t *testing.T) {
 		}
 
 		// Configuration Definition
-		config: [string]: _
+		$config: [string]: _
 
 		// Configuration Values
-		config: {
+		$config: {
 			test: {
 				"quadrant-name": "dev"
 			}
 		}
+
+		// Data Definition
+		$data: [string]: _
+
+		// Data Values
+		$data: {}
 
 		// Parameter Definition
 		parameter: {}
@@ -227,7 +248,7 @@ func TestComponentRenderer_BlankParams(t *testing.T) {
 
 	render, err := ComponentEngine.Render(ctx, strings.TrimSpace(dedent.Dedent(`
 		context: {appName: "test-app"}
-		config: {
+		$config: {
 			test: {
 				name: "quadrant"
 				namespace: "vela-system"
@@ -266,14 +287,20 @@ func TestComponentRenderer_BlankParams(t *testing.T) {
 		}
 
 		// Configuration Definition
-		config: [string]: _
+		$config: [string]: _
 
 		// Configuration Values
-		config: {
+		$config: {
 			test: {
 				"quadrant-name": "dev"
 			}
 		}
+
+		// Data Definition
+		$data: [string]: _
+
+		// Data Values
+		$data: {}
 
 		// Parameter Definition
 		parameter: {}

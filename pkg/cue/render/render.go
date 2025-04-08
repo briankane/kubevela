@@ -22,6 +22,7 @@ import (
 	"k8s.io/klog"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -31,7 +32,7 @@ var reserved = []string{
 	model.OutputsFieldName,
 	model.ParameterFieldName,
 	model.ContextFieldName,
-	"config",
+	"$config",
 }
 
 var ComponentEngine = newRenderer[ComponentRenderEngine]()
@@ -63,6 +64,7 @@ type renderEngine interface {
 	PreRender(ctx process.Context, abstractTmpl string) (cue.Value, error)
 	GetContext(ctx process.Context, tmplCue cue.Value) (string, error)
 	GetConfiguration(ctx process.Context, tmplCue cue.Value) (string, error)
+	GetData(ctx process.Context, tmplCue cue.Value) (string, error)
 	GetParameterTemplate(ctx process.Context, tmplCue cue.Value) (string, error)
 	GetParameters(ctx process.Context, tmplCue cue.Value, params map[string]interface{}) (string, error)
 	GetFields(ctx process.Context, tmplCue cue.Value) (string, error)
@@ -82,6 +84,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 
 	context, _ := re.GetContext(ctx, render)
 	config, _ := re.GetConfiguration(ctx, render)
+	d, _ := re.GetData(ctx, render)
 	parameterTemplate, _ := re.GetParameterTemplate(ctx, render)
 	parameters, _ := re.GetParameters(ctx, render, params)
 	fields, _ := re.GetFields(ctx, render)
@@ -92,6 +95,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 		Imports           string
 		Context           string
 		Config            string
+		Data              string
 		ParameterTemplate string
 		Parameters        string
 		Fields            string
@@ -101,6 +105,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 		Imports:           imports,
 		Context:           context,
 		Config:            config,
+		Data:              d,
 		ParameterTemplate: parameterTemplate,
 		Parameters:        parameters,
 		Fields:            fields,
@@ -121,10 +126,16 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 		context: {{.Context}}
 
 		// Configuration Definition
-		config: [string]: _
+		$config: [string]: _
 
 		// Configuration Values
-		config: {{.Config}}
+		$config: {{.Config}}
+
+		// Data Definition
+		$data: [string]: _
+
+		// Data Values
+		$data: {{.Data}}
 
 		// Parameter Definition
 		parameter: {{.ParameterTemplate}}
@@ -159,6 +170,7 @@ func Render(re renderEngine, ctx process.Context, abstractTmpl string, params ma
 	str := regexp.MustCompile(`\n{3,}`).ReplaceAllString(buf.String(), "\n\n")
 	str = strings.TrimSpace(str)
 
+	println(str)
 	return RenderedTemplate(str), nil
 }
 
@@ -181,7 +193,11 @@ func (re ComponentRenderEngine) GetImports(ctx process.Context, abstractTmpl str
 	n := fix.File(file)
 	for _, decl := range n.Decls {
 		if importDecl, ok := decl.(*ast.ImportDecl); ok {
-			imports = append(imports, importDecl.Specs[0].Path.Value)
+			imp, err := strconv.Unquote(importDecl.Specs[0].Path.Value)
+			if err != nil {
+				return "", err
+			}
+			imports = append(imports, imp)
 		}
 	}
 	if len(imports) > 0 {
@@ -190,7 +206,7 @@ func (re ComponentRenderEngine) GetImports(ctx process.Context, abstractTmpl str
 			if !slices.Contains(packageImports, imp) {
 				return "", errors.New("package %s is not imported into compiler")
 			}
-			lines = append(lines, fmt.Sprintf("    %s", imp))
+			lines = append(lines, fmt.Sprintf("    %q", imp))
 		}
 		return "import (\n" + strings.Join(lines, ",\n") + "\n)", nil
 	}
@@ -210,7 +226,7 @@ func (re ComponentRenderEngine) PreRender(ctx process.Context, abstractTmpl stri
 	return val, nil
 }
 
-func (re ComponentRenderEngine) GetContext(ctx process.Context, tmplCue cue.Value) (string, error) {
+func (re ComponentRenderEngine) GetContext(_ process.Context, tmplCue cue.Value) (string, error) {
 	ctxField := tmplCue.LookupPath(cue.ParsePath("context"))
 	if !ctxField.Exists() {
 		return "{}", nil
@@ -225,7 +241,7 @@ func (re ComponentRenderEngine) GetContext(ctx process.Context, tmplCue cue.Valu
 
 func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, tmplCue cue.Value) (string, error) {
 	var configMap = make(map[string]interface{})
-	configField := tmplCue.LookupPath(cue.ParsePath("config"))
+	configField := tmplCue.LookupPath(cue.ParsePath("$config"))
 	if configField.Exists() {
 		iter, err := configField.Fields()
 		if err != nil {
@@ -237,7 +253,7 @@ func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, tmplCue cu
 			config := iter.Value()
 			content, err := getConfigFromCueVal(ctx, configKey, config)
 			if err != nil {
-				klog.Errorf("couldn't load config `config.%s`\n%s", configKey, err)
+				klog.Errorf("couldn't load config `$config.%s`\n%s", configKey, err)
 				return "", err
 			}
 			configMap[configKey] = content
@@ -245,7 +261,7 @@ func (re ComponentRenderEngine) GetConfiguration(ctx process.Context, tmplCue cu
 	}
 	cueStr, err := json.Marshal(configMap)
 	if err != nil {
-		klog.Errorf("failed to marshal field `config`\n%v", err)
+		klog.Errorf("failed to marshal field `$config`\n%v", err)
 		return "", err
 	}
 	cueVal := cuecontext.New().CompileString(string(cueStr))
@@ -280,7 +296,38 @@ func (re ComponentRenderEngine) GetParameters(ctx process.Context, _ cue.Value, 
 	return "{}", nil
 }
 
-func (re ComponentRenderEngine) GetFields(ctx process.Context, tmplCue cue.Value) (string, error) {
+func (re ComponentRenderEngine) GetData(ctx process.Context, tmplCue cue.Value) (string, error) {
+	var dataMap = make(map[string]cue.Value)
+	dataField := tmplCue.LookupPath(cue.ParsePath("$data"))
+	if dataField.Exists() {
+		iter, err := dataField.Fields()
+		if err != nil {
+			klog.Errorf("couldn't load $data fields\n%s", err)
+			return "", err
+		}
+		for iter.Next() {
+			dataKey := iter.Label()
+			data := iter.Value()
+			content, err := getDataFromCue(ctx, dataKey, data)
+			if err != nil {
+				klog.Errorf("couldn't load data `$data.%s`\n%s", dataKey, err)
+				return "", err
+			}
+			dataMap[dataKey] = content
+		}
+	}
+	cueStr, err := json.Marshal(dataMap)
+	if err != nil {
+		klog.Errorf("failed to marshal field `$data`\n%v", err)
+		return "", err
+	}
+	cueVal := cuecontext.New().CompileString(string(cueStr))
+	syntax := cueVal.Syntax(cue.Final())
+	b, err := format.Node(syntax)
+	return string(b), err
+}
+
+func (re ComponentRenderEngine) GetFields(_ process.Context, tmplCue cue.Value) (string, error) {
 	output := ""
 	iter, _ := tmplCue.Fields()
 	for iter.Next() {
@@ -294,7 +341,7 @@ func (re ComponentRenderEngine) GetFields(ctx process.Context, tmplCue cue.Value
 	return output, nil
 }
 
-func (re ComponentRenderEngine) GetOutput(ctx process.Context, tmplCue cue.Value) (string, error) {
+func (re ComponentRenderEngine) GetOutput(_ process.Context, tmplCue cue.Value) (string, error) {
 	outputField := tmplCue.LookupPath(cue.ParsePath("output"))
 	if !outputField.Exists() {
 		return "{}", nil
@@ -307,7 +354,7 @@ func (re ComponentRenderEngine) GetOutput(ctx process.Context, tmplCue cue.Value
 	return string(b), nil
 }
 
-func (re ComponentRenderEngine) GetOutputs(ctx process.Context, tmplCue cue.Value) (string, error) {
+func (re ComponentRenderEngine) GetOutputs(_ process.Context, tmplCue cue.Value) (string, error) {
 	outputsField := tmplCue.LookupPath(cue.ParsePath("outputs"))
 	if !outputsField.Exists() {
 		return "{}", nil
@@ -335,4 +382,37 @@ func getConfigFromCueVal(ctx process.Context, key string, config cue.Value) (map
 		cfgNamespaceStr = ns
 	}
 	return common.ReadConfig(ctx.GetCtx(), singleton.KubeClient.Get(), cfgNamespaceStr, cfgNameStr)
+}
+
+func getDataFromCue(ctx process.Context, key string, data cue.Value) (cue.Value, error) {
+	provider := data.LookupPath(value.FieldPath("provider"))
+	if !provider.Exists() {
+		return cue.Value{}, errors.New(fmt.Sprintf("provider not set in `data.%s`", key))
+	}
+	providerStr, _ := provider.String()
+
+	fnVal := data.LookupPath(value.FieldPath("function"))
+	if !fnVal.Exists() {
+		return cue.Value{}, errors.New(fmt.Sprintf("function not set in `data.%s`", key))
+	}
+	fnStr, _ := fnVal.String()
+
+	paramsAlias := data.LookupPath(value.FieldPath("params"))
+	if paramsAlias.Exists() {
+		data = data.FillPath(value.FieldPath("$params"), paramsAlias)
+	}
+
+	if p, ok := cuex.DefaultCompiler.Get().GetProviders()[providerStr]; ok {
+		fn := p.GetProviderFn(fnStr)
+		result, err := fn.Call(ctx.GetCtx(), data)
+		if err != nil {
+			return cue.Value{}, err
+		}
+		returnsVal := result.LookupPath(value.FieldPath("$returns"))
+		if returnsVal.Exists() {
+			return returnsVal, nil
+		}
+		return cue.Value{}, nil
+	}
+	return cue.Value{}, errors.New(fmt.Sprintf("no package %s found in compiler", providerStr))
 }
