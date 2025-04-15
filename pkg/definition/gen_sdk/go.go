@@ -309,7 +309,7 @@ func (m *GoModuleModifier) tidyMainMod() error {
 // 2. replace the package name
 func (m *GoDefModifier) modifyDefs() error {
 	changeNullableType := func(b []byte) []byte {
-		return regexp.MustCompile("Nullable(String|(Float|Int)(32|64)|Bool)").ReplaceAll(b, []byte("utils.Nullable$1"))
+		return regexp.MustCompile("Nullable(Template|(Float|Int)(32|64)|Bool)").ReplaceAll(b, []byte("utils.Nullable$1"))
 	}
 
 	files, err := os.ReadDir(m.defDir)

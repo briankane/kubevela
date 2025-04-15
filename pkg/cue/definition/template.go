@@ -97,11 +97,10 @@ func NewWorkloadAbstractEngine(name string) AbstractEngine {
 
 // Complete do workload definition's rendering
 func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, params interface{}) error {
-	rendered, err := render.ComponentEngine.Render(ctx, abstractTemplate, params)
+	val, err := render.ComponentRenderer(ctx).Render(abstractTemplate, params)
 	if err != nil {
 		return err
 	}
-	val, err := rendered.Compile(ctx)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile workload %s after merge parameter and context", wd.name)

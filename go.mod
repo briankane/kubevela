@@ -40,6 +40,7 @@ require (
 	github.com/kubevela/pkg v1.9.3-0.20241203070234-2cf98778c0a9
 	github.com/kubevela/workflow v0.6.1-0.20250226022524-23468c911a01
 	github.com/kyokomi/emoji v2.2.4+incompatible
+	github.com/lithammer/dedent v1.1.0
 	github.com/magiconair/properties v1.8.7
 	github.com/mattn/go-runewidth v0.0.15
 	github.com/mitchellh/hashstructure/v2 v2.0.2
