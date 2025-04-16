@@ -17,7 +17,15 @@ limitations under the License.
 package definition
 
 import (
+	"bytes"
+	"encoding/json"
+	"github.com/kubevela/pkg/util/singleton"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1837,4 +1845,381 @@ parameter: {
 			assert.Equal(t, got, v.expAssObjs[ss.Name])
 		}
 	}
+}
+
+func TestConfigFieldInWorkload(t *testing.T) {
+	testCases := map[string]struct {
+		createConfig       bool
+		configValues       map[string]interface{}
+		configNamespace    string
+		configName         string
+		namespaceRequired  bool
+		lookupNamespace    string
+		lookupName         string
+		expectedCompileErr string
+		expected           *unstructured.Unstructured
+	}{
+		"happy path": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+				"type": "a-cluster-type",
+			},
+			configNamespace:   "vela-system",
+			configName:        "test-config",
+			namespaceRequired: false,
+			lookupNamespace:   "vela-system",
+			lookupName:        "test-config",
+			expected: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]interface{}{
+						"name": "deployment",
+						"labels": map[string]interface{}{
+							"name": "a-test-cluster",
+							"type": "a-cluster-type",
+						},
+					},
+					"spec": map[string]interface{}{"replicas": int64(1)},
+				},
+			},
+		},
+		"happy path with defaulted value not in config": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+			},
+			configNamespace:   "vela-system",
+			configName:        "test-config",
+			namespaceRequired: false,
+			lookupNamespace:   "vela-system",
+			lookupName:        "test-config",
+			expected: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]interface{}{
+						"name": "deployment",
+						"labels": map[string]interface{}{
+							"name": "a-test-cluster",
+							"type": "default",
+						},
+					},
+					"spec": map[string]interface{}{"replicas": int64(1)},
+				},
+			},
+		},
+		"no name provided for config": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+				"type": "a-cluster-type",
+			},
+			configNamespace:    "vela-system",
+			configName:         "test-config",
+			namespaceRequired:  false,
+			lookupNamespace:    "vela-system",
+			expectedCompileErr: "Invalid configuration provided in field `config.cluster`. Must specify `name` field.",
+		},
+		"namespace is blank and uses oam default": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+				"type": "a-cluster-type",
+			},
+			configNamespace:   "vela-system",
+			configName:        "test-config",
+			namespaceRequired: false,
+			lookupNamespace:   "",
+			lookupName:        "test-config",
+			expected: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]interface{}{
+						"name": "deployment",
+						"labels": map[string]interface{}{
+							"name": "a-test-cluster",
+							"type": "a-cluster-type",
+						},
+					},
+					"spec": map[string]interface{}{"replicas": int64(1)},
+				},
+			},
+		},
+		"namespace is empty but marked required": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+				"type": "a-cluster-type",
+			},
+			configNamespace:    "",
+			configName:         "test-config",
+			namespaceRequired:  true,
+			lookupNamespace:    "",
+			lookupName:         "test-config",
+			expectedCompileErr: "config.cluster.namespace: non-concrete value string",
+		},
+		"namespace is null but marked required": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+				"type": "a-cluster-type",
+			},
+			configNamespace:    "vela-system",
+			configName:         "test-config",
+			namespaceRequired:  true,
+			lookupNamespace:    "",
+			lookupName:         "test-config",
+			expectedCompileErr: "config.cluster.namespace: non-concrete value string",
+		},
+		"namespace is null and uses oam default": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"name": "a-test-cluster",
+				"type": "a-cluster-type",
+			},
+			configNamespace:   "vela-system",
+			configName:        "test-config",
+			namespaceRequired: false,
+			lookupName:        "test-config",
+			expected: &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]interface{}{
+						"name": "deployment",
+						"labels": map[string]interface{}{
+							"name": "a-test-cluster",
+							"type": "a-cluster-type",
+						},
+					},
+					"spec": map[string]interface{}{"replicas": int64(1)},
+				},
+			},
+		},
+		"referenced parameter names do not exist in config": {
+			createConfig: true,
+			configValues: map[string]interface{}{
+				"not-used": "an-unused-value",
+			},
+			configNamespace:    "vela-system",
+			configName:         "test-config",
+			namespaceRequired:  false,
+			lookupName:         "test-config",
+			lookupNamespace:    "vela-system",
+			expectedCompileErr: "",
+			expected:           nil, // TODO - why is this not validating the nested cue correctly?
+		},
+		"missing config": {
+			createConfig:       false,
+			namespaceRequired:  true,
+			lookupNamespace:    "vela-system",
+			lookupName:         "test-config",
+			expectedCompileErr: "secrets \"test-config\" not found",
+		},
+	}
+
+	for testId, testCase := range testCases {
+		t.Run(testId, func(t *testing.T) {
+			if testCase.createConfig {
+				secret, err := createSecret(testCase.configName, testCase.configNamespace, testCase.configValues)
+				require.NoError(t, err)
+
+				cl := fake.NewClientBuilder().WithObjects(secret).Build()
+				singleton.KubeClient.Set(cl)
+				defer singleton.KubeClient.Reload()
+			}
+
+			ctx := process.NewContext(process.ContextData{
+				AppName:         "myapp",
+				CompName:        "test",
+				Namespace:       "default",
+				AppRevisionName: "myapp-v1",
+				ClusterVersion:  types.ClusterVersion{Minor: "19+"},
+			})
+
+			wt := NewWorkloadAbstractEngine("testWorkload")
+			params := map[string]interface{}{
+				"config": testCase.lookupName,
+			}
+
+			data := struct {
+				Namespace         string
+				Name              string
+				NamespaceRequired bool
+				NameRequired      bool
+			}{
+				Namespace:         testCase.lookupNamespace,
+				Name:              testCase.lookupName,
+				NamespaceRequired: testCase.namespaceRequired,
+				NameRequired:      len(testCase.lookupName) > 0,
+			}
+
+			tmpl := strings.TrimSpace(`
+				parameter: {
+					config: string
+				}
+		
+				config: {
+					cluster: {
+						namespace{{ if not .NamespaceRequired }}?{{ end }}: string
+						name?: string
+						output: {
+							type: string | *"default"
+							name?: string
+						}
+					}
+				}
+		
+				config: {
+					cluster: {
+						{{ if .Namespace }}
+						namespace: "{{ .Namespace }}"
+						{{ end }}
+						{{ if .NameRequired }}name: parameter.config{{ end }}
+					}
+				}
+		
+				output: {
+					apiVersion: "apps/v1"
+					kind: "Deployment"
+					metadata: {
+						name: "deployment"
+						labels: {
+							"name": config.cluster.output.name,
+							"type": config.cluster.output.type,
+						}
+					}
+					spec: replicas: 1
+				}
+		
+				parameter: {
+					hello: string
+				}
+			`)
+			defTmpl, err := template.New("definition").Parse(tmpl)
+			require.NoError(t, err)
+
+			var buf bytes.Buffer
+			err = defTmpl.Execute(&buf, data)
+			require.NoError(t, err)
+
+			err = wt.Complete(ctx, buf.String(), params)
+			if len(testCase.expectedCompileErr) > 0 {
+				require.Contains(t, err.Error(), testCase.expectedCompileErr)
+				return
+			} else {
+				require.NoError(t, err)
+			}
+
+			if testCase.createConfig {
+				require.NoError(t, err)
+			} else {
+				require.Errorf(t, err, "secrets %s not found", testCase.configName)
+				return
+			}
+
+			base, _ := ctx.Output()
+
+			baseObj, err := base.Unstructured()
+			assert.Equal(t, testCase.expected, baseObj)
+		})
+	}
+}
+
+func TestConfigFieldInTrait(t *testing.T) {
+	secret, err := createSecret("test-config", "vela-system", map[string]interface{}{
+		"name": "test-value",
+	})
+	require.NoError(t, err)
+
+	cl := fake.NewClientBuilder().WithObjects(secret).Build()
+	singleton.KubeClient.Set(cl)
+	defer singleton.KubeClient.Reload()
+
+	baseTemplate := strings.TrimSpace(`
+		parameter: {}		
+		output: {
+			apiVersion: "apps/v1"
+			kind:       "Deployment"
+			spec: selector: matchLabels: "app.oam.dev/component": context.name
+		}
+	`)
+	traitTemplate := strings.TrimSpace(`
+		parameter: {}
+
+		config: {
+			test: {
+				name: "test-config"
+				namespace: "vela-system"
+			}
+		}
+
+		outputs: test: {
+			apiVersion: "apps/v1"
+			kind: "Deployment"
+			metadata: {
+				name: "deployment"
+				labels: {
+					"name": config.test.output.name
+				}
+			}
+			spec: replicas: 1
+		}
+	`)
+	ctx := process.NewContext(process.ContextData{
+		AppName:         "myapp",
+		CompName:        "test",
+		Namespace:       "default",
+		AppRevisionName: "myapp-v1",
+	})
+
+	wt := NewWorkloadAbstractEngine("-")
+	if err := wt.Complete(ctx, baseTemplate, map[string]interface{}{}); err != nil {
+		t.Error(err)
+		return
+	}
+
+	td := NewTraitAbstractEngine("test")
+	err = td.Complete(ctx, traitTemplate, map[string]string{})
+	require.NoError(t, err)
+	base, assists := ctx.Output()
+	require.NotNil(t, base)
+
+	traitOutput, err := assists[0].Ins.Unstructured()
+	assert.NoError(t, err)
+
+	assert.Equal(t, &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]interface{}{
+			"name": "deployment",
+			"labels": map[string]interface{}{
+				"name": "test-value",
+			},
+		},
+		"spec": map[string]interface{}{
+			"replicas": int64(1),
+		},
+	}}, traitOutput)
+}
+
+func createSecret(name string, namespace string, value map[string]interface{}) (*corev1.Secret, error) {
+	config, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	data := map[string][]byte{
+		"input-properties": config,
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: data,
+	}
+	return secret, nil
 }

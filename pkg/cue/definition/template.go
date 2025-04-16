@@ -20,6 +20,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kubevela/pkg/util/singleton"
+	"github.com/oam-dev/kubevela/pkg/config/common"
+	"k8s.io/klog/v2"
 	"strings"
 
 	"github.com/kubevela/pkg/cue/cuex"
@@ -124,6 +127,15 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 	if err := val.Validate(); err != nil {
 		return errors.WithMessagef(err, "invalid cue template of workload %s after merge parameter and context", wd.name)
 	}
+
+	config := val.LookupPath(value.FieldPath("config"))
+	if config.Exists() {
+		val, err = readConfig(ctx, val)
+		if err != nil {
+			return errors.WithMessagef(err, "invalid config supplied to workload %s", wd.name)
+		}
+	}
+
 	output := val.LookupPath(value.FieldPath(OutputFieldName))
 	base, err := model.NewBase(output)
 	if err != nil {
@@ -334,6 +346,14 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 		return errors.WithMessagef(err, "invalid template of trait %s after merge with parameter and context", td.name)
 	}
 
+	config := val.LookupPath(value.FieldPath("config"))
+	if config.Exists() {
+		val, err = readConfig(ctx, val)
+		if err != nil {
+			return errors.WithMessagef(err, "invalid config supplied to trait %s", td.name)
+		}
+	}
+
 	processing := val.LookupPath(value.FieldPath("processing"))
 	if processing.Exists() {
 		if val, err = task.Process(val); err != nil {
@@ -522,4 +542,50 @@ func getResourceFromObj(ctx context.Context, pctx process.Context, obj *unstruct
 		}
 	}
 	return nil, errors.Errorf("no resources found gvk(%v) labels(%v)", obj.GroupVersionKind(), labels)
+}
+
+func readConfig(ctx process.Context, val cue.Value) (cue.Value, error) {
+	configField := val.LookupPath(value.FieldPath("config"))
+	if !configField.Exists() {
+		return val, nil
+	}
+
+	iter, _ := configField.Fields()
+	for iter.Next() {
+		configKey := iter.Label()
+		configEntryVal := iter.Value()
+
+		configVal, err := getConfigFromCueVal(ctx, configKey, configEntryVal)
+		if err != nil {
+			return val, errors.WithMessagef(err, "failed to read config from `%s.%s`", "config", configKey)
+		}
+		val = val.FillPath(value.FieldPath("config."+configKey+".output"), configVal)
+	}
+	return val, nil
+}
+
+func getConfigFromCueVal(ctx process.Context, key string, config cue.Value) (map[string]interface{}, error) {
+	cfgName := config.LookupPath(value.FieldPath("name"))
+	if !cfgName.Exists() {
+		return nil, errors.New(
+			fmt.Sprintf("Invalid configuration provided in field `%s.%s`. Must specify `name` field.", "config", key))
+	}
+	cfgNameStr, err := cfgName.String()
+	if err != nil {
+		klog.Errorf("error reading config at `config.%s.name`\n%v", key, err)
+		return nil, err
+	}
+	cfgNamespace := config.LookupPath(value.FieldPath("namespace"))
+	cfgNamespaceStr := oam.SystemDefinitionNamespace
+	if cfgNamespace.Exists() {
+		ns, err := cfgNamespace.String()
+		if err != nil {
+			klog.Errorf("invalid string value supplied for `config.%s.namespace`\n%v", key, err)
+			return nil, err
+		}
+		if len(ns) > 0 {
+			cfgNamespaceStr = ns
+		}
+	}
+	return common.ReadConfig(ctx.GetCtx(), singleton.KubeClient.Get(), cfgNamespaceStr, cfgNameStr)
 }

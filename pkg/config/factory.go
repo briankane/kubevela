@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	configcommon "github.com/oam-dev/kubevela/pkg/config/common"
 	"strings"
 	"time"
 
@@ -51,57 +52,6 @@ import (
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/utils/apply"
 )
-
-// SaveInputPropertiesKey define the key name for saving the input properties in the secret.
-const SaveInputPropertiesKey = "input-properties"
-
-// SaveObjectReferenceKey define the key name for saving the outputs objects reference metadata in the secret.
-const SaveObjectReferenceKey = "objects-reference"
-
-// SaveExpandedWriterKey define the key name for saving the expanded writer config
-const SaveExpandedWriterKey = "expanded-writer"
-
-// SaveSchemaKey define the key name for saving the API schema
-const SaveSchemaKey = "schema"
-
-// SaveTemplateKey define the key name for saving the config-template
-const SaveTemplateKey = "template"
-
-// TemplateConfigMapNamePrefix the prefix of the configmap name.
-const TemplateConfigMapNamePrefix = "config-template-"
-
-// TemplateValidationReturns define the key name for the config-template validation returns
-const TemplateValidationReturns = SaveTemplateKey + ".validation.$returns"
-
-// TemplateOutput define the key name for the config-template output
-const TemplateOutput = SaveTemplateKey + ".output"
-
-// TemplateOutputs define the key name for the config-template outputs
-const TemplateOutputs = SaveTemplateKey + ".outputs"
-
-// ErrSensitiveConfig means this config can not be read directly.
-var ErrSensitiveConfig = errors.New("the config is sensitive")
-
-// ErrNoConfigOrTarget means the config or the target is empty.
-var ErrNoConfigOrTarget = errors.New("you must specify the config name and destination to distribute")
-
-// ErrNotFoundDistribution means the app of the distribution does not exist.
-var ErrNotFoundDistribution = errors.New("the distribution does not found")
-
-// ErrConfigExist means the config does exist.
-var ErrConfigExist = errors.New("the config does exist")
-
-// ErrConfigNotFound means the config does not exist
-var ErrConfigNotFound = errors.New("the config does not exist")
-
-// ErrTemplateNotFound means the template does not exist
-var ErrTemplateNotFound = errors.New("the template does not exist")
-
-// ErrChangeTemplate means the template of the config can not be changed
-var ErrChangeTemplate = errors.New("the template of the config can not be changed")
-
-// ErrChangeSecretType means the secret type of the config can not be changed
-var ErrChangeSecretType = errors.New("the secret type of the config can not be changed")
 
 // NamespacedName the namespace and name model
 type NamespacedName struct {
@@ -309,23 +259,23 @@ func (k *kubeConfigFactory) ParseTemplate(ctx context.Context, defaultName strin
 	}
 
 	var configmap v1.ConfigMap
-	configmap.Name = TemplateConfigMapNamePrefix + template.Name
+	configmap.Name = configcommon.TemplateConfigMapNamePrefix + template.Name
 
 	configmap.Data = map[string]string{
-		SaveTemplateKey: string(template.Template),
+		configcommon.SaveTemplateKey: string(template.Template),
 	}
 	if template.Schema != nil {
 		data, err := yaml.Marshal(template.Schema)
 		if err != nil {
 			return nil, err
 		}
-		configmap.Data[SaveSchemaKey] = string(data)
+		configmap.Data[configcommon.SaveSchemaKey] = string(data)
 	}
 	data, err := yaml.Marshal(template.ExpandedWriter)
 	if err != nil {
 		return nil, err
 	}
-	configmap.Data[SaveExpandedWriterKey] = string(data)
+	configmap.Data[configcommon.SaveExpandedWriterKey] = string(data)
 	configmap.Labels = map[string]string{
 		types.LabelConfigCatalog: types.VelaCoreConfig,
 		types.LabelConfigScope:   template.Scope,
@@ -366,7 +316,7 @@ func convertConfigMap2Template(cm v1.ConfigMap) (*Template, error) {
 	}
 	it := &Template{
 		NamespacedName: NamespacedName{
-			Name:      strings.Replace(cm.Name, TemplateConfigMapNamePrefix, "", 1),
+			Name:      strings.Replace(cm.Name, configcommon.TemplateConfigMapNamePrefix, "", 1),
 			Namespace: cm.Namespace,
 		},
 		Alias:       cm.Annotations[types.AnnotationConfigAlias],
@@ -374,19 +324,19 @@ func convertConfigMap2Template(cm v1.ConfigMap) (*Template, error) {
 		Sensitive:   cm.Annotations[types.AnnotationConfigSensitive] == "true",
 		Scope:       cm.Labels[types.LabelConfigScope],
 		CreateTime:  cm.CreationTimestamp.Time,
-		Template:    script.CUE(cm.Data[SaveTemplateKey]),
+		Template:    script.CUE(cm.Data[configcommon.SaveTemplateKey]),
 	}
-	if cm.Data[SaveSchemaKey] != "" {
+	if cm.Data[configcommon.SaveSchemaKey] != "" {
 		var schema openapi3.Schema
-		err := yaml.Unmarshal([]byte(cm.Data[SaveSchemaKey]), &schema)
+		err := yaml.Unmarshal([]byte(cm.Data[configcommon.SaveSchemaKey]), &schema)
 		if err != nil {
 			return nil, fmt.Errorf("fail to parse the schema: %w", err)
 		}
 		it.Schema = &schema
 	}
-	if cm.Data[SaveExpandedWriterKey] != "" {
+	if cm.Data[configcommon.SaveExpandedWriterKey] != "" {
 		var config writer.ExpandedWriterConfig
-		err := yaml.Unmarshal([]byte(cm.Data[SaveExpandedWriterKey]), &config)
+		err := yaml.Unmarshal([]byte(cm.Data[configcommon.SaveExpandedWriterKey]), &config)
 		if err != nil {
 			return nil, fmt.Errorf("fail to parse the schema: %w", err)
 		}
@@ -398,7 +348,7 @@ func convertConfigMap2Template(cm v1.ConfigMap) (*Template, error) {
 // DeleteTemplate delete the config template
 func (k *kubeConfigFactory) DeleteTemplate(ctx context.Context, ns, name string) error {
 	var configmap v1.ConfigMap
-	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: ns, Name: TemplateConfigMapNamePrefix + name}, &configmap); err != nil {
+	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: ns, Name: configcommon.TemplateConfigMapNamePrefix + name}, &configmap); err != nil {
 		if apierrors.IsNotFound(err) {
 			return fmt.Errorf("the config template %s not found", name)
 		}
@@ -437,9 +387,9 @@ func (k *kubeConfigFactory) ListTemplates(ctx context.Context, ns, scope string)
 // LoadTemplate load the template
 func (k *kubeConfigFactory) LoadTemplate(ctx context.Context, name, ns string) (*Template, error) {
 	var cm v1.ConfigMap
-	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: ns, Name: TemplateConfigMapNamePrefix + name}, &cm); err != nil {
+	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: ns, Name: configcommon.TemplateConfigMapNamePrefix + name}, &cm); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, ErrTemplateNotFound
+			return nil, configcommon.ErrTemplateNotFound
 		}
 		return nil, err
 	}
@@ -473,7 +423,7 @@ func (k *kubeConfigFactory) ParseConfig(ctx context.Context,
 			return nil, err
 		}
 		// Render the validation response and check validation result
-		valid := val.LookupPath(cue.ParsePath(TemplateValidationReturns))
+		valid := val.LookupPath(cue.ParsePath(configcommon.TemplateValidationReturns))
 		validation := Validation{}
 		if valid.Exists() {
 			if err := valid.Decode(&validation); err != nil {
@@ -484,7 +434,7 @@ func (k *kubeConfigFactory) ParseConfig(ctx context.Context,
 			return nil, &validation
 		}
 		// Render the output secret
-		output := val.LookupPath(cue.ParsePath(TemplateOutput))
+		output := val.LookupPath(cue.ParsePath(configcommon.TemplateOutput))
 		if output.Exists() {
 			if err := output.Decode(&secret); err != nil {
 				return nil, fmt.Errorf("the output format must be secret")
@@ -516,7 +466,7 @@ func (k *kubeConfigFactory) ParseConfig(ctx context.Context,
 		config.ExpandedWriterData = data
 
 		// Render the outputs objects
-		outputs := val.LookupPath(cue.ParsePath(TemplateOutputs))
+		outputs := val.LookupPath(cue.ParsePath(configcommon.TemplateOutputs))
 		if outputs.Exists() {
 			var objects = map[string]interface{}{}
 			if err := outputs.Decode(&objects); err != nil {
@@ -543,7 +493,7 @@ func (k *kubeConfigFactory) ParseConfig(ctx context.Context,
 			if secret.Data == nil {
 				secret.Data = map[string][]byte{}
 			}
-			secret.Data[SaveObjectReferenceKey] = objectReferenceJSON
+			secret.Data[configcommon.SaveObjectReferenceKey] = objectReferenceJSON
 		}
 	} else {
 		secret.Labels = map[string]string{
@@ -565,45 +515,33 @@ func (k *kubeConfigFactory) ParseConfig(ctx context.Context,
 	if secret.Data == nil {
 		secret.Data = map[string][]byte{}
 	}
-	secret.Data[SaveInputPropertiesKey] = pp
+	secret.Data[configcommon.SaveInputPropertiesKey] = pp
 
 	return config, nil
 }
 
 // ReadConfig read the config secret
 func (k *kubeConfigFactory) ReadConfig(ctx context.Context, namespace, name string) (map[string]interface{}, error) {
-	var secret v1.Secret
-	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: namespace, Name: name}, &secret); err != nil {
-		return nil, err
-	}
-	if secret.Annotations[types.AnnotationConfigSensitive] == "true" {
-		return nil, ErrSensitiveConfig
-	}
-	properties := secret.Data[SaveInputPropertiesKey]
-	var input = map[string]interface{}{}
-	if err := json.Unmarshal(properties, &input); err != nil {
-		return nil, err
-	}
-	return input, nil
+	return configcommon.ReadConfig(ctx, k.cli, namespace, name)
 }
 
 func (k *kubeConfigFactory) GetConfig(ctx context.Context, namespace, name string, withStatus bool) (*Config, error) {
 	var secret v1.Secret
 	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: namespace, Name: name}, &secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, ErrConfigNotFound
+			return nil, configcommon.ErrConfigNotFound
 		}
 		return nil, err
 	}
 	if secret.Annotations[types.AnnotationConfigSensitive] == "true" {
-		return nil, ErrSensitiveConfig
+		return nil, configcommon.ErrSensitiveConfig
 	}
 	item, err := convertSecret2Config(&secret)
 	if err != nil {
 		return nil, err
 	}
 	if withStatus {
-		if err := k.MergeDistributionStatus(ctx, item, item.Namespace); err != nil && !errors.Is(err, ErrNotFoundDistribution) {
+		if err := k.MergeDistributionStatus(ctx, item, item.Namespace); err != nil && !errors.Is(err, configcommon.ErrNotFoundDistribution) {
 			klog.Warningf("fail to merge the status %s:%s", item.Name, err.Error())
 		}
 	}
@@ -616,10 +554,10 @@ func (k *kubeConfigFactory) CreateOrUpdateConfig(ctx context.Context, i *Config,
 	var secret v1.Secret
 	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: i.Namespace, Name: i.Name}, &secret); err == nil {
 		if secret.Labels[types.LabelConfigType] != i.Template.Name {
-			return ErrChangeTemplate
+			return configcommon.ErrChangeTemplate
 		}
 		if i.Secret.Type != "" && secret.Type != i.Secret.Type {
-			return ErrChangeSecretType
+			return configcommon.ErrChangeSecretType
 		}
 	}
 
@@ -688,7 +626,7 @@ func (k *kubeConfigFactory) ListConfigs(ctx context.Context, namespace, template
 		}
 		if it != nil {
 			if withStatus {
-				if err := k.MergeDistributionStatus(ctx, it, it.Namespace); err != nil && !errors.Is(err, ErrNotFoundDistribution) {
+				if err := k.MergeDistributionStatus(ctx, it, it.Namespace); err != nil && !errors.Is(err, configcommon.ErrNotFoundDistribution) {
 					klog.Warningf("fail to merge the status %s:%s", item.Name, err.Error())
 				}
 			}
@@ -710,7 +648,7 @@ func (k *kubeConfigFactory) DeleteConfig(ctx context.Context, namespace, name st
 		return fmt.Errorf("found a secret but is not a config")
 	}
 
-	if objects, exist := secret.Data[SaveObjectReferenceKey]; exist {
+	if objects, exist := secret.Data[configcommon.SaveObjectReferenceKey]; exist {
 		var objectReferences []v1.ObjectReference
 		if err := json.Unmarshal(objects, &objectReferences); err != nil {
 			return err
@@ -729,7 +667,7 @@ func (k *kubeConfigFactory) MergeDistributionStatus(ctx context.Context, config 
 	app := &v1beta1.Application{}
 	if err := k.cli.Get(ctx, pkgtypes.NamespacedName{Namespace: namespace, Name: DefaultDistributionName(config.Name)}, app); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ErrNotFoundDistribution
+			return configcommon.ErrNotFoundDistribution
 		}
 		return err
 	}
@@ -769,7 +707,7 @@ func (k *kubeConfigFactory) MergeDistributionStatus(ctx context.Context, config 
 func (k *kubeConfigFactory) CreateOrUpdateDistribution(ctx context.Context, ns, name string, ads *CreateDistributionSpec) error {
 	policies := convertTarget2TopologyPolicy(ads.Targets)
 	if len(policies) == 0 {
-		return ErrNoConfigOrTarget
+		return configcommon.ErrNoConfigOrTarget
 	}
 	// create the share policy
 	shareSpec := v1alpha1.SharedResourcePolicySpec{
@@ -799,7 +737,7 @@ func (k *kubeConfigFactory) CreateOrUpdateDistribution(ctx context.Context, ns, 
 		})
 	}
 	if len(objects) == 0 {
-		return ErrNoConfigOrTarget
+		return configcommon.ErrNoConfigOrTarget
 	}
 
 	objectsBytes, err := json.Marshal(map[string][]map[string]string{"objects": objects})
@@ -888,7 +826,7 @@ func (k *kubeConfigFactory) DeleteDistribution(ctx context.Context, ns, name str
 	}
 	if err := k.cli.Delete(ctx, app); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ErrNotFoundDistribution
+			return configcommon.ErrNotFoundDistribution
 		}
 		return err
 	}
@@ -942,9 +880,9 @@ func convertSecret2Config(se *v1.Secret) (*Config, error) {
 		config.Template.Namespace = se.Annotations[types.AnnotationConfigTemplateNamespace]
 		config.Template.Sensitive = se.Annotations[types.AnnotationConfigSensitive] == "true"
 	}
-	if !config.Template.Sensitive && len(se.Data[SaveInputPropertiesKey]) > 0 {
+	if !config.Template.Sensitive && len(se.Data[configcommon.SaveInputPropertiesKey]) > 0 {
 		var properties = map[string]interface{}{}
-		if err := yaml.Unmarshal(se.Data[SaveInputPropertiesKey], &properties); err != nil {
+		if err := yaml.Unmarshal(se.Data[configcommon.SaveInputPropertiesKey], &properties); err != nil {
 			return nil, err
 		}
 		config.Properties = properties
@@ -957,7 +895,7 @@ func convertSecret2Config(se *v1.Secret) (*Config, error) {
 		seCope.StringData = nil
 		config.Secret = seCope
 	}
-	if content, ok := se.Data[SaveObjectReferenceKey]; ok {
+	if content, ok := se.Data[configcommon.SaveObjectReferenceKey]; ok {
 		var objectReferences []v1.ObjectReference
 		if err := json.Unmarshal(content, &objectReferences); err != nil {
 			klog.Warningf("the object references are invalid, config:%s", se.Name)
