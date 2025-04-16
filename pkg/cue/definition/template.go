@@ -575,5 +575,9 @@ func getConfigFromCueVal(ctx process.Context, key string, config cue.Value) (map
 			cfgNamespaceStr = ns
 		}
 	}
-	return common.ReadConfig(ctx.GetCtx(), singleton.KubeClient.Get(), cfgNamespaceStr, cfgNameStr)
+	cfg, err := common.ReadConfig(ctx.GetCtx(), singleton.KubeClient.Get(), cfgNamespaceStr, cfgNameStr)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "could not retrieve config `%s` in namespace `%s`", cfgNameStr, cfgNamespaceStr)
+	}
+	return cfg, nil
 }
