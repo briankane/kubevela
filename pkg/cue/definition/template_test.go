@@ -19,9 +19,13 @@ package definition
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/kubevela/pkg/util/singleton"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"net/http"
+	"net/http/httptest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"strings"
 	"testing"
@@ -2127,6 +2131,127 @@ func TestConfigFieldInWorkload(t *testing.T) {
 			assert.Equal(t, testCase.expected, baseObj)
 		})
 	}
+}
+
+func TestConfigFieldWithinCuexParameter(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte(fmt.Sprintf("{\"name\": \"test\"}")))
+		if err != nil {
+			return
+		}
+	}))
+	defer mockServer.Close()
+
+	packagePath := "test/ext"
+	packageObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "cue.oam.dev/v1alpha1",
+			"kind":       "Package",
+			"metadata": map[string]interface{}{
+				"name":      "test-package",
+				"namespace": "vela-system",
+			},
+			"spec": map[string]interface{}{
+				"path": packagePath,
+				"provider": map[string]interface{}{
+					"endpoint": mockServer.URL,
+					"protocol": "http",
+				},
+				"templates": map[string]interface{}{
+					"test/ext": strings.TrimSpace(`
+                        package ext
+                        #TestFunction: {
+                            #do: "test",
+                            #provider: "test-package",
+                            $params: {
+                                name: string
+                            },
+                            $returns: {
+                                name: string
+                            }
+                        }
+                    `),
+				},
+			},
+		},
+	}
+
+	secret, err := createSecret("test-config", "vela-system", map[string]interface{}{
+		"name": "test-value",
+	})
+	require.NoError(t, err)
+
+	cl := fake.NewClientBuilder().WithObjects(secret).Build()
+	dcl := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), packageObj)
+	singleton.KubeClient.Set(cl)
+	singleton.DynamicClient.Set(dcl)
+	defer singleton.ReloadClients()
+
+	ctx := process.NewContext(process.ContextData{
+		AppName:         "myapp",
+		CompName:        "test",
+		Namespace:       "default",
+		AppRevisionName: "myapp-v1",
+		ClusterVersion:  types.ClusterVersion{Minor: "19+"},
+	})
+
+	wt := NewWorkloadAbstractEngine("testWorkload")
+	params := map[string]interface{}{}
+
+	tmpl := strings.TrimSpace(`
+		import (
+			"test/ext"
+		)
+
+		config: {
+			cluster: {
+				namespace: string
+				name?: string
+				output: {
+					type: string | *"default"
+					name: string
+				}
+			}
+		}
+
+		config: {
+			cluster: {
+				name: "test-config"
+				namespace: "vela-system"
+			}
+		}
+
+		aValue: ext.#TestFunction & {
+			$params: {
+				name: config.cluster.output.name
+			}
+		}
+
+		output: {
+			apiVersion: "apps/v1"
+			kind: "Deployment"
+			metadata: {
+				name: aValue.$returns.name
+			}
+		}
+	`)
+	require.NoError(t, err)
+
+	err = wt.Complete(ctx, tmpl, params)
+	require.NoError(t, err)
+
+	base, _ := ctx.Output()
+
+	expected := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]interface{}{
+			"name": "test",
+		},
+	}}
+	baseObj, err := base.Unstructured()
+	assert.Equal(t, expected, baseObj)
 }
 
 func TestConfigFieldInTrait(t *testing.T) {
