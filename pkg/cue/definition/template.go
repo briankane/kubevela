@@ -112,9 +112,20 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		return err
 	}
 
-	val, err := cuex.DefaultCompiler.Get().CompileString(ctx.GetCtx(), strings.Join([]string{
+	fn := func(_ context.Context, val cue.Value) (cue.Value, error) {
+		config := val.LookupPath(value.FieldPath("config"))
+		if config.Exists() {
+			val, err = readConfig(ctx, val)
+			if err != nil {
+				return val, errors.WithMessagef(err, "invalid config supplied to workload %s", wd.name)
+			}
+		}
+		return val, nil
+	}
+
+	val, err := cuex.DefaultCompiler.Get().CompileStringWithOptions(ctx.GetCtx(), strings.Join([]string{
 		renderTemplate(abstractTemplate), paramFile, c,
-	}, "\n"))
+	}, "\n"), cuex.WithIntraResolveMutation("config", fn))
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile workload %s after merge parameter and context", wd.name)
@@ -122,14 +133,6 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 
 	if err := val.Validate(); err != nil {
 		return errors.WithMessagef(err, "invalid cue template of workload %s after merge parameter and context", wd.name)
-	}
-
-	config := val.LookupPath(value.FieldPath("config"))
-	if config.Exists() {
-		val, err = readConfig(ctx, val)
-		if err != nil {
-			return errors.WithMessagef(err, "invalid config supplied to workload %s", wd.name)
-		}
 	}
 
 	output := val.LookupPath(value.FieldPath(OutputFieldName))

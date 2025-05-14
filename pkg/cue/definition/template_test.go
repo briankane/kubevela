@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/kubevela/pkg/cue/cuex"
 	"github.com/kubevela/pkg/util/singleton"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -2186,7 +2187,9 @@ func TestConfigFieldWithinCuexParameter(t *testing.T) {
 	dcl := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), packageObj)
 	singleton.KubeClient.Set(cl)
 	singleton.DynamicClient.Set(dcl)
+	cuex.DefaultCompiler.Reload()
 	defer singleton.ReloadClients()
+	defer cuex.DefaultCompiler.Reload()
 
 	ctx := process.NewContext(process.ContextData{
 		AppName:         "myapp",
