@@ -18,6 +18,7 @@ package providers
 
 import (
 	"context"
+	"github.com/oam-dev/kubevela/pkg/workflow/providers/addon"
 
 	"github.com/kubevela/pkg/cue/cuex"
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
@@ -64,6 +65,7 @@ var compiler = singleton.NewSingletonE[*cuex.Compiler](func() (*cuex.Compiler, e
 		runtime.Must(cuexruntime.NewInternalPackage("time", time.GetTemplate(), time.GetProviders())),
 		runtime.Must(cuexruntime.NewInternalPackage("util", util.GetTemplate(), util.GetProviders())),
 		runtime.Must(cuexruntime.NewInternalPackage("builtin", builtin.GetTemplate(), builtin.GetProviders())),
+		runtime.Must(cuexruntime.NewInternalPackage("addon", addon.GetTemplate(), addon.GetProviders())),
 
 		// kubevela internal packages
 		runtime.Must(cuexruntime.NewInternalPackage("multicluster", multicluster.GetTemplate(), multicluster.GetProviders())),

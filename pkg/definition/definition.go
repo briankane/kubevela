@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	velacue "github.com/oam-dev/kubevela/pkg/cue"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -36,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
@@ -45,11 +45,9 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	velacue "github.com/oam-dev/kubevela/pkg/cue"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	"github.com/oam-dev/kubevela/pkg/utils/filters"
-	"github.com/oam-dev/kubevela/pkg/workflow/providers"
 )
 
 const (
@@ -379,7 +377,7 @@ func (def *Definition) FromYAML(data []byte) error {
 }
 
 // FromCUEString converts cue string into Definition
-func (def *Definition) FromCUEString(cueString string, _ *rest.Config) error {
+func (def *Definition) FromCUEString(cueString string, compiler CuexCompiler) error {
 	// cuectx := cuecontext.New()
 	f, err := parser.ParseFile("-", cueString, parser.ParseComments)
 	if err != nil {
@@ -430,7 +428,7 @@ func (def *Definition) FromCUEString(cueString string, _ *rest.Config) error {
 		return errors.Wrapf(err, "failed to encode template decls to string")
 	}
 
-	inst, err := providers.DefaultCompiler.Get().CompileStringWithOptions(context.Background(), metadataString, cuex.DisableResolveProviderFunctions{})
+	inst, err := compiler.CompileStringWithOptions(context.Background(), metadataString, cuex.DisableResolveProviderFunctions{})
 	if err != nil {
 		return err
 	}
@@ -438,7 +436,7 @@ func (def *Definition) FromCUEString(cueString string, _ *rest.Config) error {
 	if err != nil {
 		return err
 	}
-	if _, err := providers.DefaultCompiler.Get().CompileStringWithOptions(context.Background(), templateString+"\n"+velacue.BaseTemplate, cuex.DisableResolveProviderFunctions{}); err != nil {
+	if _, err := compiler.CompileStringWithOptions(context.Background(), templateString+"\n"+velacue.BaseTemplate, cuex.DisableResolveProviderFunctions{}); err != nil {
 		return err
 	}
 	return def.FromCUE(&inst, templateString)
@@ -638,4 +636,8 @@ func formatCUEString(cueString string) (string, error) {
 		return "", errors.Wrapf(err, "failed to format node during formating cue string")
 	}
 	return string(b), nil
+}
+
+type CuexCompiler interface {
+	CompileStringWithOptions(ctx context.Context, src string, opts ...cuex.CompileOption) (cue.Value, error)
 }

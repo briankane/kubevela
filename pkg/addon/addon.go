@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/vendor/github.com/kubevela/pkg/cue/cuex"
 	"io"
 	"net/http"
 	"net/url"
@@ -687,7 +688,7 @@ func RenderDefinitions(addon *InstallPackage, config *rest.Config) ([]*unstructu
 	}
 	for _, cueDef := range addon.CUEDefinitions {
 		def := definition.Definition{Unstructured: unstructured.Unstructured{}}
-		err := def.FromCUEString(cueDef.Data, config)
+		err := def.FromCUEString(cueDef.Data, cuex.DefaultCompiler.Get())
 		if err != nil {
 			return nil, errors.Wrapf(err, "fail to render definition: %s in cue's format", cueDef.Name)
 		}
