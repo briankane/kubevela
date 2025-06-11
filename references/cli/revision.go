@@ -16,6 +16,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/oam-dev/kubevela/vendor/github.com/kubevela/pkg/cue/cuex"
 	"io"
 
 	"github.com/kubevela/pkg/util/compression"
@@ -145,7 +146,7 @@ func getRevision(ctx context.Context, c common.Args, format string, out io.Write
 		return fmt.Errorf("Unable to get application revision %s in namespace %s", name, namespace) //lint:ignore ST1005 backward compatibility
 	}
 
-	queryValue, err := velaql.NewViewHandler(cli, kubeConfig).QueryView(ctx, query)
+	queryValue, err := velaql.NewViewHandler(cli, kubeConfig).QueryView(ctx, cuex.DefaultCompiler.Get(), query)
 	if err != nil {
 		klog.Errorf("fail to query the view %s", err.Error())
 		return fmt.Errorf("Unable to get application revision %s in namespace %s", name, namespace) //lint:ignore ST1005 backward compatibility

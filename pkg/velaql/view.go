@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	qlcompiler "github.com/oam-dev/kubevela/pkg/velaql/compiler"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -42,7 +43,6 @@ import (
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	"github.com/oam-dev/kubevela/pkg/utils/apply"
-	"github.com/oam-dev/kubevela/pkg/workflow/providers"
 	oamprovidertypes "github.com/oam-dev/kubevela/pkg/workflow/providers/types"
 	"github.com/oam-dev/kubevela/pkg/workflow/template"
 )
@@ -71,7 +71,7 @@ func NewViewHandler(cli client.Client, cfg *rest.Config) *ViewHandler {
 }
 
 // QueryView generate view step
-func (handler *ViewHandler) QueryView(ctx context.Context, qv QueryView) (cue.Value, error) {
+func (handler *ViewHandler) QueryView(ctx context.Context, compiler qlcompiler.Compiler, qv QueryView) (cue.Value, error) {
 	outputsTemplate := fmt.Sprintf(OutputsTemplate, qv.Export, qv.Export)
 	queryKey := QueryParameterKey{}
 	if err := json.Unmarshal([]byte(outputsTemplate), &queryKey); err != nil {
@@ -90,7 +90,7 @@ func (handler *ViewHandler) QueryView(ctx context.Context, qv QueryView) (cue.Va
 	if err != nil {
 		return cue.Value{}, fmt.Errorf("failed to load query templates: %w", err)
 	}
-	v, err := providers.DefaultCompiler.Get().CompileStringWithOptions(ctx, temp, cuex.WithExtraData("parameter", qv.Parameter))
+	v, err := compiler.CompileStringWithOptions(ctx, temp, cuex.WithExtraData("parameter", qv.Parameter))
 	if err != nil {
 		return cue.Value{}, fmt.Errorf("failed to compile query: %w", err)
 	}
@@ -119,8 +119,8 @@ func (handler *ViewHandler) delete(ctx context.Context, _ client.Client, _ strin
 // ValidateView makes sure the cue provided can use as view.
 //
 // For now, we only check 1. cue is valid 2. `status` or `view` field exists
-func ValidateView(ctx context.Context, viewStr string) error {
-	val, err := providers.DefaultCompiler.Get().CompileStringWithOptions(ctx, viewStr, cuex.DisableResolveProviderFunctions{})
+func ValidateView(ctx context.Context, compiler qlcompiler.Compiler, viewStr string) error {
+	val, err := compiler.CompileStringWithOptions(ctx, viewStr, cuex.DisableResolveProviderFunctions{})
 	if err != nil {
 		return errors.Errorf("error when parsing view: %v", err)
 	}
@@ -137,8 +137,8 @@ func ValidateView(ctx context.Context, viewStr string) error {
 
 // ParseViewIntoConfigMap parses a CUE string (representing a view) into a ConfigMap
 // ready to be stored into etcd.
-func ParseViewIntoConfigMap(ctx context.Context, viewStr, name string) (*v1.ConfigMap, error) {
-	err := ValidateView(ctx, viewStr)
+func ParseViewIntoConfigMap(ctx context.Context, compiler qlcompiler.Compiler, viewStr, name string) (*v1.ConfigMap, error) {
+	err := ValidateView(ctx, compiler, viewStr)
 	if err != nil {
 		return nil, err
 	}
@@ -166,13 +166,13 @@ func ParseViewIntoConfigMap(ctx context.Context, viewStr, name string) (*v1.Conf
 // So the user can use the view in VelaQL later.
 //
 // By saying file, it can actually be a file, URL, or stdin (-).
-func StoreViewFromFile(ctx context.Context, c client.Client, path, viewName string) error {
+func StoreViewFromFile(ctx context.Context, compiler qlcompiler.Compiler, c client.Client, path, viewName string) error {
 	content, err := utils.ReadRemoteOrLocalPath(path, false)
 	if err != nil {
 		return errors.Errorf("cannot load cue file: %v", err)
 	}
 
-	cm, err := ParseViewIntoConfigMap(ctx, string(content), viewName)
+	cm, err := ParseViewIntoConfigMap(ctx, compiler, string(content), viewName)
 	if err != nil {
 		return err
 	}

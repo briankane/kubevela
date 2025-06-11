@@ -6,9 +6,15 @@
 
 	$params: {
 		name:      				string
-		version: 	 				string
+		version: 	 			string
 		overrideDefs?: 		bool | *false
 		skipValidations?: bool | *false
-		properties?: 			[string]: string
+		args?: 						[string]: _
 	}
+
+//	$returns: {
+//		installed: 	bool
+//		appName?: 	string
+//		namespace?: string
+//	}
 }

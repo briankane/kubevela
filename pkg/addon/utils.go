@@ -19,6 +19,7 @@ package addon
 import (
 	"context"
 	"fmt"
+	"github.com/kubevela/pkg/cue/cuex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -221,7 +222,7 @@ func findLegacyAddonDefs(ctx context.Context, k8sClient client.Client, addonName
 			}
 			for _, cueDef := range uiData.CUEDefinitions {
 				def := definition.Definition{Unstructured: unstructured.Unstructured{}}
-				err := def.FromCUEString(cueDef.Data, config)
+				err := def.FromCUEString(cueDef.Data, cuex.DefaultCompiler.Get())
 				if err != nil {
 					// don't let one error defined cue definition block whole disable process
 					continue

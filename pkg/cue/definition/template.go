@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/emirpasic/gods/utils"
 	"strings"
 
 	"github.com/kubevela/pkg/cue/cuex"
@@ -243,6 +244,7 @@ func checkHealth(templateContext map[string]interface{}, healthPolicyTemplate st
 	var buff = healthPolicyTemplate + "\n" + runtimeContextBuff
 
 	val := cuecontext.New().CompileString(buff)
+	println(utils.ToString(val))
 	healthy, err := val.LookupPath(value.FieldPath(HealthCheckPolicy)).Bool()
 	if err != nil {
 		return false, errors.WithMessage(err, "evaluate health status")

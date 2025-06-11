@@ -18,6 +18,7 @@ package velaql
 
 import (
 	"context"
+	qlcompiler "github.com/oam-dev/kubevela/pkg/velaql/compiler"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,7 +27,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/oam-dev/kubevela/pkg/utils"
-	"github.com/oam-dev/kubevela/pkg/workflow/providers"
 )
 
 // QueryView contains query data
@@ -99,12 +99,12 @@ func ParseVelaQL(ql string) (QueryView, error) {
 }
 
 // ParseVelaQLFromPath will parse a velaQL file path to QueryView
-func ParseVelaQLFromPath(ctx context.Context, velaQLViewPath string) (*QueryView, error) {
+func ParseVelaQLFromPath(ctx context.Context, compiler qlcompiler.Compiler, velaQLViewPath string) (*QueryView, error) {
 	body, err := utils.ReadRemoteOrLocalPath(velaQLViewPath, false)
 	if err != nil {
 		return nil, errors.Errorf("read view file from %s: %v", velaQLViewPath, err)
 	}
-	val, err := providers.DefaultCompiler.Get().CompileString(ctx, string(body))
+	val, err := compiler.CompileString(ctx, string(body))
 	if err != nil {
 		return nil, errors.Errorf("error when parsing view: %v", err)
 	}

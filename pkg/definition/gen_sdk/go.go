@@ -399,7 +399,7 @@ func (m *GoDefModifier) genCommonFunc() []*j.Statement {
 	j.Op("=").Lit(m.name)
 	defStruct := j.Type().Id(m.defStructName).Struct(
 		j.Id("Base").Id("apis").Dot(DefinitionKindToBaseType[kind]),
-		j.Id("Properties").Id(m.specNameInPascalCase),
+		j.Id("Args").Id(m.specNameInPascalCase),
 	)
 
 	initFunc := j.Func().Id("init").Params().BlockFunc(func(g *j.Group) {
@@ -434,8 +434,8 @@ func (m *GoDefModifier) genCommonFunc() []*j.Statement {
 	stepType := DefinitionKindToStatement[v1beta1.WorkflowStepDefinitionKind]
 	builderDict := j.Dict{
 		// all definition have type and properties
-		j.Id("Type"):       j.Add(typeName),
-		j.Id("Properties"): j.Qual("util", "Object2RawExtension").Params(j.Id(m.defFuncReceiver).Dot("Properties")),
+		j.Id("Type"): j.Add(typeName),
+		j.Id("Args"): j.Qual("util", "Object2RawExtension").Params(j.Id(m.defFuncReceiver).Dot("Args")),
 	}
 	builderDictValues := map[string][]string{
 		v1beta1.PolicyDefinitionKind:       {"Name"},
@@ -470,7 +470,7 @@ func (m *GoDefModifier) genCommonFunc() []*j.Statement {
 			g.Add(j.For(j.List(j.Id("_"), j.Id("_s").Op(":=").Range().Id("_subSteps"))).Block(
 				j.Id("subSteps").Op("=").Append(j.Id("subSteps"), j.Qual("common", "WorkflowSubStep").ValuesFunc(
 					func(_g *j.Group) {
-						for _, v := range []string{"Name", "DependsOn", "Inputs", "Outputs", "If", "Timeout", "Meta", "Properties", "Type"} {
+						for _, v := range []string{"Name", "DependsOn", "Inputs", "Outputs", "If", "Timeout", "Meta", "Args", "Type"} {
 							_g.Add(j.Id(v).Op(":").Id("_s").Dot(v))
 						}
 					}),
@@ -544,8 +544,8 @@ func (m *GoDefModifier) genFromFunc() []*j.Statement {
 				}
 				g.Add(j.Var().Id("properties").Id(m.specNameInPascalCase))
 				g.Add(
-					j.If(j.Id("from").Dot("Properties").Op("!=").Nil()).Block(
-						j.Err().Op(":=").Qual("json", "Unmarshal").Call(j.Id("from").Dot("Properties").Dot("Raw"), j.Op("&").Id("properties")),
+					j.If(j.Id("from").Dot("Args").Op("!=").Nil()).Block(
+						j.Err().Op(":=").Qual("json", "Unmarshal").Call(j.Id("from").Dot("Args").Dot("Raw"), j.Op("&").Id("properties")),
 						j.If(j.Err().Op("!=").Nil()).Block(
 							j.Return(j.Nil(), j.Err()),
 						),
@@ -557,7 +557,7 @@ func (m *GoDefModifier) genFromFunc() []*j.Statement {
 					g.Add(j.Id(m.defFuncReceiver).Dot("Base").Dot(prop).Op("=").Id("from").Dot(prop))
 				}
 				g.Add(j.Id(m.defFuncReceiver).Dot("Base").Dot("Type").Op("=").Id(m.typeVarName))
-				g.Add(j.Id(m.defFuncReceiver).Dot("Properties").Op("=").Id("properties"))
+				g.Add(j.Id(m.defFuncReceiver).Dot("Args").Op("=").Id("properties"))
 
 				assignSubSteps(sub)(g)
 				g.Add(j.Return(j.Id(m.defFuncReceiver), j.Nil()))
@@ -746,15 +746,15 @@ func (m *GoDefModifier) exportMethods() error {
 	fileStr = strings.ReplaceAll(fileStr, "func (o "+from, "func (o "+to)
 
 	// replace all function receiver in function body
-	// o.foo -> o.Properties.foo
+	// o.foo -> o.Args.foo
 	// o.Base keeps the same
 	// seek the MarshalJSON function, replace functions before it
 	parts := strings.SplitN(fileStr, "MarshalJSON", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("can't find MarshalJSON function")
 	}
-	parts[0] = strings.ReplaceAll(parts[0], "o.", "o.Properties.")
-	parts[0] = strings.ReplaceAll(parts[0], "o.Properties.Base", "o.Base")
+	parts[0] = strings.ReplaceAll(parts[0], "o.", "o.Args.")
+	parts[0] = strings.ReplaceAll(parts[0], "o.Args.Base", "o.Base")
 	fileStr = parts[0] + "MarshalJSON" + parts[1]
 
 	return os.WriteFile(fileLoc, []byte(fileStr), 0600)

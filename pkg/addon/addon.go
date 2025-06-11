@@ -21,7 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/oam-dev/kubevela/vendor/github.com/kubevela/pkg/cue/cuex"
+	"github.com/kubevela/pkg/cue/cuex"
+	qlcompiler "github.com/oam-dev/kubevela/pkg/velaql"
 	"io"
 	"net/http"
 	"net/url"
@@ -69,12 +70,10 @@ import (
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
-	"github.com/oam-dev/kubevela/pkg/schema"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	addonutil "github.com/oam-dev/kubevela/pkg/utils/addon"
 	"github.com/oam-dev/kubevela/pkg/utils/apply"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
-	"github.com/oam-dev/kubevela/pkg/velaql"
 	version2 "github.com/oam-dev/kubevela/version"
 )
 
@@ -591,11 +590,11 @@ func unmarshalToContent(content []byte) (fileContent *github.RepositoryContent, 
 }
 
 func genAddonAPISchema(addonRes *UIData) error {
-	s, err := schema.ParsePropertiesToSchema(context.Background(), addonRes.Parameters)
-	if err != nil {
-		return err
-	}
-	addonRes.APISchema = s
+	//s, err := schema.ParsePropertiesToSchema(context.Background(), addonRes.Parameters)
+	//if err != nil {
+	//	return err
+	//}
+	//addonRes.APISchema = s
 	return nil
 }
 
@@ -818,7 +817,7 @@ func renderCUEView(ctx context.Context, elem ElementFile) (*unstructured.Unstruc
 		return nil, err
 	}
 
-	cm, err := velaql.ParseViewIntoConfigMap(ctx, elem.Data, name)
+	cm, err := qlcompiler.ParseViewIntoConfigMap(ctx, cuex.DefaultCompiler.Get(), elem.Data, name)
 	if err != nil {
 		return nil, err
 	}
@@ -1425,9 +1424,9 @@ func hasClustersParameters(ctx context.Context, k8sClient client.Client, addonNa
 	if addonPackage.APISchema == nil {
 		return false, nil
 	}
-	schemas := addonPackage.APISchema.Properties
-	_, hasClusters := schemas[types.ClustersArg]
-	return hasClusters, nil
+	//schemas := addonPackage.APISchema.Args
+	//_, hasClusters := schemas[types.ClustersArg]
+	return true, nil
 }
 
 // hasNotCoveredClusters check if the clusterArgsValue can cover the values of addonClusters,

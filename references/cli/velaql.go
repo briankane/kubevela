@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/vendor/github.com/kubevela/pkg/cue/cuex"
 	"regexp"
 	"strings"
 
@@ -363,7 +364,7 @@ func QueryValue(ctx context.Context, velaC common.Args, queryView *velaql.QueryV
 	if err != nil {
 		return cue.Value{}, err
 	}
-	queryValue, err := velaql.NewViewHandler(client, config).QueryView(ctx, *queryView)
+	queryValue, err := velaql.NewViewHandler(client, config).QueryView(ctx, cuex.DefaultCompiler.Get(), *queryView)
 	if err != nil {
 		return cue.Value{}, err
 	}

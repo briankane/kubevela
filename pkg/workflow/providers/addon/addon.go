@@ -26,11 +26,13 @@ type Params struct {
 	Version        string                 `json:"version"`
 	OverrideDefs   bool                   `json:"overrideDefs,omitempty"`
 	SkipValidation bool                   `json:"skipValidation,omitempty"`
-	Properties     map[string]interface{} `json:"properties,omitempty"`
+	Args           map[string]interface{} `json:"args,omitempty"`
 }
 
 type Returns struct {
-	Installed bool `json:"installed"`
+	Installed bool   `json:"installed"`
+	AppName   string `json:"appName,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 type EnableParams = providertypes.Params[Params]
@@ -69,7 +71,7 @@ func EnableAddon(ctx context.Context, params *EnableParams) (*providertypes.Retu
 		if len(registryName) != 0 && registryName != registry.Name {
 			continue
 		}
-		_, err = addon.EnableAddon(ctx, addonName, params.Params.Version, k8s, dc, applicator, cfg, registry, params.Params.Properties, nil, addon.FilterDependencyRegistries(i, registries), opts...)
+		_, err = addon.EnableAddon(ctx, addonName, params.Params.Version, k8s, dc, applicator, cfg, registry, params.Params.Args, nil, addon.FilterDependencyRegistries(i, registries), opts...)
 		if errors.Is(err, addon.ErrNotExist) || errors.Is(err, addon.ErrFetch) {
 			continue
 		}
@@ -77,7 +79,11 @@ func EnableAddon(ctx context.Context, params *EnableParams) (*providertypes.Retu
 			return &EnableReturns{Returns: Returns{Installed: false}}, err
 		}
 		if ok := waitApplicationRunning(k8s, addonName); ok {
-			return &EnableReturns{Returns: Returns{Installed: true}}, nil
+			return &EnableReturns{Returns: Returns{
+				Installed: true,
+				AppName:   addonutil.Addon2AppName(addonName),
+				Namespace: types.DefaultKubeVelaNS,
+			}}, nil
 		} else {
 			return &EnableReturns{Returns: Returns{Installed: false}}, fmt.Errorf("addon: %s failed to enable, please check the application status", addonName)
 		}

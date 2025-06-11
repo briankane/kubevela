@@ -19,6 +19,7 @@ package velaql
 import (
 	"context"
 	"fmt"
+	"github.com/kubevela/pkg/cue/cuex"
 	"os"
 	"strconv"
 	"testing"
@@ -51,7 +52,7 @@ var _ = Describe("Test VelaQL View", func() {
 		query, err := ParseVelaQL(velaQL)
 		Expect(err).ShouldNot(HaveOccurred())
 
-		queryValue, err := viewHandler.QueryView(context.Background(), query)
+		queryValue, err := viewHandler.QueryView(context.Background(), cuex.DefaultCompiler.Get(), query)
 		Expect(err).Should(BeNil())
 
 		podStatus := corev1.PodStatus{}
@@ -69,7 +70,7 @@ var _ = Describe("Test VelaQL View", func() {
 		velaQL := fmt.Sprintf("%s{%s}.%s", readView.Name, Map2URLParameter(parameter), "appStatus")
 		query, err := ParseVelaQL(velaQL)
 		Expect(err).ShouldNot(HaveOccurred())
-		v, err := viewHandler.QueryView(context.Background(), query)
+		v, err := viewHandler.QueryView(context.Background(), cuex.DefaultCompiler.Get(), query)
 		Expect(err).ShouldNot(HaveOccurred())
 		s, err := sets.ToString(v)
 		Expect(err).ShouldNot(HaveOccurred())
@@ -79,7 +80,7 @@ var _ = Describe("Test VelaQL View", func() {
 		velaQL = fmt.Sprintf("%s{%s}.%s", "view-resource", Map2URLParameter(parameter), "objStatus")
 		query, err = ParseVelaQL(velaQL)
 		Expect(err).ShouldNot(HaveOccurred())
-		_, err = viewHandler.QueryView(context.Background(), query)
+		_, err = viewHandler.QueryView(context.Background(), cuex.DefaultCompiler.Get(), query)
 		Expect(err).Should(HaveOccurred())
 	})
 
@@ -92,7 +93,7 @@ var _ = Describe("Test VelaQL View", func() {
 		velaQL := fmt.Sprintf("%s{%s}.%s", applyView.Name, Map2URLParameter(parameter), "objStatus")
 		query, err := ParseVelaQL(velaQL)
 		Expect(err).ShouldNot(HaveOccurred())
-		_, err = viewHandler.QueryView(context.Background(), query)
+		_, err = viewHandler.QueryView(context.Background(), cuex.DefaultCompiler.Get(), query)
 		Expect(err).ShouldNot(HaveOccurred())
 
 		ns := corev1.Namespace{}
@@ -138,7 +139,7 @@ export: something`,
 		},
 	}
 	for _, c := range cases {
-		cm, err := ParseViewIntoConfigMap(context.Background(), c.cueStr, "name")
+		cm, err := ParseViewIntoConfigMap(context.Background(), cuex.DefaultCompiler.Get(), c.cueStr, "name")
 		assert.Equal(t, c.succeed, err == nil, err)
 		if err == nil {
 			assert.Equal(t, c.cueStr, cm.Data["template"])
