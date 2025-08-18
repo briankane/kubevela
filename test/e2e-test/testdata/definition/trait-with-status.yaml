@@ -46,9 +46,10 @@ spec:
         }
   status:
     customStatus: |
-      message: "\(context.outputs.deployment.status.readyReplicas) / \(context.outputs.deployment.status.replicas) replicas are ready"
+      message: "\(context.status.details.$readyReplicas) / \(context.outputs.deployment.status.replicas) replicas are ready"
     healthPolicy: |
       isHealth: context.outputs.deployment.status.replicas == context.outputs.deployment.status.readyReplicas
     details: |
+      $readyReplicas: *context.outputs.deployment.status.readyReplicas | 0
       allReplicasReady: *(context.outputs.deployment.status.replicas == context.outputs.deployment.status.readyReplicas) | false
   workloadRefPath: ""

@@ -41,7 +41,7 @@ spec:
         }
   status:
     customStatus: |
-      message: "\(context.output.status.readyReplicas) / \(context.output.status.replicas) replicas are ready"
+      message: "\(context.status.details.readyReplicas) / \(context.output.status.replicas) replicas are ready"
     healthPolicy: |
       isHealth: context.output.status.replicas == context.output.status.readyReplicas
     details: |

@@ -269,7 +269,7 @@ var _ = Describe("ComponentDefinition Normal tests", func() {
 			By("Loading all definition YAML files from charts/vela-core/templates/defwithtemplate")
 			_, file, _, _ := runtime.Caller(0)
 			definitionDir := filepath.Join(file, "../../../charts/vela-core/templates/defwithtemplate")
-			
+
 			files, err := filepath.Glob(filepath.Join(definitionDir, "*.yaml"))
 			Expect(err).To(BeNil())
 			Expect(len(files)).To(BeNumerically(">", 0))
@@ -342,7 +342,7 @@ var _ = Describe("ComponentDefinition Normal tests", func() {
 				}
 			}
 
-			By(fmt.Sprintf("CUE parsing results: %d ComponentDefinitions tested, %d TraitDefinitions tested", 
+			By(fmt.Sprintf("CUE parsing results: %d ComponentDefinitions tested, %d TraitDefinitions tested",
 				len(componentDefs.Items), len(traitDefs.Items)))
 
 			totalErrors := componentErrorCount + traitErrorCount
