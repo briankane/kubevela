@@ -304,11 +304,11 @@ var _ = Describe("ComponentDefinition Normal tests", func() {
 			Expect(k8sClient.List(ctx, &componentDefs, &client.ListOptions{Namespace: namespace})).Should(Succeed())
 
 			componentErrorCount := 0
-			for i := range componentDefs.Items {
-				unstructuredObj, err := pkgruntime.DefaultUnstructuredConverter.ToUnstructured(&componentDefs.Items[i])
+			for _, defItem := range componentDefs.Items {
+				unstructuredObj, err := pkgruntime.DefaultUnstructuredConverter.ToUnstructured(&defItem)
 				if err != nil {
 					componentErrorCount++
-					fmt.Printf("ERROR: ComponentDefinition %s failed to convert to unstructured: %v\n", componentDefs.Items[i].Name, err)
+					fmt.Printf("ERROR: ComponentDefinition %s failed to convert to unstructured: %v\n", defItem.Name, err)
 					continue
 				}
 
@@ -316,7 +316,7 @@ var _ = Describe("ComponentDefinition Normal tests", func() {
 				_, err = def.ToCUEString()
 				if err != nil {
 					componentErrorCount++
-					fmt.Printf("ERROR: ComponentDefinition %s failed CUE parsing: %v\n", componentDefs.Items[i].Name, err)
+					fmt.Printf("ERROR: ComponentDefinition %s failed CUE parsing: %v\n", defItem.Name, err)
 				}
 			}
 
@@ -326,11 +326,11 @@ var _ = Describe("ComponentDefinition Normal tests", func() {
 			Expect(k8sClient.List(ctx, &traitDefs, &client.ListOptions{Namespace: namespace})).Should(Succeed())
 
 			traitErrorCount := 0
-			for i := range traitDefs.Items {
-				unstructuredObj, err := pkgruntime.DefaultUnstructuredConverter.ToUnstructured(&traitDefs.Items[i])
+			for _, defItem := range traitDefs.Items {
+				unstructuredObj, err := pkgruntime.DefaultUnstructuredConverter.ToUnstructured(&defItem)
 				if err != nil {
 					traitErrorCount++
-					fmt.Printf("ERROR: TraitDefinition %s failed to convert to unstructured: %v\n", traitDefs.Items[i].Name, err)
+					fmt.Printf("ERROR: TraitDefinition %s failed to convert to unstructured: %v\n", defItem.Name, err)
 					continue
 				}
 
@@ -338,7 +338,7 @@ var _ = Describe("ComponentDefinition Normal tests", func() {
 				_, err = def.ToCUEString()
 				if err != nil {
 					traitErrorCount++
-					fmt.Printf("ERROR: TraitDefinition %s failed CUE parsing: %v\n", traitDefs.Items[i].Name, err)
+					fmt.Printf("ERROR: TraitDefinition %s failed CUE parsing: %v\n", defItem.Name, err)
 				}
 			}
 
