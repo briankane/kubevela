@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
@@ -27,6 +29,8 @@ import (
 	"github.com/kubevela/pkg/cue/cuex"
 
 	"cuelang.org/go/cue"
+	cueErrors "cuelang.org/go/cue/errors"
+	"cuelang.org/go/cue/format"
 	"github.com/kubevela/pkg/multicluster"
 
 	"github.com/pkg/errors"
@@ -114,7 +118,13 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 	}
 
 	if err := val.Validate(); err != nil {
-		return errors.WithMessagef(err, "invalid cue template of workload %s after merge parameter and context", wd.name)
+		// Pass the components for rich error context
+		components := map[string]string{
+			"template": abstractTemplate,
+			"params":   paramFile,
+			"context":  c,
+		}
+		return formatCueValidationErrors(err, fmt.Sprintf("workload %s after merge parameter and context", wd.name), components)
 	}
 	output := val.LookupPath(value.FieldPath(OutputFieldName))
 	base, err := model.NewBase(output)
@@ -252,7 +262,19 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 	}
 
 	if err := val.Validate(); err != nil {
-		return errors.WithMessagef(err, "invalid template of trait %s after merge with parameter and context", td.name)
+		// Pass the components for rich error context
+		paramStr := ""
+		if params != nil {
+			if bt, err := json.Marshal(params); err == nil && string(bt) != "null" {
+				paramStr = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
+			}
+		}
+		components := map[string]string{
+			"template": abstractTemplate,
+			"params":   paramStr,
+			"context":  c,
+		}
+		return formatCueValidationErrors(err, fmt.Sprintf("trait %s after merge with parameter and context", td.name), components)
 	}
 
 	processing := val.LookupPath(value.FieldPath("processing"))
@@ -324,6 +346,476 @@ func parseErrors(errs cue.Value) error {
 		}
 	}
 	return nil
+}
+
+// CueValidationError is a custom error type for formatted CUE validation errors
+type CueValidationError struct {
+	message string
+}
+
+func (e *CueValidationError) Error() string {
+	return e.message
+}
+
+// extractFieldContext attempts to extract useful context from error messages
+func extractFieldContext(msg string) (enrichedMsg string, fieldInfo map[string]string) {
+	fieldInfo = make(map[string]string)
+	enrichedMsg = msg
+
+	// Parse "conflicting values X and Y" to show actual vs expected
+	if matches := regexp.MustCompile(`conflicting values (.+) and (.+)`).FindStringSubmatch(msg); len(matches) == 3 {
+		fieldInfo["actual"] = matches[1]
+		fieldInfo["expected"] = matches[2]
+		enrichedMsg = fmt.Sprintf("type mismatch (got %s, expected %s)", matches[1], matches[2])
+	}
+
+	// Parse "invalid value X (out of bound Y)" to show the constraint
+	if matches := regexp.MustCompile(`invalid value (.+) \(out of bound (.+)\)`).FindStringSubmatch(msg); len(matches) == 3 {
+		fieldInfo["value"] = matches[1]
+		fieldInfo["constraint"] = matches[2]
+		enrichedMsg = fmt.Sprintf("value %s violates constraint %s", matches[1], matches[2])
+	}
+
+	// Parse "does not match pattern X" to show the expected pattern
+	if matches := regexp.MustCompile(`does not match pattern (.+)`).FindStringSubmatch(msg); len(matches) == 2 {
+		fieldInfo["pattern"] = matches[1]
+		enrichedMsg = fmt.Sprintf("must match pattern %s", matches[1])
+	}
+
+	// Handle "incomplete value X" to suggest what's missing
+	if matches := regexp.MustCompile(`incomplete value (.+)`).FindStringSubmatch(msg); len(matches) == 2 {
+		fieldInfo["type"] = matches[1]
+		enrichedMsg = fmt.Sprintf("missing required %s value", matches[1])
+	}
+
+	// Handle "invalid interpolation" - try to make it more specific
+	if msg == "invalid interpolation" {
+		enrichedMsg = "string interpolation failed (check variable references)"
+	}
+
+	// Handle reference errors
+	if matches := regexp.MustCompile(`reference "(.+)" not found`).FindStringSubmatch(msg); len(matches) == 2 {
+		fieldInfo["missing_ref"] = matches[1]
+		enrichedMsg = fmt.Sprintf("undefined reference '%s'", matches[1])
+	}
+
+	return enrichedMsg, fieldInfo
+}
+
+// replaceValuesWithPlaceholders replaces actual values in error messages with <provided($value)> and <default($value)>
+func replaceValuesWithPlaceholders(msg string, fieldInfo map[string]string) string {
+	replacedMsg := msg
+
+	// Clean up any trailing cue/format artifacts first
+	artifactPattern := regexp.MustCompile(`\s*\(value:\s*cue/format:\s*[^)]*\)\s*$`)
+	replacedMsg = artifactPattern.ReplaceAllString(replacedMsg, "")
+
+	// Only replace values in very specific contexts to avoid over-replacement
+	provided := strings.Trim(fieldInfo["actual"], `"'`)
+	defaultVal := strings.Trim(fieldInfo["default"], `"'`)
+
+	// Skip replacement if we don't have both values
+	if provided == "" || defaultVal == "" {
+		return replacedMsg
+	}
+
+	// Pattern 1: "(got X, expected Y)" format
+	gotExpectedPattern := regexp.MustCompile(`\(got\s+([^,\)]+),\s*expected\s+([^,\)]+)\)`)
+	if matches := gotExpectedPattern.FindStringSubmatch(replacedMsg); len(matches) == 3 {
+		gotValue := strings.TrimSpace(matches[1])
+		expectedValue := strings.TrimSpace(matches[2])
+
+		// Replace got value - usually the default or computed value
+		var gotReplacement string
+		if gotValue == defaultVal {
+			gotReplacement = fmt.Sprintf("<default(%s)>", defaultVal)
+		} else if gotValue == provided {
+			gotReplacement = fmt.Sprintf("<provided(%s)>", provided)
+		} else {
+			gotReplacement = gotValue
+		}
+
+		// Replace expected value - usually the user-provided value
+		var expectedReplacement string
+		if expectedValue == provided {
+			expectedReplacement = fmt.Sprintf("<provided(%s)>", provided)
+		} else if expectedValue == defaultVal {
+			expectedReplacement = fmt.Sprintf("<default(%s)>", defaultVal)
+		} else {
+			expectedReplacement = expectedValue
+		}
+
+		replacement := fmt.Sprintf("(got %s, expected %s)", gotReplacement, expectedReplacement)
+		replacedMsg = gotExpectedPattern.ReplaceAllString(replacedMsg, replacement)
+	}
+
+	// Pattern 2: "value X violates constraint" format - only replace the specific value
+	valuePattern := regexp.MustCompile(`\bvalue\s+([^\s]+)\s+violates`)
+	if matches := valuePattern.FindStringSubmatch(replacedMsg); len(matches) == 2 {
+		valueStr := strings.TrimSpace(matches[1])
+		if valueStr == provided {
+			replacement := fmt.Sprintf("value <provided(%s)> violates", provided)
+			replacedMsg = valuePattern.ReplaceAllString(replacedMsg, replacement)
+		} else if valueStr == defaultVal {
+			replacement := fmt.Sprintf("value <default(%s)> violates", defaultVal)
+			replacedMsg = valuePattern.ReplaceAllString(replacedMsg, replacement)
+		}
+	}
+
+	return replacedMsg
+}
+
+// extractValueInfo parses the CUE components to extract actual values and constraints
+func extractValueInfo(components map[string]string, path []string) map[string]string {
+	info := make(map[string]string)
+
+	// Try to extract parameter value
+	if params := components["params"]; params != "" {
+		// Parse the parameter CUE/JSON to find the value at the path
+		paramVal, err := cuex.DefaultCompiler.Get().CompileString(context.Background(), params)
+		if err == nil {
+			fieldVal := paramVal.LookupPath(cue.ParsePath(strings.Join(path, ".")))
+			if fieldVal.Exists() {
+				// Try to get the actual value and determine its type
+				if concrete, err := fieldVal.String(); err == nil {
+					info["actual"] = fmt.Sprintf("%q", concrete)
+					info["provided_type"] = "string"
+				} else if num, err := fieldVal.Float64(); err == nil {
+					info["actual"] = fmt.Sprintf("%v", num)
+					info["provided_type"] = "number"
+				} else if num, err := fieldVal.Int64(); err == nil {
+					info["actual"] = fmt.Sprintf("%v", num)
+					info["provided_type"] = "int"
+				} else if b, err := fieldVal.Bool(); err == nil {
+					info["actual"] = fmt.Sprintf("%v", b)
+					info["provided_type"] = "bool"
+				} else {
+					// Try to get the source representation
+					info["actual"] = fmt.Sprint(fieldVal)
+					// Try to infer type from the string representation
+					actualStr := strings.Trim(info["actual"], `"'`)
+					if actualStr == "true" || actualStr == "false" {
+						info["provided_type"] = "bool"
+					} else if _, err := strconv.ParseInt(actualStr, 10, 64); err == nil {
+						info["provided_type"] = "int"
+					} else if _, err := strconv.ParseFloat(actualStr, 64); err == nil {
+						info["provided_type"] = "number"
+					} else {
+						info["provided_type"] = "string"
+					}
+				}
+			}
+		}
+	}
+
+	// Try to extract template constraints DIRECTLY from the template text first
+	if template := components["template"]; template != "" && len(path) > 0 {
+		// Direct text parsing - this should always work regardless of CUE compilation
+		fieldName := path[len(path)-1]
+
+		// Handle nested paths like [parameter, goodDurationMax]
+		// First, find the parameter block if path starts with "parameter"
+		searchText := template
+		if len(path) > 1 && path[0] == "parameter" {
+			// Look for the parameter block - use a more robust pattern
+			// This handles multi-line parameter blocks with nested braces
+			paramStart := strings.Index(template, "parameter:")
+			if paramStart >= 0 {
+				// Find the opening brace after parameter:
+				afterParam := template[paramStart:]
+				braceStart := strings.Index(afterParam, "{")
+				if braceStart >= 0 {
+					// Count braces to find the matching closing brace
+					fullBlock := afterParam[braceStart:]
+					braceCount := 0
+					endPos := 0
+					for i, ch := range fullBlock {
+						if ch == '{' {
+							braceCount++
+						} else if ch == '}' {
+							braceCount--
+							if braceCount == 0 {
+								endPos = i + 1
+								break
+							}
+						}
+					}
+					if endPos > 0 && endPos < len(fullBlock) {
+						searchText = fullBlock[1:endPos-1] // Extract content between braces
+					}
+				}
+			}
+
+			// Fallback to simpler regex if brace counting didn't work
+			if searchText == template {
+				paramBlockPattern := regexp.MustCompile(`(?ms)parameter:\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}`)
+				if matches := paramBlockPattern.FindStringSubmatch(template); len(matches) > 1 {
+					searchText = matches[1]
+				}
+			}
+		}
+
+		// Build regex to match field definition
+		// Handle both indented (with tabs/spaces) and non-indented lines
+		patternStr := `(?m)^\s*` + regexp.QuoteMeta(fieldName) + `:\s*(.+?)$`
+		pattern := regexp.MustCompile(patternStr)
+
+		if matches := pattern.FindStringSubmatch(searchText); len(matches) > 1 {
+			definition := strings.TrimSpace(matches[1])
+			info["definition"] = definition
+
+			// Extract default from patterns like "*60 | int & >=10" or "*\"string\" | string"
+			if strings.Contains(definition, "*") {
+				// Handle various default patterns: *60, *"string", *true, etc.
+				// Match everything after * up to | or & or end of line
+				defaultPattern := regexp.MustCompile(`\*([^|&]+)`)
+				if defaultMatch := defaultPattern.FindStringSubmatch(definition); len(defaultMatch) > 1 {
+					defaultVal := strings.TrimSpace(defaultMatch[1])
+					// Clean up quotes but preserve them if they're part of the value
+					if (strings.HasPrefix(defaultVal, `"`) && strings.HasSuffix(defaultVal, `"`)) ||
+					   (strings.HasPrefix(defaultVal, `'`) && strings.HasSuffix(defaultVal, `'`)) {
+						// Keep quotes for string values
+						info["default"] = defaultVal
+					} else {
+						// Remove any trailing spaces or special characters
+						defaultVal = strings.TrimSpace(defaultVal)
+						info["default"] = defaultVal
+					}
+				}
+			}
+
+			// Extract constraints from patterns like "int & >=10" or "string & len(<5)"
+			constraintPattern := regexp.MustCompile(`(?:int|string|bool|number|float)\s*&\s*(.+?)(?:\s*$|\s*\|)`)
+			if constraintMatch := constraintPattern.FindStringSubmatch(definition); len(constraintMatch) > 1 {
+				info["constraint"] = strings.TrimSpace(constraintMatch[1])
+			}
+
+			// Extract expected type from patterns like "*60 | int" or "int & >=10"
+			typePattern := regexp.MustCompile(`(?:\*[^|]*\s*\|\s*)?(int|string|bool|number|float)`)
+			if typeMatch := typePattern.FindStringSubmatch(definition); len(typeMatch) > 1 {
+				info["expected_type"] = typeMatch[1]
+			}
+		}
+	}
+
+	// Also try to extract via CUE compilation (as fallback/additional info)
+	if template := components["template"]; template != "" {
+		// Parse template to find constraints
+		templateVal, err := cuex.DefaultCompiler.Get().CompileString(context.Background(), template)
+		if err == nil {
+			fieldDef := templateVal.LookupPath(cue.ParsePath(strings.Join(path, ".")))
+			if fieldDef.Exists() && info["definition"] == "" {
+				// Fallback: try to get definition from compiled CUE
+
+				// If we didn't get the definition from text parsing, use the compiled value
+				if _, hasDefinition := info["definition"]; !hasDefinition {
+					// Extract the source representation of the field
+					srcStr := fmt.Sprint(fieldDef)
+
+					// Try to get the formatted source if available
+					if src, err := format.Node(fieldDef.Source()); err == nil && len(src) > 0 {
+						srcStr = string(src)
+					}
+
+					// Clean up and extract the definition
+					if srcStr != "" && srcStr != "_" {
+						// Remove field name prefix if present
+						if idx := strings.LastIndex(srcStr, ":"); idx > 0 {
+							beforeColon := srcStr[:idx]
+							if !strings.Contains(beforeColon, "&") && !strings.Contains(beforeColon, "|") {
+								srcStr = strings.TrimSpace(srcStr[idx+1:])
+							}
+						}
+						info["definition"] = srcStr
+					}
+				}
+
+				// Also try the Default() method as fallback
+				if _, hasDefault := info["default"]; !hasDefault {
+					if def, hasDefault := fieldDef.Default(); hasDefault {
+						if s, err := def.String(); err == nil {
+							info["default"] = fmt.Sprintf("%q", s)
+						} else if num, err := def.Int64(); err == nil {
+							info["default"] = fmt.Sprintf("%d", num)
+						} else if num, err := def.Float64(); err == nil {
+							info["default"] = fmt.Sprintf("%g", num)
+						} else {
+							info["default"] = fmt.Sprint(def)
+						}
+					}
+				}
+
+				// Try to extract type information
+				if fieldDef.IncompleteKind() != cue.BottomKind {
+					info["type"] = fieldDef.IncompleteKind().String()
+				}
+			}
+		}
+	}
+
+	// Final debug output
+	fmt.Printf("Final extracted info: %+v\n", info)
+	fmt.Printf("===========================\n")
+
+	return info
+}
+
+// formatCueValidationErrors formats CUE validation errors in a user-friendly way
+func formatCueValidationErrors(err error, context string, components map[string]string) error {
+	if err == nil {
+		return nil
+	}
+
+	cueErrs := cueErrors.Errors(err)
+
+	// Group errors by path and deduplicate
+	type errorDetail struct {
+		message string
+		count   int
+		info    map[string]string
+	}
+	errorGroups := make(map[string][]errorDetail) // path -> list of error details
+	errorIndex := make(map[string]map[string]int) // path -> message -> index
+	var orderedPaths []string
+
+	for _, cueErr := range cueErrs {
+		path := cueErr.Path()
+		format, args := cueErr.Msg()
+		msg := fmt.Sprintf(format, args...)
+
+		// DEBUG: Show what we actually get from CUE
+		// fmt.Printf("DEBUG - Path: %v, Format: %q, Args: %v, Final: %q\n", path, format, args, msg)
+
+		// Convert path (which is []string) to a string representation
+		pathStr := ""
+		if len(path) > 0 {
+			pathStr = strings.Join(path, ".")
+		} else {
+			pathStr = "(root)"
+		}
+
+		// Check if this is a disjunction error that will have sub-errors
+		if strings.Contains(msg, "errors in empty disjunction") {
+			// Skip this parent error as we'll show the detailed sub-errors
+			continue
+		}
+
+		// Track order of first appearance
+		if _, exists := errorGroups[pathStr]; !exists {
+			orderedPaths = append(orderedPaths, pathStr)
+			errorGroups[pathStr] = []errorDetail{}
+			errorIndex[pathStr] = make(map[string]int)
+		}
+
+		// Enrich the error message
+		enrichedMsg, fieldInfo := extractFieldContext(msg)
+
+		// Extract actual values from the CUE components
+		valueInfo := extractValueInfo(components, path)
+
+		// Merge the extracted value info with field info
+		for k, v := range valueInfo {
+			if _, exists := fieldInfo[k]; !exists {
+				fieldInfo[k] = v
+			}
+		}
+
+		// Replace actual values with placeholders in the enriched message
+		enrichedMsg = replaceValuesWithPlaceholders(enrichedMsg, fieldInfo)
+
+		// Check if we already have this error
+		if idx, exists := errorIndex[pathStr][msg]; exists {
+			errorGroups[pathStr][idx].count++
+		} else {
+			errorIndex[pathStr][msg] = len(errorGroups[pathStr])
+			errorGroups[pathStr] = append(errorGroups[pathStr], errorDetail{
+				message: enrichedMsg,
+				count:   1,
+				info:    fieldInfo,
+			})
+		}
+	}
+
+	// Format the errors in structured multi-line format
+	var formattedErrors []string
+
+	for _, pathStr := range orderedPaths {
+		errors := errorGroups[pathStr]
+
+		// Collect all unique info across all errors for this field
+		allInfo := make(map[string]string)
+		var errorMessages []string
+
+		for _, err := range errors {
+			// Collect error messages
+			if err.count > 1 {
+				errorMessages = append(errorMessages, fmt.Sprintf("%s (×%d)", err.message, err.count))
+			} else {
+				errorMessages = append(errorMessages, err.message)
+			}
+
+			// Merge all info (later errors may have more complete info)
+			for k, v := range err.info {
+				allInfo[k] = v
+			}
+		}
+
+		// Format the field block
+		formattedErrors = append(formattedErrors, fmt.Sprintf("\n[%s]", pathStr))
+
+		// Add statement/definition if available
+		if val, ok := allInfo["definition"]; ok && val != "" {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  statement:    %s", val))
+		} else if val, ok := allInfo["type"]; ok && val != "" {
+			// Fallback to type if no full definition
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  statement:    %s", val))
+		}
+
+		// Add default value if available
+		if val, ok := allInfo["default"]; ok {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  default:      %s", val))
+		}
+
+		// Add provided value if available
+		if val, ok := allInfo["actual"]; ok {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  provided:     %s", val))
+		}
+
+		// Add provided type if available
+		if val, ok := allInfo["provided_type"]; ok {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  provided type: %s", val))
+		}
+
+		// Add expected type if available
+		if val, ok := allInfo["expected_type"]; ok {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  expected type: %s", val))
+		}
+
+		// Add constraints if available and not already in statement
+		constraints := []string{}
+		if val, ok := allInfo["constraint"]; ok && !strings.Contains(allInfo["definition"], val) {
+			constraints = append(constraints, val)
+		}
+		if val, ok := allInfo["pattern"]; ok && !strings.Contains(allInfo["definition"], val) {
+			constraints = append(constraints, fmt.Sprintf("pattern: %s", val))
+		}
+		if len(constraints) > 0 {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  constraints:  %s", strings.Join(constraints, ", ")))
+		}
+
+		// Add error messages
+		if len(errorMessages) == 1 {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  error:        %s", errorMessages[0]))
+		} else {
+			formattedErrors = append(formattedErrors, fmt.Sprintf("  errors:       [%s]", strings.Join(errorMessages, ", ")))
+		}
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("CUE validation failed for %s:\n", context))
+	result.WriteString(strings.Join(formattedErrors, "\n"))
+
+	return &CueValidationError{message: result.String()}
 }
 
 // GetCommonLabels will convert context based labels to OAM standard labels

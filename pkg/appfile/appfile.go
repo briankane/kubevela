@@ -224,6 +224,11 @@ func generatePolicyUnstructuredFromCUEModule(comp *Component, artifacts []*types
 	pCtx := velaprocess.NewContext(ctxData)
 	pCtx.PushData(velaprocess.ContextDataArtifacts, prepareArtifactsData(artifacts))
 	if err := comp.EvalContext(pCtx); err != nil {
+		// Check if this is already a formatted CUE validation error
+		if _, ok := err.(*definition.CueValidationError); ok {
+			// Return the error as-is, it's already well-formatted
+			return nil, err
+		}
 		return nil, errors.Wrapf(err, "evaluate base template app=%s in namespace=%s", ctxData.AppName, ctxData.Namespace)
 	}
 	base, auxs := pCtx.Output()
@@ -485,6 +490,11 @@ func PrepareProcessContext(comp *Component, ctxData velaprocess.ContextData) (pr
 		comp.Ctx = NewBasicContext(ctxData, comp.Params)
 	}
 	if err := comp.EvalContext(comp.Ctx); err != nil {
+		// Check if this is already a formatted CUE validation error
+		if _, ok := err.(*definition.CueValidationError); ok {
+			// Return the error as-is, it's already well-formatted
+			return nil, err
+		}
 		return nil, errors.Wrapf(err, "evaluate base template app=%s in namespace=%s", ctxData.AppName, ctxData.Namespace)
 	}
 	return comp.Ctx, nil
@@ -516,6 +526,11 @@ func baseGenerateComponent(pCtx process.Context, comp *Component, appName, ns st
 	pCtx.PushData(velaprocess.ContextComponentType, comp.Type)
 	for _, tr := range comp.Traits {
 		if err := tr.EvalContext(pCtx); err != nil {
+			// Check if this is already a formatted CUE validation error
+			if _, ok := err.(*definition.CueValidationError); ok {
+				// Return the error as-is, it's already well-formatted
+				return nil, err
+			}
 			return nil, errors.Wrapf(err, "evaluate template trait=%s app=%s", tr.Name, comp.Name)
 		}
 	}
