@@ -18,7 +18,6 @@ package apply
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -207,6 +206,14 @@ func (a *APIApplicator) Apply(ctx context.Context, desired client.Object, ao ...
 		return nil
 	}
 
+	// Shared resources (non-owner) only update the annotation
+	if applyAct.isShared {
+		loggingApply("patching shared resource annotation only", desired, applyAct.quiet)
+		sharedBy := desired.GetAnnotations()[oam.AnnotationAppSharedBy]
+		patch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`, oam.AnnotationAppSharedBy, sharedBy))
+		return errors.Wrapf(a.c.Patch(ctx, existing, client.RawPatch(types.MergePatchType, patch)), "cannot patch shared resource annotation")
+	}
+
 	strategy := applyAct.updateStrategy
 	if strategy.Op == "" {
 		if utilfeature.DefaultMutableFeatureGate.Enabled(features.ApplyResourceByReplace) && isUpdatableResource(desired) {
@@ -365,6 +372,7 @@ func NotUpdateRenderHashEqual() ApplyOption {
 		if !ok {
 			return nil
 		}
+		
 		if getRenderHash(existing) == getRenderHash(desired) {
 			*newSt = *oldSt
 			act.skipUpdate = true
@@ -503,13 +511,7 @@ func SharedByApp(app *v1beta1.Application) ApplyOption {
 		}
 		// the application that controls the resource allows sharing, then only mutate the shared-by annotation
 		act.isShared = true
-		bs, err := json.Marshal(existing)
-		if err != nil {
-			return err
-		}
-		if err = json.Unmarshal(bs, desired); err != nil {
-			return err
-		}
+		// Don't copy existing to desired to prevent server-side fields in last-applied-configuration
 		util.AddAnnotations(desired, map[string]string{oam.AnnotationAppSharedBy: sharedBy})
 		return nil
 	}
