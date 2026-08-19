@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/condition"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	apitypes "github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/config"
@@ -72,6 +73,7 @@ type options struct {
 	controllerVersion    string
 	cacheGCInterval      time.Duration
 	cacheGCEnabled       bool
+	defRevLimit          int
 }
 
 // defaultCacheGCInterval is how often the source cache/template GC sweep runs
@@ -93,6 +95,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if !coredef.MatchControllerRequirement(&sourceDefinition, r.controllerVersion, r.ignoreDefNoCtrlReq) {
 		klog.InfoS("skip definition: not match the controller requirement of definition", "sourceDefinition", klog.KObj(&sourceDefinition))
 		return ctrl.Result{}, nil
+	}
+
+	// Revision first, so the schema template below is stored against a revision
+	// that already exists - the same order componentdefinition uses.
+	_, result, err := coredef.ReconcileDefinitionRevision(ctx, r.Client, r.record, &sourceDefinition, r.defRevLimit,
+		func(revision *common.Revision) error {
+			sourceDefinition.Status.LatestRevision = revision
+			return r.UpdateStatus(ctx, &sourceDefinition)
+		})
+	if result != nil {
+		return *result, err
+	}
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 
 	nextRef, err := r.reconcileSchemaTemplate(ctx, &sourceDefinition)
@@ -313,5 +329,6 @@ func parseOptions(args oamctrl.Args) options {
 		controllerVersion:    version.VelaVersion,
 		cacheGCInterval:      defaultCacheGCInterval,
 		cacheGCEnabled:       true,
+		defRevLimit:          args.DefRevisionLimit,
 	}
 }

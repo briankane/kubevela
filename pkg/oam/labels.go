@@ -51,6 +51,9 @@ const (
 
 	// LabelComponentDefinitionName records the name of ComponentDefinition
 	LabelComponentDefinitionName = "componentdefinition.oam.dev/name"
+
+	// LabelSourceDefinitionName records the name of SourceDefinition
+	LabelSourceDefinitionName = "sourcedefinition.oam.dev/name"
 	// LabelTraitDefinitionName records the name of TraitDefinition
 	LabelTraitDefinitionName = "trait.oam.dev/name"
 	// LabelManageWorkloadTrait indicates if the trait will manage the lifecycle of the workload

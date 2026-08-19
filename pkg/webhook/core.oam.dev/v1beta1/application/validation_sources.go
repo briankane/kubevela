@@ -21,7 +21,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	upstreamcuex "github.com/kubevela/pkg/cue/cuex"
 
@@ -32,7 +31,6 @@ import (
 	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
-	"github.com/oam-dev/kubevela/pkg/oam"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/sourcedefinition"
 )
@@ -169,7 +167,7 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 		}
 		// A SourceDefinition may restrict where it can be consumed from.
 		if ref.Surface == veladefinition.SurfaceComponent || ref.Surface == veladefinition.SurfaceTrait {
-			surfaces, err := h.loadConsumableFrom(ctx, app.Namespace, sourceType, consumableFromCache)
+			surfaces, err := h.loadConsumableFrom(ctx, app.Namespace, sourceType, consumableFromCache, app.GetAnnotations())
 			if err != nil {
 				errs = append(errs, field.Invalid(ref.FieldPath, ref.Path,
 					fmt.Sprintf("failed to load SourceDefinition %q: %v", sourceType, err)))
@@ -193,7 +191,7 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 		// read resolves inside whichever render triggered the outer binding, so it
 		// must satisfy the outer binding's consumers - which is what
 		// effectiveSurfaces works out.
-		required, rerr := h.requiredContext(ctx, app.Namespace, sourceType, requiredContextCache)
+		required, rerr := h.requiredContext(ctx, app.Namespace, sourceType, app.GetAnnotations(), requiredContextCache)
 		if rerr == nil && len(required) > 0 {
 			mustSatisfy := []string{ref.Surface}
 			if ref.SourceIndex >= 0 {
@@ -209,7 +207,7 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 		validator, exists := schemaValidators[sourceType]
 		if !exists {
 			var err error
-			validator, err = h.loadSourceSchemaValidator(ctx, app.Namespace, sourceType)
+			validator, err = h.loadSourceSchemaValidator(ctx, app.Namespace, sourceType, app.GetAnnotations())
 			if err != nil {
 				errs = append(errs, field.Invalid(ref.FieldPath, ref.Path, fmt.Sprintf("failed to load SourceDefinition %q schema: %v", sourceType, err)))
 				continue
@@ -263,7 +261,7 @@ func (h *ValidatingHandler) validateSourceInputs(ctx context.Context, app *v1bet
 		pv, cached := paramValidators[src.Type]
 		if !cached {
 			var err error
-			pv, err = h.loadSourceParameter(ctx, app.Namespace, src.Type)
+			pv, err = h.loadSourceParameter(ctx, app.Namespace, src.Type, app.GetAnnotations())
 			if err != nil {
 				errs = append(errs, field.Invalid(basePath, src.Type, fmt.Sprintf("failed to load SourceDefinition %q parameter schema: %v", src.Type, err)))
 				paramValidators[src.Type] = nil
@@ -282,7 +280,7 @@ func (h *ValidatingHandler) validateSourceInputs(ctx context.Context, app *v1bet
 			continue
 		}
 		for _, lf := range flattenLeafPaths(src.Properties.Raw, basePath) {
-			errs = append(errs, h.checkInputLeaf(lf, pv, src.Type, sourceNameToType, schemaValidators, ctx, app.Namespace)...)
+			errs = append(errs, h.checkInputLeaf(lf, pv, src.Type, sourceNameToType, schemaValidators, ctx, app.Namespace, app.GetAnnotations())...)
 		}
 	}
 	return errs
@@ -351,7 +349,7 @@ func jsonKind(v interface{}) cue.Kind {
 // block: the field must be declared, and its type must be compatible with the
 // declared parameter type. Expression-fed leaves take their type from the
 // referenced source's schema output field.
-func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourceType string, sourceNameToType map[string]string, schemaValidators map[string]*sourceSchemaValidator, ctx context.Context, appNamespace string) field.ErrorList {
+func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourceType string, sourceNameToType map[string]string, schemaValidators map[string]*sourceSchemaValidator, ctx context.Context, appNamespace string, annotations map[string]string) field.ErrorList {
 	var errs field.ErrorList
 	if lf.path == "" {
 		return errs
@@ -369,7 +367,7 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 		// A source's own properties may be fed by an expression - that is how
 		// chaining is written without the directive. Typing it as the string it
 		// literally is would reject every non-string target.
-		k, kt, terr := h.expressionKind(ctx, appNamespace, raw, sourceNameToType, schemaValidators)
+		k, kt, terr := h.expressionKind(ctx, annotations, appNamespace, raw, sourceNameToType, schemaValidators)
 		if terr != nil {
 			errs = append(errs, field.Invalid(lf.fieldPath, raw, terr.Error()))
 			return errs
@@ -377,7 +375,7 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 		srcKind, srcType = k, kt
 
 		// The same optional-feeds-required rule the directive follows.
-		if undefended := h.undefendedExpressionReads(ctx, appNamespace, raw, sourceNameToType, schemaValidators); len(undefended) > 0 {
+		if undefended := h.undefendedExpressionReads(ctx, annotations, appNamespace, raw, sourceNameToType, schemaValidators); len(undefended) > 0 {
 			if required, _ := param.requiredAt(lf.path); required {
 				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 					fmt.Sprintf("%s may be absent and feeds required parameter %q of SourceDefinition %q; guard it with has(%s) ? %s : <fallback>",
@@ -495,11 +493,11 @@ func pathIsOpaque(segments []string) bool {
 
 // loadConsumableFrom returns the surfaces a SourceDefinition may be consumed
 // from, memoised per source type. Nil means unrestricted.
-func (h *ValidatingHandler) loadConsumableFrom(ctx context.Context, appNamespace, sourceType string, cache map[string][]string) ([]string, error) {
+func (h *ValidatingHandler) loadConsumableFrom(ctx context.Context, appNamespace, sourceType string, cache map[string][]string, annotations map[string]string) ([]string, error) {
 	if surfaces, ok := cache[sourceType]; ok {
 		return surfaces, nil
 	}
-	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType)
+	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType, annotations)
 	if err != nil {
 		return nil, err
 	}
@@ -514,8 +512,8 @@ func (h *ValidatingHandler) loadConsumableFrom(ctx context.Context, appNamespace
 	return surfaces, nil
 }
 
-func (h *ValidatingHandler) loadSourceSchemaValidator(ctx context.Context, appNamespace, sourceType string) (*sourceSchemaValidator, error) {
-	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType)
+func (h *ValidatingHandler) loadSourceSchemaValidator(ctx context.Context, appNamespace, sourceType string, annotations map[string]string) (*sourceSchemaValidator, error) {
+	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType, annotations)
 	if err != nil {
 		return nil, err
 	}
@@ -697,8 +695,8 @@ func kindsCompatible(src, dst cue.Kind) bool {
 
 // loadSourceParameter returns a validator over the SourceDefinition's top-level
 // parameter: block, or nil if the definition declares no parameter block.
-func (h *ValidatingHandler) loadSourceParameter(ctx context.Context, appNamespace, sourceType string) (*cueStruct, error) {
-	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType)
+func (h *ValidatingHandler) loadSourceParameter(ctx context.Context, appNamespace, sourceType string, annotations map[string]string) (*cueStruct, error) {
+	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType, annotations)
 	if err != nil {
 		return nil, err
 	}
@@ -860,21 +858,31 @@ func (h *ValidatingHandler) getDefinitionTemplate(ctx context.Context, appNamesp
 	return "", false
 }
 
-func (h *ValidatingHandler) getSourceDefinition(ctx context.Context, appNamespace, sourceType string) (*v1beta1.SourceDefinition, error) {
+// getSourceDefinition resolves a binding's type to its definition, honouring a
+// pinned revision - `type: atlas@v1` - exactly as the render path does.
+//
+// Through GetCapabilityDefinition rather than a direct Get, because a direct Get
+// looks for an object literally named "atlas@v1", finds nothing, and reports the
+// type as undeclared. Admission would then reject a pinned binding that renders
+// perfectly well. It also brings the full namespace search - app, the configured
+// x-definition namespace, vela-system, then cluster-scoped for old clusters -
+// which the two-namespace lookup here only approximated.
+//
+// annotations carries the Application's, because autoUpdate widens `@v1` to the
+// latest revision in that range. Passing them keeps admission checking the same
+// revision the render will use.
+func (h *ValidatingHandler) getSourceDefinition(ctx context.Context, appNamespace, sourceType string,
+	annotations map[string]string) (*v1beta1.SourceDefinition, error) {
 	def := &v1beta1.SourceDefinition{}
-	if err := h.Client.Get(ctx, client.ObjectKey{Namespace: appNamespace, Name: sourceType}, def); err == nil {
-		return def, nil
-	} else if !errors.IsNotFound(err) {
+	lookupCtx := oamutil.SetNamespaceInCtx(ctx, appNamespace)
+	if err := oamutil.GetCapabilityDefinition(lookupCtx, h.Client, def, sourceType, annotations); err != nil {
+		if errors.IsNotFound(err) {
+			return nil, errors.NewNotFound(schema.GroupVersionResource{
+				Group: v1beta1.Group, Version: v1beta1.Version, Resource: "sourcedefinitions"}.GroupResource(), sourceType)
+		}
 		return nil, err
 	}
-	if appNamespace != oam.SystemDefinitionNamespace {
-		if err := h.Client.Get(ctx, client.ObjectKey{Namespace: oam.SystemDefinitionNamespace, Name: sourceType}, def); err == nil {
-			return def, nil
-		} else if !errors.IsNotFound(err) {
-			return nil, err
-		}
-	}
-	return nil, errors.NewNotFound(schema.GroupVersionResource{Group: v1beta1.Group, Version: v1beta1.Version, Resource: "sourcedefinitions"}.GroupResource(), sourceType)
+	return def, nil
 }
 
 func (v *sourceSchemaValidator) HasPath(path string) bool {
@@ -1090,12 +1098,12 @@ func effectiveSurfaces(refs []sourceReference, bindingAt map[int]string) map[str
 
 // requiredContext returns the context fields a SourceDefinition's template reads,
 // memoised per source type.
-func (h *ValidatingHandler) requiredContext(ctx context.Context, appNamespace, sourceType string,
+func (h *ValidatingHandler) requiredContext(ctx context.Context, appNamespace, sourceType string, annotations map[string]string,
 	cache map[string][]string) ([]string, error) {
 	if fields, ok := cache[sourceType]; ok {
 		return fields, nil
 	}
-	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType)
+	def, err := h.getSourceDefinition(ctx, appNamespace, sourceType, annotations)
 	if err != nil {
 		return nil, err
 	}

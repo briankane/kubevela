@@ -135,7 +135,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 		return pv
 	}
 
-	schemasFor := h.sourceSchemaTexts(ctx, app.Namespace, sourceNameToType, schemaValidators)
+	schemasFor := h.sourceSchemaTexts(ctx, app.GetAnnotations(), app.Namespace, sourceNameToType, schemaValidators)
 
 	check := func(leaves []inputLeaf, param *cueStruct, targetDesc string,
 		ctxSchema sourceexpr.ContextSchema, roots ...string) {
@@ -272,7 +272,7 @@ func hasSourceExpression(raw string) bool {
 
 // sourceSchemaTexts maps binding names to their SourceDefinition schema text,
 // which is what sentinel typing needs.
-func (h *ValidatingHandler) sourceSchemaTexts(ctx context.Context, appNamespace string,
+func (h *ValidatingHandler) sourceSchemaTexts(ctx context.Context, annotations map[string]string, appNamespace string,
 	sourceNameToType map[string]string, schemaValidators map[string]*sourceSchemaValidator) map[string]string {
 	out := map[string]string{}
 	for name, sourceType := range sourceNameToType {
@@ -282,7 +282,7 @@ func (h *ValidatingHandler) sourceSchemaTexts(ctx context.Context, appNamespace 
 		sv, ok := schemaValidators[sourceType]
 		if !ok {
 			var err error
-			sv, err = h.loadSourceSchemaValidator(ctx, appNamespace, sourceType)
+			sv, err = h.loadSourceSchemaValidator(ctx, appNamespace, sourceType, annotations)
 			if err != nil {
 				continue
 			}
@@ -297,17 +297,17 @@ func (h *ValidatingHandler) sourceSchemaTexts(ctx context.Context, appNamespace 
 }
 
 // expressionKind types a property value that carries expressions.
-func (h *ValidatingHandler) expressionKind(ctx context.Context, appNamespace, raw string,
+func (h *ValidatingHandler) expressionKind(ctx context.Context, annotations map[string]string, appNamespace, raw string,
 	sourceNameToType map[string]string, schemaValidators map[string]*sourceSchemaValidator) (cue.Kind, *cel.Type, error) {
-	return expressionValueType(raw, h.sourceSchemaTexts(ctx, appNamespace, sourceNameToType, schemaValidators),
+	return expressionValueType(raw, h.sourceSchemaTexts(ctx, annotations, appNamespace, sourceNameToType, schemaValidators),
 		sourceexpr.ComponentContext, sourceexpr.SourceIdent, sourceexpr.ContextIdent)
 }
 
 // undefendedExpressionReads returns the reads in a property value that could be
 // absent at render and carry no default.
-func (h *ValidatingHandler) undefendedExpressionReads(ctx context.Context, appNamespace, raw string,
+func (h *ValidatingHandler) undefendedExpressionReads(ctx context.Context, annotations map[string]string, appNamespace, raw string,
 	sourceNameToType map[string]string, schemaValidators map[string]*sourceSchemaValidator) []sourceexpr.Reference {
-	refs, err := undefendedReads(raw, h.sourceSchemaTexts(ctx, appNamespace, sourceNameToType, schemaValidators))
+	refs, err := undefendedReads(raw, h.sourceSchemaTexts(ctx, annotations, appNamespace, sourceNameToType, schemaValidators))
 	if err != nil {
 		return nil
 	}

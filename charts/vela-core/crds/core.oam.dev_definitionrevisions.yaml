@@ -728,6 +728,12 @@ spec:
                             - configuration
                             type: object
                         type: object
+                      version:
+                        description: |-
+                          Version is the semantic version of this definition. Setting it makes each
+                          version a distinct DefinitionRevision, so a binding can pin one with
+                          `type: my-source@v1` and stop tracking whatever is newest.
+                        type: string
                     type: object
                   status:
                     description: SourceDefinitionStatus defines the observed state
@@ -780,6 +786,22 @@ spec:
                             description: SchemaHash is the sha256 hash (hex) of the
                               canonical schema cue snippet.
                             type: string
+                        type: object
+                      latestRevision:
+                        description: LatestRevision of this source definition.
+                        properties:
+                          name:
+                            type: string
+                          revision:
+                            format: int64
+                            type: integer
+                          revisionHash:
+                            description: RevisionHash record the hash value of the
+                              spec of ApplicationRevision object.
+                            type: string
+                        required:
+                        - name
+                        - revision
                         type: object
                     type: object
                 type: object

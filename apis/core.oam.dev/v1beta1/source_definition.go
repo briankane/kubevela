@@ -28,6 +28,12 @@ type SourceDefinitionSpec struct {
 	// Schematic defines source resolution logic.
 	// +optional
 	Schematic *common.Schematic `json:"schematic,omitempty"`
+
+	// Version is the semantic version of this definition. Setting it makes each
+	// version a distinct DefinitionRevision, so a binding can pin one with
+	// `type: my-source@v1` and stop tracking whatever is newest.
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 // SourceDefinitionStatus defines the observed state of SourceDefinition.
@@ -36,6 +42,10 @@ type SourceDefinitionStatus struct {
 	// ConfigTemplateRef references the ConfigTemplate generated from this SourceDefinition schema.
 	// +optional
 	ConfigTemplateRef *SourceDefinitionConfigTemplateRef `json:"configTemplateRef,omitempty"`
+
+	// LatestRevision of this source definition.
+	// +optional
+	LatestRevision *common.Revision `json:"latestRevision,omitempty"`
 }
 
 // SourceDefinitionConfigTemplateRef references an auto-generated config template for source schema validation.
