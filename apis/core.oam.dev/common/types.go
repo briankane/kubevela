@@ -259,11 +259,29 @@ type SourceConsumer struct {
 	// hold different values.
 	// +optional
 	Cluster string `json:"cluster,omitempty"`
-	// Values are the source fields this reader actually consumed, keyed by the path
-	// it read. Fields the definition marks sensitive, and any the binding's
-	// statusPolicy masks, are redacted here exactly as they are elsewhere.
+	// Reads are the values this reader took, each saying what was read and which
+	// of the reader's properties received it. A list rather than a map because
+	// one source field can feed several properties, and one property can be
+	// assembled from several fields - "host: $(source.db.addr):$(source.db.port)"
+	// is two reads into one property, which a map cannot express.
+	//
+	// Fields the definition marks sensitive, and any the binding's statusPolicy
+	// masks, are redacted here exactly as they are elsewhere.
 	// +optional
-	Values *runtime.RawExtension `json:"values,omitempty"`
+	Reads []SourceRead `json:"reads,omitempty"`
+}
+
+// SourceRead is one value taken from a source: what was read and where it went.
+type SourceRead struct {
+	// Field is the source path that was read, e.g. "data.image".
+	Field string `json:"field"`
+	// Property is the reader's property that received it, e.g. "image" or
+	// "env[0].value".
+	// +optional
+	Property string `json:"property,omitempty"`
+	// Value is what was read, redacted where the field is sensitive or masked.
+	// +optional
+	Value *runtime.RawExtension `json:"value,omitempty"`
 }
 
 // ComponentSourceStatus records what one component render consumed from a

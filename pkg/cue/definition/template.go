@@ -725,14 +725,18 @@ func resolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	if err := json.Unmarshal(bt, &normalized); err != nil {
 		return nil, err
 	}
-	return resolveSourceNode(normalized, newSourceResolver(ctx, surface))
+	return resolveSourceNode(normalized, newSourceResolver(ctx, surface), "")
 }
 
-func resolveSourceNode(node interface{}, resolver *sourceResolver) (interface{}, error) {
+// resolveSourceNode walks a properties blob, carrying the path it is at so a
+// recorded read can say which property received the value. Without it status can
+// report what was read but not where it went, which is the half that matters
+// once a property is assembled from more than one source.
+func resolveSourceNode(node interface{}, resolver *sourceResolver, path string) (interface{}, error) {
 	switch val := node.(type) {
 	case map[string]interface{}:
 		for k, child := range val {
-			resolved, err := resolveSourceNode(child, resolver)
+			resolved, err := resolveSourceNode(child, resolver, joinPropertyPath(path, k))
 			if err != nil {
 				return nil, err
 			}
@@ -741,7 +745,7 @@ func resolveSourceNode(node interface{}, resolver *sourceResolver) (interface{},
 		return val, nil
 	case []interface{}:
 		for i, child := range val {
-			resolved, err := resolveSourceNode(child, resolver)
+			resolved, err := resolveSourceNode(child, resolver, fmt.Sprintf("%s[%d]", path, i))
 			if err != nil {
 				return nil, err
 			}
@@ -749,10 +753,17 @@ func resolveSourceNode(node interface{}, resolver *sourceResolver) (interface{},
 		}
 		return val, nil
 	case string:
-		return evaluateSourceExpression(val, resolver)
+		return evaluateSourceExpression(val, resolver, path)
 	default:
 		return node, nil
 	}
+}
+
+func joinPropertyPath(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
 }
 
 // evaluateSourceExpression substitutes $(...) expressions in a property value.
@@ -766,7 +777,7 @@ func resolveSourceNode(node interface{}, resolver *sourceResolver) (interface{},
 // through an expression must drive the same resolution and the same consumed-value
 // recording a directive would have done, or a binding used only by an expression would
 // show as unresolved.
-func evaluateSourceExpression(raw string, resolver *sourceResolver) (interface{}, error) {
+func evaluateSourceExpression(raw string, resolver *sourceResolver, property string) (interface{}, error) {
 	parsed, err := sourceexpr.Parse(raw)
 	if err != nil {
 		return nil, err
@@ -800,7 +811,7 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver) (interface{}
 			// matches on the recorded path.
 			path := strings.Join(ref.Path[1:], ".")
 			if value, ok := lookupMapPath(values, path); ok {
-				resolver.recordConsumedValue(name, resolver.sourceTypes[name], path, value)
+				resolver.recordConsumedValue(name, resolver.sourceTypes[name], path, value, property)
 			}
 		}
 	}
@@ -887,6 +898,11 @@ func lookupMapPath(data map[string]interface{}, path string) (interface{}, bool)
 
 type sourceResolver struct {
 	ctx process.Context
+	// readerKind and readerName name the thing currently doing the reading when it
+	// is not the surface being rendered. Set while a chained source resolves its
+	// own properties, empty otherwise.
+	readerKind string
+	readerName string
 	// surface is the call site this resolver is working on behalf of. It decides
 	// what a source may read from context: a chained source resolves inside
 	// whichever render triggered the outer binding, so it inherits this too.
@@ -902,6 +918,23 @@ type sourceResolver struct {
 }
 
 // SourceResolutionStatus captures source runtime resolution result.
+// SourceRead is one value taken from a source: what was read, where it went,
+// and who read it.
+type SourceRead struct {
+	// Field is the source path that was read, e.g. "data.image".
+	Field string
+	// Property is the consumer's property it landed in, e.g. "image" or
+	// "env[0].value". Empty when the read happened somewhere without a property
+	// path, which today means a source resolving its own properties.
+	Property string
+	// ReaderKind and ReaderName name the reader when it is not the surface being
+	// rendered - a source whose own properties read an earlier source. Empty
+	// means the enclosing component, trait or step.
+	ReaderKind string
+	ReaderName string
+	Value      interface{}
+}
+
 type SourceResolutionStatus struct {
 	Name           string
 	Type           string
@@ -910,7 +943,15 @@ type SourceResolutionStatus struct {
 	Config         string
 	ExpiresAt      string
 	ResolvedFields map[string]interface{}
+	// ConsumedFields is field -> value, and is what the auto-update hash is
+	// computed over. Deliberately left as a map: json.Marshal sorts map keys, so
+	// the hash is stable, and moving it to an ordered list would risk every
+	// existing workload's stamped hash changing on upgrade and re-dispatching.
 	ConsumedFields map[string]interface{}
+	// Reads is the same information with the destination attached: which property
+	// of the consumer each value landed in, and which reader made the read.
+	// Reporting only, never hashed.
+	Reads []SourceRead
 	SensitivePaths []string
 }
 
@@ -1009,7 +1050,14 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	resolvedProps := map[string]interface{}{}
 	paramFile := velaprocess.ParameterFieldName + ": {}"
 	if props, ok := r.sourceProps[sourceName]; ok && props != nil {
-		resolvedPropsNode, err := resolveSourceNode(props, r)
+		// A source's own properties may read an earlier source. Those reads belong
+		// to this binding, not to the component whose render happened to trigger
+		// the chain - without this the chain is invisible and the reads look like
+		// the component made them directly.
+		prevKind, prevName := r.readerKind, r.readerName
+		r.readerKind, r.readerName = "source", sourceName
+		resolvedPropsNode, err := resolveSourceNode(props, r, "")
+		r.readerKind, r.readerName = prevKind, prevName
 		if err != nil {
 			r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), "", "", nil)
 			return nil, errors.WithMessagef(err, "resolve source properties for %s", sourceName)
@@ -1567,7 +1615,7 @@ func (r *sourceResolver) setSourceStatus(sourceName, sourceType, phase, message,
 	r.ctx.PushData(SourceResolutionStatusKey, statuses)
 }
 
-func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string, v interface{}) {
+func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string, v interface{}, property string) {
 	statuses, _ := r.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
 	if statuses == nil {
 		statuses = map[string]SourceResolutionStatus{}
@@ -1583,6 +1631,13 @@ func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string
 		st.ConsumedFields = map[string]interface{}{}
 	}
 	st.ConsumedFields[path] = v
+	st.Reads = append(st.Reads, SourceRead{
+		Field:      path,
+		Property:   property,
+		ReaderKind: r.readerKind,
+		ReaderName: r.readerName,
+		Value:      v,
+	})
 	if len(st.SensitivePaths) == 0 {
 		st.SensitivePaths = append([]string{}, r.sensitivePaths[sourceType]...)
 	}

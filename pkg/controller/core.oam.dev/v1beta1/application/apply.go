@@ -453,6 +453,59 @@ collectNext:
 	return &status, output, outputs, isHealth, nil
 }
 
+// consumedReads renders the individual reads one consumer made, each carrying
+// the source field, the property it landed in, and the value.
+//
+// readerKind filters: a chained source's reads are recorded against the source
+// that made them, so a component's entry must not claim them.
+func consumedReads(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus,
+	readerKind, readerName string) []common.SourceRead {
+	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues && !src.StatusPolicy.ExposeResolvedFields {
+		return nil
+	}
+	maskSet := sourceMaskSet(src, rs)
+	reads := make([]common.SourceRead, 0, len(rs.Reads))
+	for _, rd := range rs.Reads {
+		if rd.ReaderKind != readerKind || rd.ReaderName != readerName {
+			continue
+		}
+		val := rd.Value
+		if maskedPath(rd.Field, maskSet) {
+			val = "***"
+		}
+		out := common.SourceRead{Field: rd.Field, Property: rd.Property}
+		if raw, err := mapToRawExtension(map[string]interface{}{"v": val}); err == nil && raw != nil {
+			// Unwrap the single-key envelope mapToRawExtension needs.
+			out.Value = unwrapValue(raw)
+		}
+		reads = append(reads, out)
+	}
+	sort.Slice(reads, func(i, j int) bool {
+		if reads[i].Property != reads[j].Property {
+			return reads[i].Property < reads[j].Property
+		}
+		return reads[i].Field < reads[j].Field
+	})
+	if len(reads) == 0 {
+		return nil
+	}
+	return reads
+}
+
+func sourceMaskSet(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus) map[string]struct{} {
+	maskPaths := append([]string{}, rs.SensitivePaths...)
+	if src.StatusPolicy != nil {
+		maskPaths = append(maskPaths, src.StatusPolicy.MaskPaths...)
+	}
+	maskSet := make(map[string]struct{}, len(maskPaths))
+	for _, p := range maskPaths {
+		if p != "" {
+			maskSet[p] = struct{}{}
+		}
+	}
+	return maskSet
+}
+
 // consumedValues renders what one reader took from a source, with sensitive and
 // masked paths redacted. Nil when the binding's statusPolicy withholds values or
 // nothing was consumed.
@@ -544,7 +597,7 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster stri
 			Name:           name,
 			Type:           readerType,
 			Cluster:        cluster,
-			Values:         consumedValues(src, rs),
+			Reads:          consumedReads(src, rs, "", ""),
 		})
 	}
 }
@@ -870,3 +923,17 @@ const (
 	sourceKindWorkflowStep = "workflowstep"
 	sourceKindPolicy       = "policy"
 )
+
+// unwrapValue pulls the single value back out of the envelope mapToRawExtension
+// requires, so a read reports its value directly rather than nested under a key.
+func unwrapValue(raw *runtime.RawExtension) *runtime.RawExtension {
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Raw, &wrapper); err != nil {
+		return nil
+	}
+	inner, ok := wrapper["v"]
+	if !ok {
+		return nil
+	}
+	return &runtime.RawExtension{Raw: inner}
+}

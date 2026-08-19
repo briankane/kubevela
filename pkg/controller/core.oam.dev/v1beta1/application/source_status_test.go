@@ -129,3 +129,63 @@ func TestSourceStatusAutoUpdateIsResolvedNotDeclared(t *testing.T) {
 	r.False(*pinned[0].AutoUpdate)
 	r.Contains(pinned[0].Message, "publishVersion")
 }
+
+// A read has to say where the value went, not just what was read. Once a
+// property is assembled from more than one source, "which field did I read" on
+// its own cannot be mapped back to anything.
+func TestConsumedReadsCarryTheDestinationProperty(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "db", Type: "dbinfo"})
+
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+		map[string]cuedefinition.SourceResolutionStatus{
+			"db": {
+				Name:  "db",
+				Phase: sourcePhaseResolved,
+				// host is assembled from two fields; image from one.
+				ConsumedFields: map[string]interface{}{"addr": "db.internal", "port": 5432, "img": "pg:16"},
+				Reads: []cuedefinition.SourceRead{
+					{Field: "addr", Property: "host", Value: "db.internal"},
+					{Field: "port", Property: "host", Value: 5432},
+					{Field: "img", Property: "image", Value: "pg:16"},
+				},
+			},
+		})
+
+	reads := h.sourceStatusList()[0].ConsumedBy[0].Reads
+	r.Len(reads, 3)
+	// Sorted by property then field, so the report is stable across reconciles
+	// rather than following Go's map iteration order.
+	r.Equal("host", reads[0].Property)
+	r.Equal("addr", reads[0].Field)
+	r.Equal("host", reads[1].Property)
+	r.Equal("port", reads[1].Field)
+	r.Equal("image", reads[2].Property)
+	r.Equal("img", reads[2].Field)
+	r.JSONEq(`"db.internal"`, string(reads[0].Value.Raw))
+	r.JSONEq(`5432`, string(reads[1].Value.Raw))
+}
+
+// A chained source reads on its own behalf. Attributing those reads to whichever
+// component triggered the chain would hide the chain and misreport the component.
+func TestChainedSourceReadsAreNotClaimedByTheComponent(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "atlas", Type: "atlas"})
+
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+		map[string]cuedefinition.SourceResolutionStatus{
+			"atlas": {
+				Name:           "atlas",
+				Phase:          sourcePhaseResolved,
+				ConsumedFields: map[string]interface{}{"clusterName": "eu-west-1"},
+				Reads: []cuedefinition.SourceRead{
+					// read by the chained source "config", not by the component
+					{Field: "clusterName", Property: "path", Value: "eu-west-1",
+						ReaderKind: "source", ReaderName: "config"},
+				},
+			},
+		})
+
+	r.Empty(h.sourceStatusList()[0].ConsumedBy[0].Reads,
+		"the component made no reads of its own, so it must claim none")
+}
