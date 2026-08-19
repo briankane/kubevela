@@ -200,7 +200,7 @@ func TestEnvRejectsBadBinding(t *testing.T) {
 // Interpolation survives the swap to CEL, because the `$( )` splitting was never
 // part of the expression language.
 //
-// sourceexpr.Parse breaks a value into text and expression fragments and contains
+// propexpr.Parse breaks a value into text and expression fragments and contains
 // no CUE; only the contents of each fragment change. A lone expression keeps its
 // type, one embedded in text yields a string - the same rule as today.
 func TestInterpolation(t *testing.T) {

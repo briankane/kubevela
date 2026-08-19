@@ -60,7 +60,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/auth"
 	common2 "github.com/oam-dev/kubevela/pkg/controller/common"
 	core "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
 	"github.com/oam-dev/kubevela/pkg/oam"
@@ -548,7 +548,7 @@ func rawReadsSource(raw *runtime.RawExtension) bool {
 	if err := json.Unmarshal(raw.Raw, &decoded); err != nil {
 		return false
 	}
-	return sourceexpr.HasExpression(decoded)
+	return propexpr.HasExpression(decoded)
 }
 
 func (r *Reconciler) stateKeep(logCtx monitorContext.Context, handler *AppHandler, app *v1beta1.Application) {

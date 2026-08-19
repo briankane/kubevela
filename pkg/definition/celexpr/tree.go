@@ -23,7 +23,7 @@ import (
 
 	"github.com/google/cel-go/cel"
 
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // A property blob is arbitrary JSON, and an expression can sit at any depth
@@ -31,7 +31,7 @@ import (
 // These walk it.
 //
 // The walking is not specific to the expression language; only what happens at a
-// string leaf is. sourceexpr.Parse still does the `$( )` splitting, because that
+// string leaf is. propexpr.Parse still does the `$( )` splitting, because that
 // is text handling rather than evaluation.
 
 // ValidateTree checks every expression in a property blob, refusing any that does
@@ -63,7 +63,7 @@ func validateNode(env *cel.Env, v interface{}, roots []string) error {
 			}
 		}
 	case string:
-		parsed, err := sourceexpr.Parse(t)
+		parsed, err := propexpr.Parse(t)
 		if err != nil || !parsed.HasExpr() {
 			return err
 		}

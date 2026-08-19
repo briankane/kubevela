@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // The point of the engine: a caller that can name its bindings and its surface
@@ -201,9 +201,9 @@ func TestEverySurfaceConstantIsDeclared(t *testing.T) {
 		SurfaceComponent, SurfaceTrait, SurfaceWorkflowStep,
 		SurfacePolicy, SurfacePolicyApp, SurfacePolicyRendered,
 	} {
-		if !sourceexpr.SurfaceDeclared(s) {
+		if !propexpr.SurfaceDeclared(s) {
 			t.Errorf("surface %q is not declared in the context registry; declared: %v",
-				s, sourceexpr.SurfaceNames())
+				s, propexpr.SurfaceNames())
 		}
 	}
 }

@@ -15,17 +15,17 @@ limitations under the License.
 */
 
 // Package celexpr is a spike: can CEL replace the hand-built expression language
-// in pkg/definition/sourceexpr?
+// in pkg/definition/propexpr?
 //
 // The question is not whether CEL can evaluate - obviously it can - but whether
-// it can carry the three things sourceexpr actually needs:
+// it can carry the three things propexpr actually needs:
 //
 //  1. A *static* result type, derived before any value exists, to check against
-//     the parameter the expression feeds. sourceexpr does this by materialising
+//     the parameter the expression feeds. propexpr does this by materialising
 //     the schema into sentinel values and evaluating, because CUE will not compute
 //     on a non-concrete operand. CEL has a real type checker, so Compile() should
 //     give the answer directly via OutputType().
-//  2. A sandbox. sourceexpr walks the parsed AST and rejects anything whose result
+//  2. A sandbox. propexpr walks the parsed AST and rejects anything whose result
 //     type could depend on a value. CEL is sandboxed by construction - no I/O, no
 //     imports, bounded evaluation - so the walk may become unnecessary.
 //  3. The reads an expression makes, for dependency ordering and +sensitive
@@ -50,7 +50,7 @@ import (
 	"github.com/google/cel-go/ext"
 	apiservercel "k8s.io/apiserver/pkg/cel"
 
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // DeclTypeFor converts a source's `schema:` block into a CEL type.
@@ -62,7 +62,7 @@ import (
 //
 // Anything unrecognised becomes DynType rather than an error: an honest "I do not
 // know this shape" that CEL will still evaluate, at the cost of static checking
-// for that subtree. That mirrors how sourceexpr treats an open region.
+// for that subtree. That mirrors how propexpr treats an open region.
 func DeclTypeFor(v cue.Value) *apiservercel.DeclType {
 	return declTypeNamed(v, "vela.schema")
 }
@@ -117,7 +117,7 @@ func declTypeNamed(v cue.Value, name string) *apiservercel.DeclType {
 //
 // sources maps a binding name to its schema; ctx maps a context field to its
 // type. Both become declared variables, so an undeclared read is a compile error
-// rather than a runtime surprise - the same guarantee sourceexpr gets from its
+// rather than a runtime surprise - the same guarantee propexpr gets from its
 // grammar walk, but from the type checker instead.
 func Env(sources map[string]cue.Value, ctx map[string]*apiservercel.DeclType) (*cel.Env, error) {
 	return env(sources, ctx)
@@ -237,7 +237,7 @@ func collectTypes(t *apiservercel.DeclType) []*apiservercel.DeclType {
 
 // OutputType compiles an expression and reports the type it produces.
 //
-// This is the whole point of the spike. sourceexpr needs sentinel values and an
+// This is the whole point of the spike. propexpr needs sentinel values and an
 // evaluation to answer this; CEL answers it from the AST, before any data exists.
 func OutputType(env *cel.Env, expr string) (*cel.Type, error) {
 	ast, iss := env.Compile(expr)
@@ -270,7 +270,7 @@ func Eval(env *cel.Env, expr string, in map[string]interface{}) (interface{}, er
 
 // EvalProperty evaluates a whole property value, interpolation included.
 //
-// The `$( )` splitting is not part of the expression language - sourceexpr.Parse
+// The `$( )` splitting is not part of the expression language - propexpr.Parse
 // already separates a value into text and expression fragments, and knows nothing
 // about CUE. Only the contents of each fragment change, so interpolation survives
 // a swap to CEL unchanged:
@@ -281,7 +281,7 @@ func Eval(env *cel.Env, expr string, in map[string]interface{}) (interface{}, er
 // one embedded in text yields a string, because concatenating with text is what
 // that means. Same rule as today.
 func EvalProperty(env *cel.Env, raw string, in map[string]interface{}) (interface{}, error) {
-	parsed, err := sourceexpr.Parse(raw)
+	parsed, err := propexpr.Parse(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func EvalProperty(env *cel.Env, raw string, in map[string]interface{}) (interfac
 // "custom types not supported by provider" - so the has() form is what is
 // available without replacing the type provider wholesale.
 func EnvForSurface(sources map[string]cue.Value, surface string) (*cel.Env, error) {
-	schema := sourceexpr.ContextFor(surface)
+	schema := propexpr.ContextFor(surface)
 	ctx := map[string]*apiservercel.DeclType{}
 	for _, name := range schema.ReadableFields() {
 		v, ok := schema.FieldValue(name)
@@ -434,7 +434,7 @@ func DynEnv() (*cel.Env, error) {
 // types as absent, which surfaces as "undeclared" on the read rather than as an
 // error about the definition, and the definition's own validation reports the
 // real cause.
-func EnvForContext(schemaText map[string]string, ctxSchema sourceexpr.ContextSchema) (*cel.Env, error) {
+func EnvForContext(schemaText map[string]string, ctxSchema propexpr.ContextSchema) (*cel.Env, error) {
 	cc := cuecontext.New()
 	sources := map[string]cue.Value{}
 	for name, text := range schemaText {
@@ -462,7 +462,7 @@ func EnvForContext(schemaText map[string]string, ctxSchema sourceexpr.ContextSch
 
 // ComponentCtx is a convenience for tests and callers that want the component
 // surface's context schema without importing the registry package directly.
-func ComponentCtx() sourceexpr.ContextSchema { return sourceexpr.ComponentContext }
+func ComponentCtx() propexpr.ContextSchema { return propexpr.ComponentContext }
 
 // ElementsCompatible reports whether a collection-valued expression can feed a
 // collection-valued parameter.

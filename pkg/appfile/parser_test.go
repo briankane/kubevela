@@ -37,7 +37,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	common2 "github.com/oam-dev/kubevela/pkg/utils/common"
 )
@@ -1323,7 +1323,7 @@ func TestPolicyExpressionValuesMatchPolicyContext(t *testing.T) {
 	}
 
 	// And the reverse: nothing declared may be missing from the supply.
-	for _, field := range sourceexpr.PolicyContext.ReadableFields() {
+	for _, field := range propexpr.PolicyContext.ReadableFields() {
 		probe := &Appfile{
 			Name: "checkout", Namespace: "prod", AppRevisionName: "checkout-v3",
 			app:      af.app,

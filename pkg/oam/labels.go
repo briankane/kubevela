@@ -176,7 +176,6 @@ const (
 	// comparison cannot see) and re-dispatch.
 	AnnotationSourceResolvedHash = "source.oam.dev/resolved-hash"
 
-
 	// AnnotationSkipGlobalPolicies controls whether global (vela-system) policies are skipped for an Application.
 	// When set to "true", only explicitly declared spec.policies are evaluated.
 	AnnotationSkipGlobalPolicies = "policy.oam.dev/skip-global"

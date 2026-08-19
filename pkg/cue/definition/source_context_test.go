@@ -24,7 +24,7 @@ import (
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // componentContext stands in for the context a component render would produce -
@@ -208,7 +208,7 @@ func TestAvailableFields(t *testing.T) {
 	t.Run("context.name always survives", func(t *testing.T) {
 		// It is supplied from the binding, not the caller, so no surface can
 		// withhold it.
-		for _, surface := range append(sourceexpr.SurfaceNames(), SurfaceComponent) {
+		for _, surface := range append(propexpr.SurfaceNames(), SurfaceComponent) {
 			found := false
 			for _, field := range availableFields(all, surface) {
 				if field == velaprocess.ContextName {

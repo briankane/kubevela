@@ -30,7 +30,7 @@ import (
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/sourcedefinition"
 )
@@ -425,7 +425,7 @@ func collectSourceRefs(raw *runtime.RawExtension, basePath *field.Path, sourceIn
 		if !ok {
 			continue
 		}
-		parsed, err := sourceexpr.Parse(text)
+		parsed, err := propexpr.Parse(text)
 		if err != nil || !parsed.HasExpr() {
 			continue
 		}
@@ -1148,7 +1148,7 @@ func validateSourceContextReads(app *v1beta1.Application, effective map[string][
 			if !ok {
 				continue
 			}
-			parsed, perr := sourceexpr.Parse(text)
+			parsed, perr := propexpr.Parse(text)
 			if perr != nil || !parsed.HasExpr() {
 				continue
 			}
@@ -1165,7 +1165,7 @@ func validateSourceContextReads(app *v1beta1.Application, effective map[string][
 						continue
 					}
 					for _, surface := range effective[src.Name] {
-						if sourceexpr.ContextFor(surface).Offers(read.Path[0]) {
+						if propexpr.ContextFor(surface).Offers(read.Path[0]) {
 							continue
 						}
 						errs = append(errs, field.Invalid(lf.fieldPath, text,
@@ -1186,8 +1186,8 @@ func validateSourceContextReads(app *v1beta1.Application, effective map[string][
 // "available in" with an empty list reads as a bug.
 func contextUnavailableMessage(field, surface, binding string) string {
 	msg := fmt.Sprintf("context.%s is unavailable in %s, where source %q is consumed",
-		field, sourceexpr.SurfacePlural(surface), binding)
-	if available := sourceexpr.SurfacesOffering(field); len(available) > 0 {
+		field, propexpr.SurfacePlural(surface), binding)
+	if available := propexpr.SurfacesOffering(field); len(available) > 0 {
 		msg += "; it is available in " + strings.Join(available, ", ")
 	}
 	return msg
@@ -1195,7 +1195,7 @@ func contextUnavailableMessage(field, surface, binding string) string {
 
 // expressionRefs extracts reads through whichever engine is selected, so the
 // reference pass and the render agree about what an expression touches.
-func expressionRefs(expr string) ([]sourceexpr.Reference, error) {
+func expressionRefs(expr string) ([]propexpr.Reference, error) {
 	env, err := celexpr.DynEnv()
 	if err != nil {
 		return nil, err
@@ -1204,9 +1204,9 @@ func expressionRefs(expr string) ([]sourceexpr.Reference, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]sourceexpr.Reference, 0, len(celRefs))
+	out := make([]propexpr.Reference, 0, len(celRefs))
 	for _, r := range celRefs {
-		out = append(out, sourceexpr.Reference{Root: r.Root, Path: r.Path, Defaulted: r.Guarded})
+		out = append(out, propexpr.Reference{Root: r.Root, Path: r.Path, Defaulted: r.Guarded})
 	}
 	return out, nil
 }

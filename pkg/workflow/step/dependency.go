@@ -31,7 +31,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/utils"
 )
 
@@ -123,5 +123,5 @@ func propertiesCarryExpression(raw []byte) bool {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return false
 	}
-	return sourceexpr.HasExpression(decoded)
+	return propexpr.HasExpression(decoded)
 }

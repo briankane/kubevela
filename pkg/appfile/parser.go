@@ -43,7 +43,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/component"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
 	"github.com/oam-dev/kubevela/pkg/oam"
@@ -828,7 +828,7 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 			// Malformed properties are reported by the consumer's own parsing.
 			return nil
 		}
-		if !sourceexpr.HasExpression(decoded) {
+		if !propexpr.HasExpression(decoded) {
 			return nil
 		}
 		if definition.SurfaceReadsSource(surface) {
@@ -837,7 +837,7 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 		// The surface cannot resolve a source, so only `context` is offered.
 		// ValidateTree reports reading anything else, which is what catches a
 		// `source` read here.
-		if err := celexpr.ValidateTree(decoded, sourceexpr.ContextIdent); err != nil {
+		if err := celexpr.ValidateTree(decoded, propexpr.ContextIdent); err != nil {
 			return fmt.Errorf("%s %q: %w", surface, name, err)
 		}
 		return nil
@@ -924,7 +924,7 @@ func (p *Parser) resolvePolicyExpressions(ctx context.Context, af *Appfile) erro
 			// which gives a better message than anything available here.
 			continue
 		}
-		if !sourceexpr.HasExpression(decoded) {
+		if !propexpr.HasExpression(decoded) {
 			continue
 		}
 

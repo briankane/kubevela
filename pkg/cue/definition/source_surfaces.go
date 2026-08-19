@@ -24,7 +24,7 @@ import (
 
 	"github.com/kubevela/workflow/pkg/cue/process"
 
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // Surfaces an Application can carry a property expression on.
@@ -117,7 +117,7 @@ func SurfaceReadsSource(surface string) bool {
 // remember when the supported set changes.
 func UnsupportedSurfaceMessage(surface string) string {
 	return fmt.Sprintf("%s cannot read \"source\"; sources resolve in %s",
-		sourceexpr.SurfacePlural(surface), readableSurfacesPhrase())
+		propexpr.SurfacePlural(surface), readableSurfacesPhrase())
 }
 
 // readableSurfacesPhrase names the source-reading surfaces in the plural, as
@@ -125,7 +125,7 @@ func UnsupportedSurfaceMessage(surface string) string {
 func readableSurfacesPhrase() string {
 	names := make([]string, 0, len(ConsumableSurfaces))
 	for _, surface := range ConsumableSurfaces {
-		names = append(names, sourceexpr.SurfacePlural(surface))
+		names = append(names, propexpr.SurfacePlural(surface))
 	}
 	sort.Strings(names)
 	switch len(names) {

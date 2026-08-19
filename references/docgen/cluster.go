@@ -42,7 +42,7 @@ import (
 	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
@@ -773,7 +773,7 @@ func sourceSurfaces(template string) []types.SourceSurface {
 
 	out := make([]types.SourceSurface, 0, len(veladefinition.ConsumableSurfaces))
 	for _, surface := range veladefinition.ConsumableSurfaces {
-		row := types.SourceSurface{Name: sourceexpr.SurfacePlural(surface), Consumable: true}
+		row := types.SourceSurface{Name: propexpr.SurfacePlural(surface), Consumable: true}
 
 		// The two exclusions are reported together because they are independent
 		// and have different fixes: what a template reads can only change by

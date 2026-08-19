@@ -24,7 +24,7 @@ import (
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // SourceEngineOptions describes one caller's world: which bindings exist, what
@@ -35,7 +35,7 @@ import (
 // resolution usable by anything that can name its bindings and supply a surface.
 type SourceEngineOptions struct {
 	// Surface names the call site, and decides which context fields a source may
-	// read. One of sourceexpr.SurfaceNames().
+	// read. One of propexpr.SurfaceNames().
 	Surface string
 	// Context is the value for each field the surface offers, as far as the caller
 	// has them. Fields may legitimately be absent rather than empty - appRevision
@@ -126,11 +126,11 @@ type SourceResult struct {
 // Application's own calls.
 func NewSourceEngine(opts SourceEngineOptions) (*SourceEngine, error) {
 	if opts.Surface == "" {
-		return nil, fmt.Errorf("a surface is required; one of %v", sourceexpr.SurfaceNames())
+		return nil, fmt.Errorf("a surface is required; one of %v", propexpr.SurfaceNames())
 	}
-	if !sourceexpr.SurfaceDeclared(opts.Surface) {
+	if !propexpr.SurfaceDeclared(opts.Surface) {
 		return nil, fmt.Errorf("unknown surface %q; declared surfaces are %v",
-			opts.Surface, sourceexpr.SurfaceNames())
+			opts.Surface, propexpr.SurfaceNames())
 	}
 	// Derived rather than required, so redaction cannot be lost by omission.
 	sensitive := map[string][]string{}
@@ -180,11 +180,11 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 //
 // No I/O: this is a parse and a type-check, so it is safe to call on a value
 // that has not been admitted and cheap enough for dependency ordering.
-func (e *SourceEngine) Reads(properties interface{}) ([]sourceexpr.Reference, error) {
-	var out []sourceexpr.Reference
+func (e *SourceEngine) Reads(properties interface{}) ([]propexpr.Reference, error) {
+	var out []propexpr.Reference
 	seen := map[string]struct{}{}
 	err := walkStrings(properties, func(raw string) error {
-		parsed, err := sourceexpr.Parse(raw)
+		parsed, err := propexpr.Parse(raw)
 		if err != nil || !parsed.HasExpr() {
 			return err
 		}
@@ -285,7 +285,7 @@ func (e *SourceEngine) typedEnv() (*cel.Env, error) {
 		}
 		schemas[binding] = expr
 	}
-	return celexpr.EnvForContext(schemas, sourceexpr.ContextFor(e.opts.Surface))
+	return celexpr.EnvForContext(schemas, propexpr.ContextFor(e.opts.Surface))
 }
 
 // Check reports every expression in properties that will not compile against the
@@ -309,7 +309,7 @@ func (e *SourceEngine) Check(properties interface{}) []CheckError {
 	}
 	var out []CheckError
 	_ = walkStringsWithPath(properties, "", func(path, raw string) error {
-		parsed, perr := sourceexpr.Parse(raw)
+		parsed, perr := propexpr.Parse(raw)
 		if perr != nil {
 			out = append(out, CheckError{Property: path, Expr: raw, Err: perr})
 			return nil

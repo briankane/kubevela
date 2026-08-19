@@ -19,7 +19,7 @@ package appfile
 import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // Policies fall into three kinds, and property expressions behave differently in
@@ -96,8 +96,8 @@ func PolicySurface(policyType string, appScoped bool) string {
 // Paired with PolicySurface for the same reason: the surface and the schema
 // describe one call site, and picking them independently is how they came to
 // disagree before.
-func PolicyContextSchema(policyType string, appScoped bool) sourceexpr.ContextSchema {
-	return sourceexpr.ContextFor(PolicySurface(policyType, appScoped))
+func PolicyContextSchema(policyType string, appScoped bool) propexpr.ContextSchema {
+	return propexpr.ContextFor(PolicySurface(policyType, appScoped))
 }
 
 // IsBuiltinPolicyType reports a policy KubeVela consumes rather than renders.

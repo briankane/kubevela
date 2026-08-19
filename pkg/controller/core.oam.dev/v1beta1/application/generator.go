@@ -51,7 +51,7 @@ import (
 	ctrlutil "github.com/oam-dev/kubevela/pkg/controller/utils"
 	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
@@ -610,7 +610,7 @@ func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.Wor
 		if err := json.Unmarshal(raw.Raw, &decoded); err != nil {
 			return nil
 		}
-		if !sourceexpr.HasExpression(decoded) {
+		if !propexpr.HasExpression(decoded) {
 			return nil
 		}
 		ctxData := appfile.GenerateContextDataFromAppFile(af, name)

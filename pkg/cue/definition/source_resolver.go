@@ -43,7 +43,7 @@ import (
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 type sourceCachePolicy struct {
@@ -169,7 +169,7 @@ func joinPropertyPath(prefix, key string) string {
 // recording a directive would have done, or a binding used only by an expression would
 // show as unresolved.
 func evaluateSourceExpression(raw string, resolver *sourceResolver, property string) (interface{}, error) {
-	parsed, err := sourceexpr.Parse(raw)
+	parsed, err := propexpr.Parse(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 // expressionReferences extracts the reads an expression makes, through whichever
 // engine is selected. Both must agree, or dependency ordering and +sensitive
 // redaction would differ between them.
-func expressionReferences(expr string) ([]sourceexpr.Reference, error) {
+func expressionReferences(expr string) ([]propexpr.Reference, error) {
 	env, err := celexpr.DynEnv()
 	if err != nil {
 		return nil, err
@@ -226,9 +226,9 @@ func expressionReferences(expr string) ([]sourceexpr.Reference, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]sourceexpr.Reference, 0, len(celRefs))
+	out := make([]propexpr.Reference, 0, len(celRefs))
 	for _, r := range celRefs {
-		out = append(out, sourceexpr.Reference{
+		out = append(out, propexpr.Reference{
 			Root: r.Root, Path: r.Path, Defaulted: r.Guarded,
 		})
 	}
@@ -262,7 +262,7 @@ func celEvalProperty(raw string, resolved map[string]map[string]interface{},
 // the render's process context.
 func (r *sourceResolver) expressionContext() map[string]interface{} {
 	out := map[string]interface{}{}
-	for _, field := range sourceexpr.ContextFor(r.surface).ReadableFields() {
+	for _, field := range propexpr.ContextFor(r.surface).ReadableFields() {
 		if v := r.ctxValues[field]; v != nil {
 			out[field] = v
 		}
@@ -449,8 +449,8 @@ func contextValuesFor(ctx process.Context) map[string]interface{} {
 	}
 	// Readable context is a superset of keyed context: a surface may offer fields
 	// an expression can read but a key may not be built from.
-	for _, surface := range sourceexpr.SurfaceNames() {
-		for _, field := range sourceexpr.ContextFor(surface).ReadableFields() {
+	for _, surface := range propexpr.SurfaceNames() {
+		for _, field := range propexpr.ContextFor(surface).ReadableFields() {
 			if _, have := out[field]; have {
 				continue
 			}

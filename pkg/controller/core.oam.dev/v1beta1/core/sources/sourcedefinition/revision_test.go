@@ -55,7 +55,7 @@ func newReconciler(objs ...client.Object) *Reconciler {
 		Scheme: velacommon.Scheme,
 		record: event.NewNopRecorder(),
 		options: options{
-			defRevLimit:   5,
+			defRevLimit:    5,
 			cacheGCEnabled: false,
 		},
 	}

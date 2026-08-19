@@ -17,7 +17,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 func TestValidateSources(t *testing.T) {
@@ -1155,10 +1155,10 @@ parameter: {image: string}
 // the read that would type-check at admission and be absent at render.
 func TestPolicySurfacesOfferDifferentContext(t *testing.T) {
 	for _, field := range []string{"publishVersion", "workflowName", "clusterVersion"} {
-		if !sourceexpr.RenderedPolicyContext.Offers(field) {
+		if !propexpr.RenderedPolicyContext.Offers(field) {
 			t.Errorf("a rendered policy is built from the appfile, so it should offer context.%s", field)
 		}
-		if sourceexpr.PolicyContext.Offers(field) {
+		if propexpr.PolicyContext.Offers(field) {
 			t.Errorf("a built-in policy is consumed before the render, so context.%s cannot be offered", field)
 		}
 	}
@@ -1168,18 +1168,18 @@ func TestPolicySurfacesOfferDifferentContext(t *testing.T) {
 	// cluster-scoped lookup, so they read context.cluster and key on it, and a
 	// surface without it can consume almost no source at all. It is supplied as
 	// the hub, which is where a policy's manifests are dispatched.
-	if !sourceexpr.RenderedPolicyContext.Offers("cluster") {
+	if !propexpr.RenderedPolicyContext.Offers("cluster") {
 		t.Error("a rendered policy must offer context.cluster, or the sources that " +
 			"key on it - which is most of them - cannot be consumed from a policy")
 	}
 	// A built-in policy still has no render at all, so it has no cluster either.
-	if sourceexpr.PolicyContext.Offers("cluster") {
+	if propexpr.PolicyContext.Offers("cluster") {
 		t.Error("a built-in policy's properties are consumed before any dispatch, " +
 			"so context.cluster is not available there")
 	}
 	// Both are policies, so both know which policy they are.
 	for _, field := range []string{"policyName", "policyType", "appName", "namespace"} {
-		if !sourceexpr.RenderedPolicyContext.Offers(field) || !sourceexpr.PolicyContext.Offers(field) {
+		if !propexpr.RenderedPolicyContext.Offers(field) || !propexpr.PolicyContext.Offers(field) {
 			t.Errorf("both policy surfaces should offer context.%s", field)
 		}
 	}

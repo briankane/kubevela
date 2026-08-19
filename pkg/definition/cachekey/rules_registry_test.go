@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // sourceResolvingSurfaces are the call sites where a SourceDefinition's template
@@ -81,7 +81,7 @@ func TestKeyedFieldsExistInTheContextRegistry(t *testing.T) {
 				if len(SurfacesSupporting([]string{field}, sourceResolvingSurfaces)) == 0 {
 					t.Errorf("keyed field %q is offered by no surface that resolves sources, "+
 						"so a source reading it would find nothing at render. Add it to a group "+
-						"in pkg/definition/sourceexpr/context.cue, or remove it here", field)
+						"in pkg/definition/propexpr/context.cue, or remove it here", field)
 				}
 			}
 		})
@@ -92,13 +92,13 @@ func TestKeyedFieldsExistInTheContextRegistry(t *testing.T) {
 // check above passes by looking at nothing.
 func TestSourceResolvingSurfacesAreDeclared(t *testing.T) {
 	declared := map[string]bool{}
-	for _, name := range sourceexpr.SurfaceNames() {
+	for _, name := range propexpr.SurfaceNames() {
 		declared[name] = true
 	}
 	for _, surface := range sourceResolvingSurfaces {
 		if !declared[surface] {
 			t.Errorf("surface %q is checked here but the context registry does not declare it; "+
-				"registry surfaces are %v", surface, sourceexpr.SurfaceNames())
+				"registry surfaces are %v", surface, propexpr.SurfaceNames())
 		}
 	}
 }

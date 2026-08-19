@@ -51,7 +51,7 @@ import (
 	oamtypes "github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/cue/process"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 )
@@ -1947,7 +1947,7 @@ func TestParseTimeSubstitutionSkipsRenderedPolicies(t *testing.T) {
 // arrives with the value the fixture set. A field added to the surface but not
 // supplied fails here rather than against a cluster.
 func TestRenderedPolicySurfaceMatchesTheRender(t *testing.T) {
-	readable := sourceexpr.RenderedPolicyContext.ReadableFields()
+	readable := propexpr.RenderedPolicyContext.ReadableFields()
 	assert.NotEmpty(t, readable)
 
 	// clusterVersion reaches the render from this global, populated when vela-core
@@ -2034,7 +2034,7 @@ func TestRenderedPolicySurfaceMatchesTheRender(t *testing.T) {
 		if got == "" {
 			t.Errorf("the policy-rendered surface declares context.%s, but it renders empty. "+
 				"Either the render path should supply it, or it should be removed from the "+
-				"policy-rendered surface in pkg/definition/sourceexpr/context.cue - an always-empty "+
+				"policy-rendered surface in pkg/definition/propexpr/context.cue - an always-empty "+
 				"field type-checks at admission and tells the author nothing", f)
 		}
 	}

@@ -165,15 +165,9 @@ func TestSourceIndicatorVocabulary(t *testing.T) {
 	r.Equal(emojiExecuting, sourceIndicator(""))
 }
 
-
-
-
 func consumer(kind, name, cluster string) common.SourceConsumer {
 	return common.SourceConsumer{DefinitionKind: kind, Name: name, Cluster: cluster}
 }
-
-
-
 
 // One component placed in three clusters is one reader that runs in three
 // places, not three consumers.

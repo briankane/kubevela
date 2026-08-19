@@ -25,7 +25,7 @@ import (
 	"github.com/google/cel-go/common/operators"
 )
 
-// Reference is one read an expression makes, mirroring sourceexpr.Reference so
+// Reference is one read an expression makes, mirroring propexpr.Reference so
 // the callers that depend on it do not have to change shape.
 //
 // Three things in the controller run off these, and all three fail quietly if the

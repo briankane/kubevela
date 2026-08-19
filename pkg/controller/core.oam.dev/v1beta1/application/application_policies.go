@@ -50,7 +50,7 @@ import (
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
@@ -1312,12 +1312,12 @@ func ptrBool(b bool) *bool { return &b }
 // expression can see is what this render actually carries, rather than what a
 // component render would have.
 func substituteScopedPolicyExpressions(pCtx wfprocess.Context, params map[string]interface{}) (map[string]interface{}, error) {
-	if !sourceexpr.HasExpression(params) {
+	if !propexpr.HasExpression(params) {
 		return params, nil
 	}
 
 	ctxValues := map[string]interface{}{}
-	for _, field := range sourceexpr.ScopedPolicyContext.ReadableFields() {
+	for _, field := range propexpr.ScopedPolicyContext.ReadableFields() {
 		if v := pCtx.GetData(field); v != nil {
 			ctxValues[field] = v
 		}

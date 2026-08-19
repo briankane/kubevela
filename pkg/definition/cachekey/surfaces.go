@@ -21,7 +21,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // RequiredContext returns the context fields a source template reads.
@@ -70,7 +70,7 @@ func SurfacesSupporting(fields, surfaces []string) []string {
 
 // missingOn lists the fields a surface does not offer.
 func missingOn(fields []string, surface string) []string {
-	if !sourceexpr.SurfaceDeclared(surface) {
+	if !propexpr.SurfaceDeclared(surface) {
 		// An unrecognised surface offers everything rather than nothing: a
 		// caller not yet taught to name itself must not start failing.
 		return nil
@@ -79,7 +79,7 @@ func missingOn(fields []string, surface string) []string {
 	for _, field := range fields {
 		// context.name is supplied from the binding, not the caller, so no
 		// surface can withhold it.
-		if field == contextNameField || sourceexpr.SurfaceOffers(surface, field) {
+		if field == contextNameField || propexpr.SurfaceOffers(surface, field) {
 			continue
 		}
 		missing = append(missing, field)
@@ -114,7 +114,7 @@ func CheckSurface(fields []string, surface string) error {
 	}
 	sort.Strings(missing)
 	return fmt.Errorf("reads %s, which is unavailable in %s",
-		strings.Join(dotted(missing), ", "), sourceexpr.SurfacePlural(surface))
+		strings.Join(dotted(missing), ", "), propexpr.SurfacePlural(surface))
 }
 
 // dotted names a context field the way an author wrote it.

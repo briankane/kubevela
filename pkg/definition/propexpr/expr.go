@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package sourceexpr implements property expressions: the way an Application
+// Package propexpr implements property expressions: the way an Application
 // consumes a resolved source, and reads its own render context.
 //
 //	properties:
@@ -39,7 +39,7 @@ limitations under the License.
 // schema-checked the same way - so the directive was removed rather than kept
 // alongside, which also removed a second set of enforcement paths that had
 // already drifted apart once.
-package sourceexpr
+package propexpr
 
 import (
 	"fmt"

@@ -28,7 +28,7 @@ import (
 
 	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // ValidateSourceStorage checks the `storage:` block of a SourceDefinition template.
@@ -279,7 +279,7 @@ func literalString(lit *ast.BasicLit) (string, error) {
 func pluralise(surfaces []string) []string {
 	out := make([]string, 0, len(surfaces))
 	for _, s := range surfaces {
-		out = append(out, sourceexpr.SurfacePlural(s))
+		out = append(out, propexpr.SurfacePlural(s))
 	}
 	return out
 }

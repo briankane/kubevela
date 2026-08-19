@@ -25,7 +25,7 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/google/cel-go/cel"
 
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // The CEL environment is built from the shared context registry, so a surface
@@ -41,7 +41,7 @@ func TestSurfaceParity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: building the env: %v", surface, err)
 		}
-		schema := sourceexpr.ContextFor(surface)
+		schema := propexpr.ContextFor(surface)
 
 		// Every field the registry says this surface offers must type-check.
 		for _, f := range schema.ReadableFields() {

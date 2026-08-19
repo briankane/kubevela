@@ -23,7 +23,7 @@ import (
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // sourceContextFile renders the `context:` a source template is compiled against.
@@ -81,14 +81,14 @@ func sourceContext(values map[string]interface{}, bindingName, surface string) (
 
 // availableFields narrows the rules' field list to those the surface offers.
 func availableFields(fields []string, surface string) []string {
-	if surface == "" || !sourceexpr.SurfaceDeclared(surface) {
+	if surface == "" || !propexpr.SurfaceDeclared(surface) {
 		return fields
 	}
 	out := make([]string, 0, len(fields))
 	for _, field := range fields {
 		// context.name is supplied from the binding rather than the caller, so it
 		// is available wherever a source resolves regardless of the surface.
-		if field == velaprocess.ContextName || sourceexpr.SurfaceOffers(surface, field) {
+		if field == velaprocess.ContextName || propexpr.SurfaceOffers(surface, field) {
 			out = append(out, field)
 		}
 	}
