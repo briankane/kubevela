@@ -351,13 +351,13 @@ func NewAsyncReader(baseURL, bucket, repo, subPath, token string, rdType ReaderT
 			return nil, errors.New("addon registry invalid")
 		}
 		_, content, err := utils.ParseGitlab(u.String(), repo)
-		content.GitlabContent.Path = subPath
 		if err != nil {
 			return nil, err
 		}
 		if cfg.ref != "" {
 			content.GitlabContent.Ref = cfg.ref
 		}
+		content.GitlabContent.Path = subPath
 		gitlabHelper, err := createGitlabHelper(content, token)
 		if err != nil {
 			return nil, errors.New("addon registry connect fail")

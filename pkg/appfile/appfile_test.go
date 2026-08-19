@@ -1781,6 +1781,10 @@ output: {
 // KEP-2.16 documents `// +sensitive` as a schema: marker and places it there in
 // its examples, but the first implementation only read output:. A definition
 // written to the KEP must still redact.
+
+// KEP-2.16 documents `// +sensitive` as a schema: marker and places it there in
+// its examples, but the first implementation only read output:. A definition
+// written to the KEP must still redact.
 func TestExtractSensitiveOutputPathsFromSchema(t *testing.T) {
 	paths := extractSensitiveOutputPaths(`
 schema: {
@@ -1837,6 +1841,14 @@ output: {
 // answer beyond context.name, which means something different at every call site.
 // The registry declares policyName and policyType on the policy-rendered surface;
 // this is the render side of that promise.
+
+// A rendered policy's context must carry its own identity.
+//
+// Its context is component-shaped because it is built the same way, but no
+// component identity is pushed - so a policy asking which policy it is had no
+// answer beyond context.name, which means something different at every call site.
+// The registry declares policyName and policyType on the policy-rendered surface;
+// this is the render side of that promise.
 func TestPolicyRenderSuppliesPolicyIdentity(t *testing.T) {
 	af := &Appfile{
 		Name:            "test-app",
@@ -1882,6 +1894,12 @@ func TestPolicyRenderSuppliesPolicyIdentity(t *testing.T) {
 // Both passes substitute context. If the appfile-time one also handled a rendered
 // policy, the substitution would happen twice - and worse, it would refuse the
 // `source` reads the render can satisfy, because that pass has no resolver.
+
+// And the parse-time pass must leave a rendered policy's expressions alone.
+//
+// Both passes substitute context. If the appfile-time one also handled a rendered
+// policy, the substitution would happen twice - and worse, it would refuse the
+// `source` reads the render can satisfy, because that pass has no resolver.
 func TestParseTimeSubstitutionSkipsRenderedPolicies(t *testing.T) {
 	for _, tc := range []struct {
 		policyType string
@@ -1898,6 +1916,21 @@ func TestParseTimeSubstitutionSkipsRenderedPolicies(t *testing.T) {
 		}
 	}
 }
+
+// Every field the policy-rendered surface declares must survive a real policy
+// render, with a value.
+//
+// Membership alone is not enough, which is the lesson that produced this test:
+// context.cluster was declared on that surface and rendered as "" - present,
+// typed, and permanently meaningless, because GenerateContextDataFromAppFile
+// never assigns ctxData.Cluster and a policy's manifests are produced once for
+// the Application rather than per placement. On a live cluster a component read
+// "local" while the policy beside it read "". A field that always renders empty
+// is worse than an absent one: admission accepts it and the author gets nothing.
+//
+// So this renders a template that reads every declared field and asserts each
+// arrives with the value the fixture set. A field added to the surface but not
+// supplied fails here rather than against a cluster.
 
 // Every field the policy-rendered surface declares must survive a real policy
 // render, with a value.
@@ -2005,4 +2038,203 @@ func TestRenderedPolicySurfaceMatchesTheRender(t *testing.T) {
 				"field type-checks at admission and tells the author nothing", f)
 		}
 	}
+}
+
+func TestPropagatePodDisruptiveHash(t *testing.T) {
+	deploymentWithTemplate := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "apps/v1",
+				"kind":       "Deployment",
+				"metadata": map[string]interface{}{
+					"name": "my-workload",
+				},
+				"spec": map[string]interface{}{
+					"template": map[string]interface{}{
+						"metadata": map[string]interface{}{},
+						"spec":     map[string]interface{}{},
+					},
+				},
+			},
+		}
+	}
+
+	configMapTrait := func(value string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "ConfigMap",
+				"metadata": map[string]interface{}{
+					"name": "my-comp-cm",
+					"labels": map[string]interface{}{
+						oam.TraitTypeLabel: "configmap-trait",
+					},
+				},
+				"data": map[string]interface{}{
+					"key1": value,
+				},
+			},
+		}
+	}
+
+	af := &Appfile{
+		RelatedTraitDefinitions: map[string]*v1beta1.TraitDefinition{
+			"configmap-trait": {
+				Spec: v1beta1.TraitDefinitionSpec{
+					PodDisruptive: true,
+				},
+			},
+			"non-disruptive-trait": {
+				Spec: v1beta1.TraitDefinitionSpec{
+					PodDisruptive: false,
+				},
+			},
+		},
+	}
+
+	t.Run("podDisruptive trait stamps a restart hash on the pod template", func(t *testing.T) {
+		workload := deploymentWithTemplate()
+		trait := configMapTrait("value1")
+
+		err := af.propagatePodDisruptiveHash(workload, trait)
+		assert.NoError(t, err)
+
+		annotations, found, err := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.NotEmpty(t, annotations[podRestartHashAnnotationPrefix+"configmap-trait"])
+	})
+
+	t.Run("changing the trait content changes the hash, which changes the pod template", func(t *testing.T) {
+		workloadBefore := deploymentWithTemplate()
+		assert.NoError(t, af.propagatePodDisruptiveHash(workloadBefore, configMapTrait("value1")))
+		hashBefore := workloadBefore.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})[podRestartHashAnnotationPrefix+"configmap-trait"]
+
+		workloadAfter := deploymentWithTemplate()
+		assert.NoError(t, af.propagatePodDisruptiveHash(workloadAfter, configMapTrait("value2")))
+		hashAfter := workloadAfter.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})[podRestartHashAnnotationPrefix+"configmap-trait"]
+
+		assert.NotEqual(t, hashBefore, hashAfter, "changing trait content must change the pod restart hash")
+	})
+
+	t.Run("non-disruptive trait does not touch the pod template", func(t *testing.T) {
+		workload := deploymentWithTemplate()
+		trait := configMapTrait("value1")
+		trait.SetLabels(map[string]string{oam.TraitTypeLabel: "non-disruptive-trait"})
+
+		err := af.propagatePodDisruptiveHash(workload, trait)
+		assert.NoError(t, err)
+
+		annotations, _, _ := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		assert.Empty(t, annotations)
+	})
+
+	t.Run("workload without a pod template is left untouched", func(t *testing.T) {
+		workload := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "v1",
+				"kind":       "Service",
+				"metadata":   map[string]interface{}{"name": "my-svc"},
+			},
+		}
+		trait := configMapTrait("value1")
+
+		err := af.propagatePodDisruptiveHash(workload, trait)
+		assert.NoError(t, err)
+		_, found, _ := unstructured.NestedMap(workload.Object, "spec")
+		assert.False(t, found)
+	})
+
+	t.Run("unknown trait type returns a not-found error, same convention as setWorkloadRefToTrait", func(t *testing.T) {
+		workload := deploymentWithTemplate()
+		trait := configMapTrait("value1")
+		trait.SetLabels(map[string]string{oam.TraitTypeLabel: "unregistered-trait"})
+
+		err := af.propagatePodDisruptiveHash(workload, trait)
+		assert.Error(t, err)
+		assert.True(t, IsNotFoundInAppFile(err))
+	})
+	t.Run("trait type with hashed suffix resolves to base TraitDefinition name", func(t *testing.T) {
+		workload := deploymentWithTemplate()
+		trait := configMapTrait("value1")
+		trait.SetLabels(map[string]string{oam.TraitTypeLabel: "configmap-trait-abc123"})
+
+		err := af.propagatePodDisruptiveHash(workload, trait)
+		assert.NoError(t, err)
+
+		annotations, found, err := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.NotEmpty(t, annotations[podRestartHashAnnotationPrefix+"configmap-trait"])
+	})
+	t.Run("trait type with hashed suffix resolves to base TraitDefinition name", func(t *testing.T) {
+		workload := deploymentWithTemplate()
+		trait := configMapTrait("value1")
+		trait.SetLabels(map[string]string{oam.TraitTypeLabel: "configmap-trait-abc123"})
+
+		err := af.propagatePodDisruptiveHash(workload, trait)
+		assert.NoError(t, err)
+
+		annotations, found, err := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		assert.NoError(t, err)
+		assert.True(t, found)
+		assert.NotEmpty(t, annotations[podRestartHashAnnotationPrefix+"configmap-trait"])
+	})
+
+	t.Run("long trait type names never produce an annotation key over 63 characters", func(t *testing.T) {
+		longType := "a-very-long-custom-trait-type-name-that-goes-well-past-the-limit"
+		afLong := &Appfile{
+			RelatedTraitDefinitions: map[string]*v1beta1.TraitDefinition{
+				longType: {Spec: v1beta1.TraitDefinitionSpec{PodDisruptive: true}},
+			},
+		}
+		workload := deploymentWithTemplate()
+		trait := configMapTrait("value1")
+		trait.SetLabels(map[string]string{oam.TraitTypeLabel: longType})
+
+		err := afLong.propagatePodDisruptiveHash(workload, trait)
+		assert.NoError(t, err)
+
+		annotations, found, err := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		assert.NoError(t, err)
+		assert.True(t, found)
+
+		var key string
+		for k := range annotations {
+			key = k
+		}
+		assert.LessOrEqual(t, len(key), 63, "annotation key must never exceed the Kubernetes 63-character limit")
+	})
+
+	t.Run("changing user-specified metadata (e.g. labels) on the trait still changes the hash", func(t *testing.T) {
+		workloadBefore := deploymentWithTemplate()
+		traitBefore := configMapTrait("value1")
+		assert.NoError(t, af.propagatePodDisruptiveHash(workloadBefore, traitBefore))
+		hashBefore := workloadBefore.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})[podRestartHashAnnotationPrefix+"configmap-trait"]
+
+		workloadAfter := deploymentWithTemplate()
+		traitAfter := configMapTrait("value1")
+		traitLabels := traitAfter.GetLabels()
+		traitLabels["team"] = "platform"
+		traitAfter.SetLabels(traitLabels)
+		assert.NoError(t, af.propagatePodDisruptiveHash(workloadAfter, traitAfter))
+		hashAfter := workloadAfter.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})[podRestartHashAnnotationPrefix+"configmap-trait"]
+
+		assert.NotEqual(t, hashBefore, hashAfter, "a user-specified metadata change must still change the restart hash")
+	})
+
+	t.Run("controller-injected metadata churn (resourceVersion) does not change the hash", func(t *testing.T) {
+		workloadBefore := deploymentWithTemplate()
+		traitBefore := configMapTrait("value1")
+		assert.NoError(t, af.propagatePodDisruptiveHash(workloadBefore, traitBefore))
+		hashBefore := workloadBefore.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})[podRestartHashAnnotationPrefix+"configmap-trait"]
+
+		workloadAfter := deploymentWithTemplate()
+		traitAfter := configMapTrait("value1")
+		traitAfter.SetResourceVersion("12345")
+		assert.NoError(t, af.propagatePodDisruptiveHash(workloadAfter, traitAfter))
+		hashAfter := workloadAfter.Object["spec"].(map[string]interface{})["template"].(map[string]interface{})["metadata"].(map[string]interface{})["annotations"].(map[string]interface{})[podRestartHashAnnotationPrefix+"configmap-trait"]
+
+		assert.Equal(t, hashBefore, hashAfter, "controller-injected metadata churn must not cause a spurious restart")
+	})
 }
