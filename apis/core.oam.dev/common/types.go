@@ -183,7 +183,6 @@ type ApplicationComponentStatus struct {
 	Message         string                    `json:"message,omitempty"`
 	Traits          []ApplicationTraitStatus  `json:"traits,omitempty"`
 	Scopes          []corev1.ObjectReference  `json:"scopes,omitempty"`
-	Sources         []ComponentSourceStatus   `json:"sources,omitempty"`
 }
 
 // Equal check if two ApplicationComponentStatus are equal
@@ -254,11 +253,14 @@ type SourceConsumer struct {
 	// be understood without cross-referencing the spec.
 	// +optional
 	Type string `json:"type,omitempty"`
-	// Cluster the read happened in. The same binding resolves separately per
-	// cluster when its cache key varies by one, so two entries here may legitimately
-	// hold different values.
+	// Cluster and Namespace place the read. The same binding resolves separately
+	// per cluster when its cache key varies by one, so two entries here may
+	// legitimately hold different values, and an override policy can put the same
+	// component in two namespaces of one cluster.
 	// +optional
 	Cluster string `json:"cluster,omitempty"`
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 	// Values are what this reader took, each saying which source attribute was
 	// read and which of the reader's properties received it. A list rather than a
 	// map because one source attribute can feed several properties, and one
@@ -285,18 +287,6 @@ type SourceValue struct {
 	Value *runtime.RawExtension `json:"value,omitempty"`
 }
 
-// ComponentSourceStatus records what one component render consumed from a
-// source. Whether the source resolved, what backs it and when it expires belong
-// to the binding, not to each component reading it, and live on
-// AppStatus.Sources - repeating them per component made a source a component did
-// not read indistinguishable from one that failed.
-type ComponentSourceStatus struct {
-	// Name is the spec.sources[] binding.
-	Name string `json:"name"`
-	// Properties records only the source fields this component's render consumed.
-	// +optional
-	Properties *runtime.RawExtension `json:"properties,omitempty"`
-}
 
 // Revision has name and revision number
 type Revision struct {

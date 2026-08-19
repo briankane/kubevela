@@ -111,9 +111,9 @@ func (h *AppHandler) GenerateApplicationSteps(ctx monitorContext.Context,
 	ctx.SetContext(ctxWithRuntimeParams)
 	instance, err := generateWorkflowInstance(af, app,
 		func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus) {
-			// Cluster is empty: a workflow step is not placed, so its reads are not
-			// per-cluster the way a component's are.
-			h.recordSourceResolution(sourceKindWorkflowStep, name, stepType, "", resolved)
+			// Cluster and namespace are empty: a workflow step is not placed the way
+			// a component is, so its reads are not per-placement.
+			h.recordSourceResolution(sourceKindWorkflowStep, name, stepType, "", "", resolved)
 		})
 	if err != nil {
 		return nil, nil, err

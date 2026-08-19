@@ -733,27 +733,6 @@ spec:
                                 type: object
                                 x-kubernetes-map-type: atomic
                               type: array
-                            sources:
-                              items:
-                                description: |-
-                                  ComponentSourceStatus records what one component render consumed from a
-                                  source. Whether the source resolved, what backs it and when it expires belong
-                                  to the binding, not to each component reading it, and live on
-                                  AppStatus.Sources - repeating them per component made a source a component did
-                                  not read indistinguishable from one that failed.
-                                properties:
-                                  name:
-                                    description: Name is the spec.sources[] binding.
-                                    type: string
-                                  properties:
-                                    description: Properties records only the source
-                                      fields this component's render consumed.
-                                    type: object
-                                    x-kubernetes-preserve-unknown-fields: true
-                                required:
-                                - name
-                                type: object
-                              type: array
                             traits:
                               items:
                                 description: ApplicationTraitStatus records the trait
@@ -836,9 +815,10 @@ spec:
                                 properties:
                                   cluster:
                                     description: |-
-                                      Cluster the read happened in. The same binding resolves separately per
-                                      cluster when its cache key varies by one, so two entries here may legitimately
-                                      hold different values.
+                                      Cluster and Namespace place the read. The same binding resolves separately
+                                      per cluster when its cache key varies by one, so two entries here may
+                                      legitimately hold different values, and an override policy can put the same
+                                      component in two namespaces of one cluster.
                                     type: string
                                   definitionKind:
                                     description: |-
@@ -850,6 +830,8 @@ spec:
                                       Name identifies the reader within its kind - the component, the step, the
                                       policy. A trait is named "<component>/<trait>", since a trait has no
                                       identity apart from the component it is attached to.
+                                    type: string
+                                  namespace:
                                     type: string
                                   type:
                                     description: |-

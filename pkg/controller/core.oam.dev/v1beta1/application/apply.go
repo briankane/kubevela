@@ -447,7 +447,7 @@ collectNext:
 			status.Message = "traits are not healthy"
 		}
 	}
-	h.mergeSourceResolutionStatus(comp, &status)
+	h.recordComponentSourceReads(comp, &status)
 	status.Traits = slices.Collect(maps.Values(traitStatusByKey))
 	h.addServiceStatus(true, status)
 	return &status, output, outputs, isHealth, nil
@@ -545,7 +545,7 @@ func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 // Called for every surface that resolves sources, not just components: a
 // workflow step has nowhere of its own to report, since its status type belongs
 // to the workflow repo and that engine is deliberately unaware sources exist.
-func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster string,
+func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, namespace string,
 	resolved map[string]cuedefinition.SourceResolutionStatus) {
 	if len(resolved) == 0 {
 		return
@@ -590,6 +590,7 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster stri
 			Name:           name,
 			Type:           readerType,
 			Cluster:        cluster,
+			Namespace:      namespace,
 			Values:         consumerValues(src, rs, "", ""),
 		})
 	}
@@ -632,34 +633,21 @@ func (h *AppHandler) sourceStatusList() []common.ApplicationSourceStatus {
 	return out
 }
 
-// mergeSourceResolutionStatus records what this component's render consumed, and
-// nothing else.
+// recordComponentSourceReads folds this component render's source resolution
+// into the Application-level report.
 //
-// Whether a binding resolved, what backs it and when that expires belong to the
-// binding rather than to each component reading it, and are reported once on
-// AppStatus.Sources. Repeating them per component made a source a component did
-// not read look identical to one that failed, and multiplied the same facts by
-// the number of components.
-func (h *AppHandler) mergeSourceResolutionStatus(comp *appfile.Component, status *common.ApplicationComponentStatus) {
+// There is deliberately no per-component copy. Services[].Sources used to carry
+// one, but everything in it - which binding, which attribute, which value - is
+// in AppStatus.Sources[].ConsumedBy alongside the property each value landed in
+// and where the component was placed, so the per-component list was strictly
+// less information stored twice. Nothing in the tree read it, and duplicated
+// status drifts and costs size for no gain.
+func (h *AppHandler) recordComponentSourceReads(comp *appfile.Component, status *common.ApplicationComponentStatus) {
 	if len(h.app.Spec.Sources) == 0 || comp == nil || comp.Ctx == nil {
 		return
 	}
 	resolvedStatuses, _ := comp.Ctx.GetData(cuedefinition.SourceResolutionStatusKey).(map[string]cuedefinition.SourceResolutionStatus)
-	h.recordSourceResolution(sourceKindComponent, status.Name, comp.Type, status.Cluster, resolvedStatuses)
-	consumed := make([]common.ComponentSourceStatus, 0, len(h.app.Spec.Sources))
-	for _, src := range h.app.Spec.Sources {
-		rs, ok := resolvedStatuses[src.Name]
-		if !ok || len(rs.ConsumedFields) == 0 {
-			// Not read by this component. Saying nothing is the honest report;
-			// an empty entry reads as a failure.
-			continue
-		}
-		consumed = append(consumed, common.ComponentSourceStatus{
-			Name:       src.Name,
-			Properties: consumedValues(src, rs),
-		})
-	}
-	status.Sources = consumed
+	h.recordSourceResolution(sourceKindComponent, status.Name, comp.Type, status.Cluster, status.Namespace, resolvedStatuses)
 }
 
 // maskedPath reports whether a consumed field is covered by a mask, either

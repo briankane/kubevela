@@ -45,7 +45,7 @@ func TestSourceStatusListReportsEveryBindingOnce(t *testing.T) {
 
 	// Two components read the same binding. That is one binding, two consumers.
 	for _, comp := range []string{"web", "api"} {
-		h.recordSourceResolution(sourceKindComponent, comp, "webservice", "local",
+		h.recordSourceResolution(sourceKindComponent, comp, "webservice", "local", "default",
 			map[string]cuedefinition.SourceResolutionStatus{
 				"registry": {
 					Name: "registry", Type: "configmap", Phase: sourcePhaseResolved,
@@ -76,7 +76,7 @@ func TestSourceStatusListRecordsNonComponentReaders(t *testing.T) {
 	r := require.New(t)
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "registry", Type: "configmap"})
 
-	h.recordSourceResolution(sourceKindWorkflowStep, "notify", "notification", "",
+	h.recordSourceResolution(sourceKindWorkflowStep, "notify", "notification", "", "",
 		map[string]cuedefinition.SourceResolutionStatus{
 			"registry": {Name: "registry", Phase: sourcePhaseResolved,
 				ConsumedFields: map[string]interface{}{"data.channel": "#deploys"}},
@@ -95,12 +95,12 @@ func TestSourceStatusListPrefersAFailure(t *testing.T) {
 	r := require.New(t)
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "registry", Type: "configmap"})
 
-	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
 		map[string]cuedefinition.SourceResolutionStatus{
 			"registry": {Name: "registry", Phase: sourcePhaseResolved,
 				ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
 		})
-	h.recordSourceResolution(sourceKindComponent, "api", "webservice", "remote",
+	h.recordSourceResolution(sourceKindComponent, "api", "webservice", "remote", "default",
 		map[string]cuedefinition.SourceResolutionStatus{
 			"registry": {Name: "registry", Phase: sourcePhaseFailed, Message: "fetch timed out",
 				ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
@@ -137,7 +137,7 @@ func TestConsumedReadsCarryTheDestinationProperty(t *testing.T) {
 	r := require.New(t)
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "db", Type: "dbinfo"})
 
-	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
 		map[string]cuedefinition.SourceResolutionStatus{
 			"db": {
 				Name:  "db",
@@ -172,7 +172,7 @@ func TestChainedSourceReadsAreNotClaimedByTheComponent(t *testing.T) {
 	r := require.New(t)
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "atlas", Type: "atlas"})
 
-	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
 		map[string]cuedefinition.SourceResolutionStatus{
 			"atlas": {
 				Name:           "atlas",
@@ -199,7 +199,7 @@ func TestSensitiveValuesSurviveAWholeStructRead(t *testing.T) {
 	r := require.New(t)
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "creds", Type: "dbcreds"})
 
-	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
 		map[string]cuedefinition.SourceResolutionStatus{
 			"creds": {
 				Name: "creds", Phase: sourcePhaseResolved,
@@ -226,4 +226,29 @@ func TestSensitiveValuesSurviveAWholeStructRead(t *testing.T) {
 	// Redaction is surgical: what was not marked still shows.
 	r.Contains(string(values[0].Value.Raw)+string(values[1].Value.Raw), "db.internal")
 	r.Contains(string(values[0].Value.Raw)+string(values[1].Value.Raw), "ana")
+}
+
+// The per-component list is gone, so a consumer entry has to place itself.
+// Without the namespace an override policy putting one component in two
+// namespaces of a cluster produces two entries that cannot be told apart.
+func TestConsumerRecordsItsPlacement(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "configmap"})
+
+	for _, ns := range []string{"team-a", "team-b"} {
+		h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", ns,
+			map[string]cuedefinition.SourceResolutionStatus{
+				"cfg": {Name: "cfg", Phase: sourcePhaseResolved,
+					ConsumedFields: map[string]interface{}{"data.image": "nginx"},
+					Reads: []cuedefinition.SourceRead{
+						{SourceAttr: "data.image", Property: "image", Value: "nginx"},
+					}},
+			})
+	}
+
+	consumers := h.sourceStatusList()[0].ConsumedBy
+	r.Len(consumers, 2)
+	r.Equal("local", consumers[0].Cluster)
+	r.ElementsMatch([]string{"team-a", "team-b"},
+		[]string{consumers[0].Namespace, consumers[1].Namespace})
 }
