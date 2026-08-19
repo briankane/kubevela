@@ -178,11 +178,12 @@ type ApplicationComponentStatus struct {
 	Healthy            bool        `json:"healthy"`
 	// WorkloadHealthy indicates the workload health without considering trait health.
 	// +optional
-	WorkloadHealthy bool                     `json:"workloadHealthy,omitempty"`
-	Details         map[string]string        `json:"details,omitempty"`
-	Message         string                   `json:"message,omitempty"`
-	Traits          []ApplicationTraitStatus `json:"traits,omitempty"`
-	Scopes          []corev1.ObjectReference `json:"scopes,omitempty"`
+	WorkloadHealthy bool                      `json:"workloadHealthy,omitempty"`
+	Details         map[string]string         `json:"details,omitempty"`
+	Message         string                    `json:"message,omitempty"`
+	Traits          []ApplicationTraitStatus  `json:"traits,omitempty"`
+	Scopes          []corev1.ObjectReference  `json:"scopes,omitempty"`
+	Sources         []ApplicationSourceStatus `json:"sources,omitempty"`
 }
 
 // Equal check if two ApplicationComponentStatus are equal
@@ -198,6 +199,21 @@ type ApplicationTraitStatus struct {
 	Pending bool              `json:"pending,omitempty"`
 	Details map[string]string `json:"details,omitempty"`
 	Message string            `json:"message,omitempty"`
+}
+
+// ApplicationSourceStatus records source resolution status.
+type ApplicationSourceStatus struct {
+	Name   string `json:"name"`
+	Type   string `json:"type,omitempty"`
+	Config string `json:"config,omitempty"`
+	// ExpiresAt is the RFC3339 timestamp when the currently served cache value expires.
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Message   string `json:"message,omitempty"`
+	// Properties records only source fields actually consumed by this service render.
+	// +optional
+	Properties *runtime.RawExtension `json:"properties,omitempty"`
+	// +optional
+	ResolvedFields *runtime.RawExtension `json:"resolvedFields,omitempty"`
 }
 
 // Revision has name and revision number
@@ -323,7 +339,7 @@ type WorkflowStatus struct {
 }
 
 // DefinitionType describes the type of DefinitionRevision.
-// +kubebuilder:validation:Enum=Component;Trait;Policy;WorkflowStep
+// +kubebuilder:validation:Enum=Component;Trait;Policy;WorkflowStep;Source
 type DefinitionType string
 
 const (
@@ -338,6 +354,8 @@ const (
 
 	// WorkflowStepType represents DefinitionRevision refer to type WorkflowStepDefinition
 	WorkflowStepType DefinitionType = "WorkflowStep"
+	// SourceType represents DefinitionRevision refer to type SourceDefinition
+	SourceType DefinitionType = "Source"
 )
 
 // ApplicationTrait defines the trait of application

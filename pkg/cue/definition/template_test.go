@@ -19,11 +19,13 @@ package definition
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1836,4 +1838,301 @@ func TestGetBaseContextLabels(t *testing.T) {
 			r.Equal(tc.want.labels, got, tc.reason)
 		})
 	}
+}
+
+func TestResolveSourceNode(t *testing.T) {
+	sources := map[string]map[string]interface{}{
+		"cluster-info": {
+			"region": "us-east-1",
+			"nested": map[string]interface{}{"tier": "prod"},
+		},
+	}
+	// A hyphenated binding needs bracket form: source.cluster-info.region parses
+	// as subtraction, which the grammar rejects with that explanation.
+	in := map[string]interface{}{
+		"region": `$(source["cluster-info"].region)`,
+		"tier":   `$(source["cluster-info"].nested.tier)`,
+	}
+	resolver := newSourceResolver(process.NewContext(process.ContextData{}), SurfaceComponent)
+	resolver.resolved = sources
+	resolver.sourceTypes = map[string]string{"cluster-info": "cluster"}
+	got, err := resolveSourceNode(in, resolver)
+	require.NoError(t, err)
+	out, ok := got.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "us-east-1", out["region"])
+	assert.Equal(t, "prod", out["tier"])
+	statuses, _ := resolver.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	require.NotNil(t, statuses)
+	assert.Equal(t, "us-east-1", statuses["cluster-info"].ConsumedFields["region"])
+	assert.Equal(t, "prod", statuses["cluster-info"].ConsumedFields["nested.tier"])
+}
+
+func TestResolveChainedSourceProperties(t *testing.T) {
+	ctx := process.NewContext(process.ContextData{})
+	resolver := newSourceResolver(ctx, SurfaceComponent)
+	resolver.sourceTypes = map[string]string{
+		"sourceA": "typeA",
+		"sourceB": "typeB",
+	}
+	resolver.sourceTemplates = map[string]string{
+		"typeA": `
+$internal: {key: "test-cache-key-1"}
+output: {
+  nested: {
+    image: {
+      repo: parameter.repo
+      tag:  parameter.tag
+    }
+  }
+}
+parameter: {
+  repo: string
+  tag:  string
+}
+`,
+		"typeB": `
+$internal: {key: "test-cache-key-2"}
+output: {
+  resolved: {
+    image: "\(parameter.repo):\(parameter.tag)"
+  }
+}
+parameter: {
+  repo: string
+  tag:  string
+}
+`,
+	}
+	resolver.sourceProps = map[string]map[string]interface{}{
+		"sourceA": {
+			"repo": "nginx",
+			"tag":  "1.25.2",
+		},
+		"sourceB": {
+			"repo": "$(source.sourceA.nested.image.repo)",
+			"tag":  "$(source.sourceA.nested.image.tag)",
+		},
+	}
+
+	out, err := resolver.resolve("sourceB")
+	require.NoError(t, err)
+	resolved, ok := out["resolved"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "nginx:1.25.2", resolved["image"])
+}
+
+// Seeded cache entries have to be created under the identity the resolver will
+// compute, which now covers the template as well as the properties - so both
+// sides use the same text.
+const resolver_stale_cache_use_template = `
+$internal: {
+	key: "stale-cache-use"
+}
+storage: {
+	storageTTL: "1ms"
+	onStaleFailure: "use-stale"
+}
+output: {
+  value: parameter.value
+}
+parameter: {
+  value: string
+}
+`
+
+const resolver_stale_cache_fail_template = `
+$internal: {
+	key: "stale-cache-fail"
+}
+storage: {
+	storageTTL: "1ms"
+	onStaleFailure: "fail"
+}
+output: {
+  value: parameter.value
+}
+parameter: {
+  value: string
+}
+`
+
+func TestResolveSourceUsesStaleCacheOnRefreshFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	// The resolver appends a hash of the binding's properties to the declared
+	// key, so the entry has to be seeded under that identity rather than the
+	// key alone.
+	staleProps := map[string]interface{}{"value": 1}
+	cacheKey, err := cacheIdentity("stale-cache-use", identityInputs{
+		Template:   templateFingerprint(resolver_stale_cache_use_template),
+		Properties: staleProps,
+	})
+	require.NoError(t, err)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cacheKey,
+			Namespace: sourceCacheNamespace,
+			Annotations: map[string]string{
+				sourceCacheSyncAtKey: time.Now().Add(-time.Hour).Format(time.RFC3339),
+			},
+		},
+		Data: map[string][]byte{
+			sourceCacheDataKey: []byte(`{"value":"cached"}`),
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	ctx := process.NewContext(process.ContextData{})
+	ctx.PushData(process.ContextAppSourceCacheStore, NewSecretSourceCacheStore(cli))
+	resolver := newSourceResolver(ctx, SurfaceComponent)
+	resolver.sourceTypes = map[string]string{"s": "t"}
+	resolver.sourceTemplates = map[string]string{
+		"t": resolver_stale_cache_use_template,
+	}
+	// Invalid parameter type triggers refresh compile failure.
+	resolver.sourceProps = map[string]map[string]interface{}{"s": staleProps}
+
+	out, err := resolver.resolve("s")
+	require.NoError(t, err)
+	require.Equal(t, "cached", out["value"])
+	statuses, _ := resolver.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	require.NotNil(t, statuses)
+	assert.Equal(t, cacheKey, statuses["s"].Config)
+	assert.NotEmpty(t, statuses["s"].ExpiresAt)
+}
+
+func TestResolveSourceFailsOnStaleRefreshFailureWhenPolicyFail(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	// The resolver appends a hash of the binding's properties to the declared
+	// key, so the entry has to be seeded under that identity rather than the
+	// key alone.
+	staleProps := map[string]interface{}{"value": 1}
+	cacheKey, err := cacheIdentity("stale-cache-fail", identityInputs{
+		Template:   templateFingerprint(resolver_stale_cache_fail_template),
+		Properties: staleProps,
+	})
+	require.NoError(t, err)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cacheKey,
+			Namespace: sourceCacheNamespace,
+			Annotations: map[string]string{
+				sourceCacheSyncAtKey: time.Now().Add(-time.Hour).Format(time.RFC3339),
+			},
+		},
+		Data: map[string][]byte{
+			sourceCacheDataKey: []byte(`{"value":"cached"}`),
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	ctx := process.NewContext(process.ContextData{})
+	ctx.PushData(process.ContextAppSourceCacheStore, NewSecretSourceCacheStore(cli))
+	resolver := newSourceResolver(ctx, SurfaceComponent)
+	resolver.sourceTypes = map[string]string{"s": "t"}
+	resolver.sourceTemplates = map[string]string{
+		"t": resolver_stale_cache_fail_template,
+	}
+	resolver.sourceProps = map[string]map[string]interface{}{"s": staleProps}
+
+	_, err = resolver.resolve("s")
+	require.Error(t, err)
+	statuses, _ := resolver.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	require.NotNil(t, statuses)
+	assert.Equal(t, cacheKey, statuses["s"].Config)
+}
+
+func TestResolveSourceSchemaMismatchFails(t *testing.T) {
+	ctx := process.NewContext(process.ContextData{})
+	resolver := newSourceResolver(ctx, SurfaceComponent)
+	resolver.sourceTypes = map[string]string{"s": "t"}
+	resolver.sourceTemplates = map[string]string{
+		"t": `
+$internal: {key: "test-cache-key-3"}
+schema: {
+  image: string
+}
+output: {
+  image: parameter.image
+}
+parameter: {
+  image: _
+}
+`,
+	}
+	resolver.sourceProps = map[string]map[string]interface{}{
+		"s": {"image": 123},
+	}
+
+	_, err := resolver.resolve("s")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validate output against schema")
+}
+
+func TestResolveSourceErrsFieldFails(t *testing.T) {
+	ctx := process.NewContext(process.ContextData{})
+	resolver := newSourceResolver(ctx, SurfaceComponent)
+	resolver.sourceTypes = map[string]string{"s": "t"}
+	resolver.sourceTemplates = map[string]string{
+		"t": `
+$internal: {key: "test-cache-key-4"}
+output: {
+  value: parameter.value
+}
+errs: [
+  if parameter.value < 0 {
+    "value must be non-negative, got \(parameter.value)"
+  },
+]
+parameter: {
+  value: int
+}
+`,
+	}
+	resolver.sourceProps = map[string]map[string]interface{}{
+		"s": {"value": -1},
+	}
+
+	_, err := resolver.resolve("s")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reported errors")
+	assert.Contains(t, err.Error(), "value must be non-negative, got -1")
+
+	// The authored error is surfaced on the per-source status too.
+	statuses, ok := ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	require.True(t, ok)
+	require.Contains(t, statuses, "s")
+	assert.Equal(t, "Failed", statuses["s"].Phase)
+	assert.Contains(t, statuses["s"].Message, "value must be non-negative")
+}
+
+func TestResolveSourceErrsFieldEmptyIsIgnored(t *testing.T) {
+	ctx := process.NewContext(process.ContextData{})
+	resolver := newSourceResolver(ctx, SurfaceComponent)
+	resolver.sourceTypes = map[string]string{"s": "t"}
+	resolver.sourceTemplates = map[string]string{
+		"t": `
+$internal: {key: "test-cache-key-5"}
+output: {
+  value: parameter.value
+}
+errs: [
+  if parameter.value < 0 {
+    "value must be non-negative"
+  },
+]
+parameter: {
+  value: int
+}
+`,
+	}
+	resolver.sourceProps = map[string]map[string]interface{}{
+		"s": {"value": 5},
+	}
+
+	out, err := resolver.resolve("s")
+	require.NoError(t, err)
+	assert.EqualValues(t, 5, out["value"])
 }

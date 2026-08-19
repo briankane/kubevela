@@ -18,14 +18,18 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -39,6 +43,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
+	cuedefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
@@ -338,6 +343,15 @@ func (h *AppHandler) collectHealthStatus(ctx context.Context, comp *appfile.Comp
 		isHealth = true
 		err      error
 	)
+	if len(h.app.Spec.Sources) > 0 {
+		status.Sources = make([]common.ApplicationSourceStatus, 0, len(h.app.Spec.Sources))
+		for _, src := range h.app.Spec.Sources {
+			status.Sources = append(status.Sources, common.ApplicationSourceStatus{
+				Name: src.Name,
+				Type: src.Type,
+			})
+		}
+	}
 
 	status = h.getServiceStatus(status)
 	if !skipWorkload {
@@ -437,9 +451,110 @@ collectNext:
 			status.Message = "traits are not healthy"
 		}
 	}
+	h.mergeSourceResolutionStatus(comp, &status)
 	status.Traits = slices.Collect(maps.Values(traitStatusByKey))
 	h.addServiceStatus(true, status)
 	return &status, output, outputs, isHealth, nil
+}
+
+func (h *AppHandler) mergeSourceResolutionStatus(comp *appfile.Component, status *common.ApplicationComponentStatus) {
+	if len(h.app.Spec.Sources) == 0 || comp == nil || comp.Ctx == nil {
+		return
+	}
+	byName := map[string]common.ApplicationSourceStatus{}
+	for _, src := range status.Sources {
+		byName[src.Name] = src
+	}
+	for _, src := range h.app.Spec.Sources {
+		if _, ok := byName[src.Name]; !ok {
+			byName[src.Name] = common.ApplicationSourceStatus{
+				Name: src.Name,
+				Type: src.Type,
+			}
+		}
+	}
+	resolvedStatuses, _ := comp.Ctx.GetData(cuedefinition.SourceResolutionStatusKey).(map[string]cuedefinition.SourceResolutionStatus)
+	for _, src := range h.app.Spec.Sources {
+		current := byName[src.Name]
+		current.Type = src.Type
+		if rs, ok := resolvedStatuses[src.Name]; ok {
+			current.Message = rs.Message
+			current.Config = rs.Config
+			current.ExpiresAt = rs.ExpiresAt
+			if rs.Type != "" {
+				current.Type = rs.Type
+			}
+			current.ResolvedFields = nil
+			current.Properties = nil
+
+			maskPaths := append([]string{}, rs.SensitivePaths...)
+			if src.StatusPolicy != nil {
+				maskPaths = append(maskPaths, src.StatusPolicy.MaskPaths...)
+			}
+			maskSet := make(map[string]struct{}, len(maskPaths))
+			for _, p := range maskPaths {
+				if p == "" {
+					continue
+				}
+				maskSet[p] = struct{}{}
+			}
+			exposeValues := src.StatusPolicy == nil ||
+				src.StatusPolicy.ExposeConsumedValues ||
+				src.StatusPolicy.ExposeResolvedFields
+			if exposeValues && len(rs.ConsumedFields) > 0 {
+				paths := make([]string, 0, len(rs.ConsumedFields))
+				for p := range rs.ConsumedFields {
+					paths = append(paths, p)
+				}
+				sort.Strings(paths)
+				props := make(map[string]interface{}, len(paths))
+				for _, p := range paths {
+					val := rs.ConsumedFields[p]
+					if maskedPath(p, maskSet) {
+						val = "***"
+					}
+					props[p] = val
+				}
+				if raw, err := mapToRawExtension(props); err == nil {
+					current.Properties = raw
+				}
+			}
+		}
+		byName[src.Name] = current
+	}
+	merged := make([]common.ApplicationSourceStatus, 0, len(h.app.Spec.Sources))
+	for _, src := range h.app.Spec.Sources {
+		merged = append(merged, byName[src.Name])
+	}
+	status.Sources = merged
+}
+
+// maskedPath reports whether a consumed field is covered by a mask, either
+// exactly or by sitting underneath one.
+//
+// The descent matters. A marker can only be written where the schema declares a
+// field, so a source exposing an open struct - `properties: _`, whose shape is
+// whatever template produced it - has nowhere to put a marker except on the
+// struct itself. Matching exactly would mask a read of `properties` and publish
+// `properties.token` beside it, which is the one case the marker exists for.
+func maskedPath(path string, masks map[string]struct{}) bool {
+	if _, ok := masks[path]; ok {
+		return true
+	}
+	for mask := range masks {
+		if strings.HasPrefix(path, mask+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func mapToRawExtension(v map[string]interface{}) (*runtime.RawExtension, error) {
+	bt, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return &runtime.RawExtension{Raw: bt}, nil
 }
 
 func setStatus(status *common.ApplicationComponentStatus, observedGeneration, generation int64, labels map[string]string,

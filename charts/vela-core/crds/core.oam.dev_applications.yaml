@@ -158,6 +158,59 @@ spec:
                   - type
                   type: object
                 type: array
+              sources:
+                description: Sources defines external sources that properties can
+                  read with $(source...).
+                items:
+                  description: ApplicationSource defines a source binding under spec.sources.
+                  properties:
+                    autoUpdate:
+                      description: |-
+                        AutoUpdate controls whether a change to this source's resolved value
+                        re-dispatches the components and traits that read it, without waiting for
+                        the workflow to run again.
+
+                        Unset defers to the EnableSourceAutoUpdate feature gate, so a platform can
+                        set the fleet-wide default and an Application can disagree per binding: a
+                        registry address worth picking up immediately and a feature flag that
+                        should wait for the next rollout can sit side by side.
+
+                        A publishVersion pin overrides this in both directions. An explicit pin is
+                        hard, so nothing re-dispatches until the pin is bumped.
+                      type: boolean
+                    name:
+                      type: string
+                    properties:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    statusPolicy:
+                      description: StatusPolicy controls what source resolution details
+                        are exposed on Application status.
+                      properties:
+                        exposeConsumedValues:
+                          description: |-
+                            ExposeConsumedValues controls whether consumed source values are written to status.
+                            If false, consumed property paths may still be listed without values.
+                          type: boolean
+                        exposeResolvedFields:
+                          description: ExposeResolvedFields controls whether resolved
+                            source fields are written to status.
+                          type: boolean
+                        maskPaths:
+                          description: |-
+                            MaskPaths redacts resolved field paths before writing to status.
+                            Paths are dot-delimited (e.g. "nested.token").
+                          items:
+                            type: string
+                          type: array
+                      type: object
+                    type:
+                      type: string
+                  required:
+                  - name
+                  - type
+                  type: object
+                type: array
               workflow:
                 description: |-
                   Workflow defines how to customize the control logic.
@@ -626,6 +679,35 @@ spec:
                             type: string
                         type: object
                         x-kubernetes-map-type: atomic
+                      type: array
+                    sources:
+                      items:
+                        description: ApplicationSourceStatus records source resolution
+                          status.
+                        properties:
+                          config:
+                            type: string
+                          expiresAt:
+                            description: ExpiresAt is the RFC3339 timestamp when the
+                              currently served cache value expires.
+                            type: string
+                          message:
+                            type: string
+                          name:
+                            type: string
+                          properties:
+                            description: Properties records only source fields actually
+                              consumed by this service render.
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          resolvedFields:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          type:
+                            type: string
+                        required:
+                        - name
+                        type: object
                       type: array
                     traits:
                       items:
