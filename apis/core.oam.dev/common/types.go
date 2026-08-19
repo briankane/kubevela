@@ -283,6 +283,12 @@ type SourceValue struct {
 	// +optional
 	Property string `json:"property,omitempty"`
 	// Value is what was read, redacted where the attribute is sensitive or masked.
+	//
+	// Schemaless because a source value is whatever the source returns - a string,
+	// a number, a list, a struct. RawExtension alone generates "type: object",
+	// which rejects every scalar and takes the whole status write down with it.
+	// +kubebuilder:validation:Schemaless
+	// +kubebuilder:pruning:PreserveUnknownFields
 	// +optional
 	Value *runtime.RawExtension `json:"value,omitempty"`
 }

@@ -252,8 +252,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	handler.addAppliedResource(true, app.Status.AppliedResources...)
 	app.Status.AppliedResources = handler.appliedResources
 
-	// One row per declared binding, gathered from every surface that resolved
-	// one during this reconcile.
+	// One row per declared binding, gathered from every surface that resolved one
+	// so far. Set here because the suspending and terminated paths return before
+	// evalStatus, and the workflow's own apply-component steps have already
+	// rendered by this point.
 	app.Status.Sources = handler.sourceStatusList()
 
 	// Remove services[] entries for components that no longer exist in spec
@@ -333,6 +335,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 
 	var phase = common.ApplicationRunning
 	isHealthy := evalStatus(logCtx, handler, appFile, appParser)
+	// Again, now evalStatus has re-rendered every component for its health check.
+	// On a succeeded workflow that render is the only one this reconcile performs,
+	// so the earlier call above saw an empty accumulator and reported every
+	// binding Unused.
+	app.Status.Sources = handler.sourceStatusList()
 	if !isHealthy {
 		phase = common.ApplicationUnhealthy
 	}

@@ -809,9 +809,12 @@ spec:
                                     source that was read, e.g. "data.image".
                                   type: string
                                 value:
-                                  description: Value is what was read, redacted where
-                                    the attribute is sensitive or masked.
-                                  type: object
+                                  description: |-
+                                    Value is what was read, redacted where the attribute is sensitive or masked.
+
+                                    Schemaless because a source value is whatever the source returns - a string,
+                                    a number, a list, a struct. RawExtension alone generates "type: object",
+                                    which rejects every scalar and takes the whole status write down with it.
                                   x-kubernetes-preserve-unknown-fields: true
                               required:
                               - sourceAttr

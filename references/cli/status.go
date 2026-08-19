@@ -161,6 +161,15 @@ func NewAppStatusCommand(c common.Args, order string, ioStreams cmdutil.IOStream
 				return printMetrics(newClient, restConf, appName, namespace)
 			}
 
+			if showSources, err := cmd.Flags().GetBool("sources"); showSources && err == nil {
+				component, _ := cmd.Flags().GetString("component")
+				cluster, _ := cmd.Flags().GetString("cluster")
+				return printAppSources(ctx, newClient, namespace, appName, Filter{
+					Component: component,
+					Cluster:   cluster,
+				})
+			}
+
 			if outputFormat != "" {
 				return printRawApplication(context.Background(), c, outputFormat, cmd.OutOrStdout(), namespace, appName)
 			}
@@ -181,6 +190,7 @@ func NewAppStatusCommand(c common.Args, order string, ioStreams cmdutil.IOStream
 	cmd.Flags().StringP("detail-format", "", "inline", "the format for displaying details, must be used with --detail. Can be one of inline, wide, list, table, raw.")
 	cmd.Flags().StringVarP(&outputFormat, "output", "o", "", "raw Application output format. One of: (json, yaml, jsonpath)")
 	cmd.Flags().BoolP("metrics", "m", false, "show resource quota and consumption metrics of the application")
+	cmd.Flags().BoolP("sources", "", false, "show what the application read from its declared sources, and which component, trait or workflow step used each value")
 	addNamespaceAndEnvArg(cmd)
 	return cmd
 }
