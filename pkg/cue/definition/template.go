@@ -725,7 +725,7 @@ func resolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	if err := json.Unmarshal(bt, &normalized); err != nil {
 		return nil, err
 	}
-	return resolveSourceNode(normalized, newSourceResolver(ctx, surface), "")
+	return resolveSourceNode(normalized, newSourceResolver(ctx, surface, sourceInputsFromContext(ctx)), "")
 }
 
 // resolveSourceNode walks a properties blob, carrying the path it is at so a
@@ -951,25 +951,72 @@ type SourceResolutionStatus struct {
 	// Reads is the same information with the destination attached: which property
 	// of the consumer each value landed in, and which reader took it. Reporting
 	// only, never hashed.
-	Reads []SourceRead
+	Reads          []SourceRead
 	SensitivePaths []string
 }
 
-func newSourceResolver(ctx process.Context, surface string) *sourceResolver {
-	sourceProps, _ := ctx.GetData(velaprocess.ContextAppSources).(map[string]map[string]interface{})
-	if sourceProps == nil {
-		sourceProps = map[string]map[string]interface{}{}
+// sourceInputs is everything a resolution needs that is not the properties being
+// resolved: which bindings exist, what definition backs each, and where values
+// are cached.
+//
+// Explicit rather than pulled from the render context. The Application controller
+// pushes these onto process.Context for its own reasons, but a resolver should
+// not have to know that protocol to be usable - and a second caller has no
+// process.Context to push onto.
+type sourceInputs struct {
+	// Bindings is spec.sources[].name -> that binding's own properties.
+	Bindings map[string]map[string]interface{}
+	// Types is binding name -> SourceDefinition type, carrying the pinned
+	// revision where one was requested.
+	Types map[string]string
+	// Templates is definition type -> its CUE template.
+	Templates map[string]string
+	// Sensitive is definition type -> the paths its schema marks +sensitive.
+	Sensitive map[string][]string
+	// Store persists resolved values. Nil disables caching, which resolves
+	// correctly and simply re-fetches.
+	Store velaprocess.SourceCacheStore
+}
+
+// sourceInputsFromContext reads what the Application controller pushed. It is the
+// bridge from the render context's protocol to explicit inputs, and the only
+// place that protocol is understood.
+func sourceInputsFromContext(ctx process.Context) sourceInputs {
+	in := sourceInputs{
+		Bindings:  map[string]map[string]interface{}{},
+		Types:     map[string]string{},
+		Templates: map[string]string{},
+		Sensitive: map[string][]string{},
 	}
-	sourceTypes, _ := ctx.GetData(velaprocess.ContextAppSourceTypes).(map[string]string)
-	if sourceTypes == nil {
-		sourceTypes = map[string]string{}
+	if v, ok := ctx.GetData(velaprocess.ContextAppSources).(map[string]map[string]interface{}); ok && v != nil {
+		in.Bindings = v
 	}
-	sourceTemplates, _ := ctx.GetData(velaprocess.ContextAppSourceTemplates).(map[string]string)
-	if sourceTemplates == nil {
-		sourceTemplates = map[string]string{}
+	if v, ok := ctx.GetData(velaprocess.ContextAppSourceTypes).(map[string]string); ok && v != nil {
+		in.Types = v
 	}
+	if v, ok := ctx.GetData(velaprocess.ContextAppSourceTemplates).(map[string]string); ok && v != nil {
+		in.Templates = v
+	}
+	if v, ok := ctx.GetData(velaprocess.ContextAppSourceSensitivePaths).(map[string][]string); ok && v != nil {
+		in.Sensitive = v
+	}
+	if v, ok := ctx.GetData(velaprocess.ContextAppSourceCacheStore).(velaprocess.SourceCacheStore); ok && v != nil {
+		in.Store = v
+	}
+	return in
+}
+
+// newSourceResolver builds a resolver for one render.
+//
+// ctx is still required, for three things that are genuinely the render's: the
+// context values an expression may read, the Go context for I/O, and recording
+// what resolved so status can report it.
+func newSourceResolver(ctx process.Context, surface string, in sourceInputs) *sourceResolver {
+	// Schemas are derived from the templates rather than supplied: they are a
+	// projection of the definition, so accepting them separately would allow the
+	// two to disagree.
 	sourceSchemas := map[string]string{}
-	for sourceType, sourceTemplate := range sourceTemplates {
+	for sourceType, sourceTemplate := range in.Templates {
 		schemaExpr, err := extractSourceSchemaExpr(sourceTemplate)
 		if err != nil {
 			klog.Warningf("extract source schema failed for %s: %v", sourceType, err)
@@ -979,23 +1026,15 @@ func newSourceResolver(ctx process.Context, surface string) *sourceResolver {
 			sourceSchemas[sourceType] = schemaExpr
 		}
 	}
-	sensitivePaths, _ := ctx.GetData(velaprocess.ContextAppSourceSensitivePaths).(map[string][]string)
-	if sensitivePaths == nil {
-		sensitivePaths = map[string][]string{}
-	}
-	var cacheStore velaprocess.SourceCacheStore
-	if s, ok := ctx.GetData(velaprocess.ContextAppSourceCacheStore).(velaprocess.SourceCacheStore); ok && s != nil {
-		cacheStore = s
-	}
 	return &sourceResolver{
 		surface:         surface,
 		ctx:             ctx,
-		sourceProps:     sourceProps,
-		sourceTypes:     sourceTypes,
-		sourceTemplates: sourceTemplates,
+		sourceProps:     in.Bindings,
+		sourceTypes:     in.Types,
+		sourceTemplates: in.Templates,
 		sourceSchemas:   sourceSchemas,
-		sensitivePaths:  sensitivePaths,
-		cacheStore:      cacheStore,
+		sensitivePaths:  in.Sensitive,
+		cacheStore:      in.Store,
 		resolved:        map[string]map[string]interface{}{},
 		resolving:       map[string]bool{},
 	}
