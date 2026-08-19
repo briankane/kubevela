@@ -22,7 +22,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -473,7 +472,7 @@ func consumerValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 		if rd.ReaderKind != readerKind || rd.ReaderName != readerName {
 			continue
 		}
-		val := redactValue(rd.SourceAttr, rd.Value, maskSet)
+		val := cuedefinition.RedactValue(rd.SourceAttr, rd.Value, maskSet)
 		out := common.SourceValue{SourceAttr: rd.SourceAttr, Property: rd.Property}
 		if raw, err := mapToRawExtension(map[string]interface{}{"v": val}); err == nil && raw != nil {
 			// Unwrap the single-key envelope mapToRawExtension needs.
@@ -534,7 +533,7 @@ func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 	sort.Strings(paths)
 	props := make(map[string]interface{}, len(paths))
 	for _, p := range paths {
-		props[p] = redactValue(p, rs.ConsumedFields[p], maskSet)
+		props[p] = cuedefinition.RedactValue(p, rs.ConsumedFields[p], maskSet)
 	}
 	raw, err := mapToRawExtension(props)
 	if err != nil {
@@ -702,69 +701,6 @@ func (h *AppHandler) recordComponentSourceReads(comp *appfile.Component, status 
 		cluster = multicluster.ClusterLocalName
 	}
 	h.recordSourceResolution(sourceKindComponent, status.Name, comp.Type, cluster, status.Namespace, resolvedStatuses)
-}
-
-// maskedPath reports whether a consumed field is covered by a mask, either
-// exactly or by sitting underneath one.
-//
-// The descent matters. A marker can only be written where the schema declares a
-// field, so a source exposing an open struct - `properties: _`, whose shape is
-// whatever template produced it - has nowhere to put a marker except on the
-// struct itself. Matching exactly would mask a read of `properties` and publish
-// `properties.token` beside it, which is the one case the marker exists for.
-// redactValue blanks anything marked sensitive inside a read value.
-//
-// maskedPath alone is not enough. It answers "is this path at or below a mark",
-// which covers reading db.password directly, but an expression may substitute a
-// whole collection - "$(source.creds.db)" - and then the read path is db while
-// the mark is db.password, one level below. Nothing matched and the secret went
-// into status verbatim.
-//
-// Marks are schema paths and carry no list indices, since collectSensitivePaths
-// descends only into struct literals. So elements of a list share their parent's
-// path: a mark of "members.token" applies to the token of every member.
-func redactValue(path string, v interface{}, masks map[string]struct{}) interface{} {
-	if len(masks) == 0 {
-		return v
-	}
-	if maskedPath(path, masks) {
-		return "***"
-	}
-	switch val := v.(type) {
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(val))
-		for k, child := range val {
-			out[k] = redactValue(joinPath(path, k), child, masks)
-		}
-		return out
-	case []interface{}:
-		out := make([]interface{}, 0, len(val))
-		for _, child := range val {
-			out = append(out, redactValue(path, child, masks))
-		}
-		return out
-	default:
-		return v
-	}
-}
-
-func joinPath(prefix, key string) string {
-	if prefix == "" {
-		return key
-	}
-	return prefix + "." + key
-}
-
-func maskedPath(path string, masks map[string]struct{}) bool {
-	if _, ok := masks[path]; ok {
-		return true
-	}
-	for mask := range masks {
-		if strings.HasPrefix(path, mask+".") {
-			return true
-		}
-	}
-	return false
 }
 
 func mapToRawExtension(v map[string]interface{}) (*runtime.RawExtension, error) {

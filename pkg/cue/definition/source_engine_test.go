@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
 )
 
 // The point of the engine: a caller that can name its bindings and its surface
@@ -120,4 +121,88 @@ func TestSourceEngineReads(t *testing.T) {
 	}
 	// Deduplicated: cfg.region is read twice and reported once.
 	assert.ElementsMatch(t, []string{"source.cfg.region", "context.appName"}, got)
+}
+
+// A caller that supplies templates and forgets the sensitive paths would get
+// silent under-redaction - a credential in plain text where the definition asked
+// for none. Deriving them removes the chance.
+func TestSourceEngineDerivesSensitivePaths(t *testing.T) {
+	r := require.New(t)
+	opts := demoEngineOptions()
+	opts.Templates = map[string]string{"demo": `
+schema: {
+  region: string
+  // +sensitive
+  token: string
+}
+$internal: {key: "demo", keyInputs: []}
+output: {region: "eu-west", token: "s3cret"}
+`}
+	// Deliberately not supplied.
+	opts.Sensitive = nil
+
+	engine, err := NewSourceEngine(opts)
+	r.NoError(err)
+
+	res, err := engine.Resolve(context.Background(), map[string]interface{}{
+		"where": "$(source.cfg.region)",
+		"creds": "$(source.cfg.token)",
+	})
+	r.NoError(err)
+	r.Equal("s3cret", res.Properties.(map[string]interface{})["creds"],
+		"the rendered resource still receives the real value")
+
+	// The paths were derived from the template, not supplied.
+	paths := res.Statuses["cfg"].SensitivePaths
+	r.Contains(paths, "token")
+	r.NotContains(paths, "region")
+
+	// ...and the safe accessor is the one a caller reports from. ConsumedFields
+	// deliberately holds real values because the render needs them.
+	redacted := res.Statuses["cfg"].RedactedFields()
+	r.Equal("eu-west", redacted["region"])
+	r.Equal("***", redacted["token"])
+	r.Equal("s3cret", res.Statuses["cfg"].ConsumedFields["token"])
+}
+
+// A caller may add a path the template does not declare, without restating the
+// ones it does.
+func TestSourceEngineSensitivePathsAreAdditive(t *testing.T) {
+	r := require.New(t)
+	opts := demoEngineOptions()
+	opts.Templates = map[string]string{"demo": `
+schema: {
+  region: string
+  // +sensitive
+  token: string
+}
+$internal: {key: "demo", keyInputs: []}
+output: {region: "eu-west", token: "s3cret"}
+`}
+	opts.Sensitive = map[string][]string{"demo": {"region"}}
+
+	engine, err := NewSourceEngine(opts)
+	r.NoError(err)
+	_, err = engine.Resolve(context.Background(), map[string]interface{}{"a": "$(source.cfg.region)"})
+	r.NoError(err)
+	r.ElementsMatch([]string{"token", "region"}, engine.opts.Sensitive["demo"])
+}
+
+// Every Surface constant has to be declared in the context registry.
+//
+// Two things go wrong quietly otherwise. NewSourceEngine rejects an undeclared
+// surface, so a constant that drifted would fail every render using it at
+// runtime. And availableFields treats an unrecognised surface as offering
+// everything, so before that check it would have silently widened what a source
+// may read.
+func TestEverySurfaceConstantIsDeclared(t *testing.T) {
+	for _, s := range []string{
+		SurfaceComponent, SurfaceTrait, SurfaceWorkflowStep,
+		SurfacePolicy, SurfacePolicyApp, SurfacePolicyRendered,
+	} {
+		if !sourceexpr.SurfaceDeclared(s) {
+			t.Errorf("surface %q is not declared in the context registry; declared: %v",
+				s, sourceexpr.SurfaceNames())
+		}
+	}
 }

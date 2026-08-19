@@ -49,8 +49,12 @@ type SourceEngineOptions struct {
 	Types map[string]string
 	// Templates is definition type -> its CUE template.
 	Templates map[string]string
-	// Sensitive is definition type -> paths its schema marks +sensitive. Derived
-	// from the template by the caller that loaded it.
+	// Sensitive is definition type -> paths its schema marks +sensitive.
+	//
+	// Optional: any type not listed has its paths derived from its template. Supply
+	// this only to add paths a template does not declare. Leaving it nil is the
+	// safe default, since a caller that supplied templates and forgot the paths
+	// would otherwise get silent under-redaction.
 	Sensitive map[string][]string
 
 	// Store persists resolved values between reconciles. Nil resolves correctly
@@ -58,6 +62,23 @@ type SourceEngineOptions struct {
 	Store velaprocess.SourceCacheStore
 	// Compiler evaluates templates. Nil uses the workload compiler.
 	Compiler SourceCompiler
+}
+
+// appendMissing adds entries not already present, so a caller adding a path a
+// template does not declare does not also have to restate the ones it does.
+func appendMissing(have, extra []string) []string {
+	seen := map[string]struct{}{}
+	for _, h := range have {
+		seen[h] = struct{}{}
+	}
+	for _, e := range extra {
+		if _, dup := seen[e]; dup {
+			continue
+		}
+		seen[e] = struct{}{}
+		have = append(have, e)
+	}
+	return have
 }
 
 // SourceEngine resolves source expressions in a properties blob.
@@ -98,6 +119,15 @@ func NewSourceEngine(opts SourceEngineOptions) (*SourceEngine, error) {
 		return nil, fmt.Errorf("unknown surface %q; declared surfaces are %v",
 			opts.Surface, sourceexpr.SurfaceNames())
 	}
+	// Derived rather than required, so redaction cannot be lost by omission.
+	sensitive := map[string][]string{}
+	for sourceType, template := range opts.Templates {
+		sensitive[sourceType] = ExtractSensitiveOutputPaths(template)
+	}
+	for sourceType, extra := range opts.Sensitive {
+		sensitive[sourceType] = appendMissing(sensitive[sourceType], extra)
+	}
+	opts.Sensitive = sensitive
 	return &SourceEngine{opts: opts}, nil
 }
 

@@ -1764,7 +1764,7 @@ func TestGeneratePolicyManifests(t *testing.T) {
 }
 
 func TestExtractSensitiveOutputPaths(t *testing.T) {
-	paths := extractSensitiveOutputPaths(`
+	paths := definition.ExtractSensitiveOutputPaths(`
 output: {
   // +sensitive
   token: string
@@ -1786,7 +1786,7 @@ output: {
 // its examples, but the first implementation only read output:. A definition
 // written to the KEP must still redact.
 func TestExtractSensitiveOutputPathsFromSchema(t *testing.T) {
-	paths := extractSensitiveOutputPaths(`
+	paths := definition.ExtractSensitiveOutputPaths(`
 schema: {
   region: string
   // +sensitive
@@ -1804,7 +1804,7 @@ output: {
 }
 
 func TestExtractSensitiveOutputPathsMergesBothBlocks(t *testing.T) {
-	paths := extractSensitiveOutputPaths(`
+	paths := definition.ExtractSensitiveOutputPaths(`
 schema: {
   // +sensitive
   token: string
@@ -1821,7 +1821,7 @@ output: {
 }
 
 func TestExtractSensitiveOutputPathsDeduplicates(t *testing.T) {
-	paths := extractSensitiveOutputPaths(`
+	paths := definition.ExtractSensitiveOutputPaths(`
 schema: {
   // +sensitive
   token: string

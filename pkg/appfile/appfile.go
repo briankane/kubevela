@@ -26,8 +26,6 @@ import (
 	"reflect"
 	"strings"
 
-	"cuelang.org/go/cue/ast"
-	cueparser "cuelang.org/go/cue/parser"
 	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
 
 	"cuelang.org/go/cue"
@@ -921,7 +919,7 @@ func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess
 	for sourceType, def := range appfile.RelatedSourceDefinitions {
 		if def != nil && def.Spec.Schematic != nil && def.Spec.Schematic.CUE != nil {
 			data.SourceTemplates[sourceType] = def.Spec.Schematic.CUE.Template
-			data.SourceSensitivePaths[sourceType] = extractSensitiveOutputPaths(def.Spec.Schematic.CUE.Template)
+			data.SourceSensitivePaths[sourceType] = definition.ExtractSensitiveOutputPaths(def.Spec.Schematic.CUE.Template)
 		}
 	}
 	if appfile.AppAnnotations != nil {
@@ -935,99 +933,6 @@ func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess
 	return data
 }
 
-// sensitiveMarkerBlocks are the template blocks a `// +sensitive` marker is
-// honoured in. schema: is where KEP-2.16 documents the marker and where its
-// examples place it; output: is where the first implementation read it from.
-// Both are scanned so a definition written either way still redacts, rather than
-// silently exposing the value because the marker sat in the other block.
-var sensitiveMarkerBlocks = []string{"schema", "output"}
-
-func extractSensitiveOutputPaths(template string) []string {
-	f, err := cueparser.ParseFile("-", template, cueparser.ParseComments)
-	if err != nil || f == nil {
-		return nil
-	}
-	var paths []string
-	seen := map[string]bool{}
-	for _, block := range sensitiveMarkerBlocks {
-		st := findTopLevelStruct(f, block)
-		if st == nil {
-			continue
-		}
-		var found []string
-		collectSensitivePaths(st, nil, &found)
-		for _, path := range found {
-			if seen[path] {
-				continue
-			}
-			seen[path] = true
-			paths = append(paths, path)
-		}
-	}
-	return paths
-}
-
-// findTopLevelStruct returns the named top-level struct of a template, or nil.
-func findTopLevelStruct(f *ast.File, name string) *ast.StructLit {
-	for _, decl := range f.Decls {
-		field, ok := decl.(*ast.Field)
-		if !ok {
-			continue
-		}
-		if labelName(field.Label) != name {
-			continue
-		}
-		if st, ok := field.Value.(*ast.StructLit); ok {
-			return st
-		}
-	}
-	return nil
-}
-
-func collectSensitivePaths(st *ast.StructLit, prefix []string, out *[]string) {
-	for _, elt := range st.Elts {
-		field, ok := elt.(*ast.Field)
-		if !ok {
-			continue
-		}
-		name := labelName(field.Label)
-		if name == "" {
-			continue
-		}
-		path := append(prefix, name)
-		if hasSensitiveMarker(field) {
-			*out = append(*out, strings.Join(path, "."))
-		}
-		if nested, ok := field.Value.(*ast.StructLit); ok {
-			collectSensitivePaths(nested, path, out)
-		}
-	}
-}
-
-func hasSensitiveMarker(field *ast.Field) bool {
-	for _, cg := range field.Comments() {
-		for _, c := range cg.List {
-			if strings.Contains(c.Text, "+sensitive") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func labelName(label ast.Label) string {
-	switch v := label.(type) {
-	case *ast.Ident:
-		return v.Name
-	case *ast.BasicLit:
-		return strings.Trim(v.Value, "\"")
-	default:
-		return ""
-	}
-}
-
-// WorkflowClient cache retrieved workflow if ApplicationRevision not exists in appfile
-// else use the workflow in ApplicationRevision
 func (af *Appfile) WorkflowClient(cli client.Client) client.Client {
 	return velaclient.DelegatingHandlerClient{
 		Client: cli,
