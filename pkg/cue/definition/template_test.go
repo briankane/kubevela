@@ -2136,3 +2136,16 @@ parameter: {
 	require.NoError(t, err)
 	assert.EqualValues(t, 5, out["value"])
 }
+
+// A source whose definition sets no storageTTL has no expiry, and formatting
+// the zero time put "0001-01-01T00:00:00Z" into Application status - a date,
+// where the honest answer is silence.
+func TestFormatExpiryOmitsTheZeroTime(t *testing.T) {
+	if got := formatExpiry(time.Time{}); got != "" {
+		t.Fatalf("zero time should render as empty, got %q", got)
+	}
+	at := time.Date(2026, 8, 19, 15, 4, 5, 0, time.UTC)
+	if got := formatExpiry(at); got != "2026-08-19T15:04:05Z" {
+		t.Fatalf("real expiry should render RFC3339, got %q", got)
+	}
+}

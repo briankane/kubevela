@@ -1100,7 +1100,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	} else if found {
 		if !stale {
 			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "", cachePolicy.Key, cacheExpiresAt.Format(time.RFC3339), cached)
+			r.setSourceStatus(sourceName, sourceType, "Resolved", "", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
 			return cached, nil
 		}
 	}
@@ -1118,7 +1118,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
 			r.touchSourceCache(cachePolicy.Key)
 			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, cacheExpiresAt.Format(time.RFC3339), cached)
+			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
 			return cached, nil
 		}
 		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
@@ -1129,7 +1129,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
 			r.touchSourceCache(cachePolicy.Key)
 			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh reported errors; serving stale cached value", cachePolicy.Key, cacheExpiresAt.Format(time.RFC3339), cached)
+			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh reported errors; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
 			return cached, nil
 		}
 		r.setSourceStatus(sourceName, sourceType, "Failed", errMsg, cachePolicy.Key, "", nil)
@@ -1140,7 +1140,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
 			r.touchSourceCache(cachePolicy.Key)
 			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, cacheExpiresAt.Format(time.RFC3339), cached)
+			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
 			return cached, nil
 		}
 		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
@@ -1150,7 +1150,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
 			r.touchSourceCache(cachePolicy.Key)
 			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, cacheExpiresAt.Format(time.RFC3339), cached)
+			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
 			return cached, nil
 		}
 		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
@@ -1643,4 +1643,15 @@ func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string
 	}
 	statuses[sourceName] = st
 	r.ctx.PushData(SourceResolutionStatusKey, statuses)
+}
+
+// formatExpiry renders a cache expiry, and renders nothing when there is not
+// one. A source whose definition sets no storageTTL has a zero time, and
+// formatting that put "0001-01-01T00:00:00Z" into status - a date, where the
+// honest answer is silence.
+func formatExpiry(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
