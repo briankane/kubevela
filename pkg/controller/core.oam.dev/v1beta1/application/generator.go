@@ -18,6 +18,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"strings"
 	"time"
 
@@ -49,7 +50,6 @@ import (
 	"github.com/oam-dev/kubevela/pkg/config"
 	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1/application/assemble"
 	ctrlutil "github.com/oam-dev/kubevela/pkg/controller/utils"
-	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/features"
@@ -110,7 +110,7 @@ func (h *AppHandler) GenerateApplicationSteps(ctx monitorContext.Context,
 	})
 	ctx.SetContext(ctxWithRuntimeParams)
 	instance, err := generateWorkflowInstance(af, app,
-		func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus) {
+		func(name, stepType string, resolved map[string]sources.SourceResolutionStatus) {
 			// Cluster and namespace are empty: a workflow step is not placed the way
 			// a component is, so its reads are not per-placement.
 			h.recordSourceResolution(sourceKindWorkflowStep, name, stepType, "", "", resolved)
@@ -165,7 +165,7 @@ func copyWorkflowStatusToInstance(app *v1beta1.Application, mode *wfTypesv1alpha
 }
 
 func generateWorkflowInstance(af *appfile.Appfile, app *v1beta1.Application,
-	recordSources func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus)) (*wfTypes.WorkflowInstance, error) {
+	recordSources func(name, stepType string, resolved map[string]sources.SourceResolutionStatus)) (*wfTypes.WorkflowInstance, error) {
 	instance := &wfTypes.WorkflowInstance{
 		WorkflowMeta: wfTypes.WorkflowMeta{
 			Name:        af.Name,
@@ -601,7 +601,7 @@ func generateContextDataFromApp(goCtx context.Context, app *v1beta1.Application,
 // entry, the expiry and any failure into pCtx below, and pCtx is local to
 // substitute. A step reading a source left no trace of what it received.
 func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.WorkflowStep,
-	record func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus)) error {
+	record func(name, stepType string, resolved map[string]sources.SourceResolutionStatus)) error {
 	substitute := func(name, stepType string, raw *runtime.RawExtension) error {
 		if raw == nil || len(raw.Raw) == 0 {
 			return nil
@@ -620,7 +620,7 @@ func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.Wor
 		// is what a source resolving on this surface can rely on.
 		pCtx.PushData(velaprocess.ContextStepName, name)
 		pCtx.PushData(velaprocess.ContextStepType, stepType)
-		resolved, err := veladefinition.ResolveSourceExpressions(pCtx, decoded, veladefinition.SurfaceWorkflowStep)
+		resolved, err := sources.ResolveSourceExpressions(pCtx, decoded, sources.SurfaceWorkflowStep)
 		if err != nil {
 			return err
 		}
@@ -630,7 +630,7 @@ func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.Wor
 		}
 		raw.Raw = out
 		if record != nil {
-			statuses, _ := pCtx.GetData(veladefinition.SourceResolutionStatusKey).(map[string]veladefinition.SourceResolutionStatus)
+			statuses, _ := pCtx.GetData(sources.SourceResolutionStatusKey).(map[string]sources.SourceResolutionStatus)
 			record(name, stepType, statuses)
 		}
 		return nil

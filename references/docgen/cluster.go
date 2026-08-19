@@ -19,6 +19,7 @@ package docgen
 import (
 	"context"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"slices"
 	"sort"
 	"strings"
@@ -39,7 +40,6 @@ import (
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/cue"
-	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
@@ -771,8 +771,8 @@ func sourceSurfaces(template string) []types.SourceSurface {
 		declared = nil
 	}
 
-	out := make([]types.SourceSurface, 0, len(veladefinition.ConsumableSurfaces))
-	for _, surface := range veladefinition.ConsumableSurfaces {
+	out := make([]types.SourceSurface, 0, len(sources.ConsumableSurfaces))
+	for _, surface := range sources.ConsumableSurfaces {
 		row := types.SourceSurface{Name: propexpr.SurfacePlural(surface), Consumable: true}
 
 		// The two exclusions are reported together because they are independent

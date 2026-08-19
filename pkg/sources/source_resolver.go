@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package definition
+package sources
 
 import (
 	"context"
@@ -64,7 +64,7 @@ type sourceCachePolicy struct {
 // surface names the call site, which decides both what a source may read from
 // context and - once the compatibility check lands - whether it may be consumed
 // here at all.
-func resolveSourceExpressions(ctx process.Context, params interface{}, surface string) (interface{}, error) {
+func ResolveSourceExpressions(ctx process.Context, params interface{}, surface string) (interface{}, error) {
 	if params == nil {
 		return nil, nil
 	}
@@ -333,6 +333,22 @@ type sourceResolver struct {
 }
 
 // SourceResolutionStatus captures source runtime resolution result.
+const (
+	// SourceResolutionStatusKey stores per-source runtime resolution statuses in
+	// the render context, for a caller that has one.
+	SourceResolutionStatusKey = "sourceResolutionStatuses"
+
+	sourceCacheNamespace      = "vela-system"
+	sourceCacheTTL            = 15 * time.Minute
+	sourceCacheSyncAtKey      = apitypes.AnnotationConfigLastSyncAt
+	sourceCacheAccessedKey    = apitypes.AnnotationConfigLastAccessed
+	sourceCacheTTLKey         = apitypes.AnnotationConfigTTL
+	sourceCacheTemplateKey    = apitypes.AnnotationConfigTemplate
+	sourceCacheDataKey        = "input-properties"
+	sourceCachePolicyUseStale = "use-stale"
+	sourceCachePolicyFail     = "fail"
+)
+
 // SourceRead is one value taken from a source: what was read, where it went,
 // and who read it.
 
@@ -659,7 +675,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		return nil, fmt.Errorf("source definition %s reported errors: %s", sourceType, errMsg)
 	}
 	output := map[string]interface{}{}
-	if err := val.LookupPath(value.FieldPath(OutputFieldName)).Decode(&output); err != nil {
+	if err := val.LookupPath(value.FieldPath(velaprocess.OutputFieldName)).Decode(&output); err != nil {
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
 			r.touchSourceCache(cachePolicy.Key)
 			r.resolved[sourceName] = cached

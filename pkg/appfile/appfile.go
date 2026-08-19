@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"reflect"
 	"strings"
 
@@ -902,12 +903,12 @@ func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess
 		SourceCacheStore:     appfile.SourceCacheStore,
 	}
 	if data.SourceCacheStore == nil {
-		data.SourceCacheStore = definition.NewSecretSourceCacheStore(appfile.KubeClient)
+		data.SourceCacheStore = sources.NewSecretSourceCacheStore(appfile.KubeClient)
 	}
 	// Front the persistent store (Layer 2) with the shared process-level LRU
 	// (Layer 1) so cache entries are shared across Applications and survive
 	// across reconciles. Keyed by the resolved storage.key.
-	data.SourceCacheStore = definition.NewLRUSourceCacheStore(data.SourceCacheStore)
+	data.SourceCacheStore = sources.NewLRUSourceCacheStore(data.SourceCacheStore)
 	for _, source := range appfile.Sources {
 		props := map[string]interface{}{}
 		if source.Properties != nil && len(source.Properties.Raw) > 0 {
@@ -919,7 +920,7 @@ func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess
 	for sourceType, def := range appfile.RelatedSourceDefinitions {
 		if def != nil && def.Spec.Schematic != nil && def.Spec.Schematic.CUE != nil {
 			data.SourceTemplates[sourceType] = def.Spec.Schematic.CUE.Template
-			data.SourceSensitivePaths[sourceType] = definition.ExtractSensitiveOutputPaths(def.Spec.Schematic.CUE.Template)
+			data.SourceSensitivePaths[sourceType] = sources.ExtractSensitiveOutputPaths(def.Spec.Schematic.CUE.Template)
 		}
 	}
 	if appfile.AppAnnotations != nil {

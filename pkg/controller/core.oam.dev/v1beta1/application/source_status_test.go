@@ -17,13 +17,13 @@ limitations under the License.
 package application
 
 import (
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	cuedefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
@@ -46,7 +46,7 @@ func TestSourceStatusListReportsEveryBindingOnce(t *testing.T) {
 	// Two components read the same binding. That is one binding, two consumers.
 	for _, comp := range []string{"web", "api"} {
 		h.recordSourceResolution(sourceKindComponent, comp, "webservice", "local", "default",
-			map[string]cuedefinition.SourceResolutionStatus{
+			map[string]sources.SourceResolutionStatus{
 				"registry": {
 					Name: "registry", Type: "configmap", Phase: sourcePhaseResolved,
 					Config: "configmap-local-default-abc", ExpiresAt: "2026-08-19T15:00:00Z",
@@ -78,7 +78,7 @@ func TestSourceStatusListRecordsNonComponentReaders(t *testing.T) {
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "registry", Type: "configmap"})
 
 	h.recordSourceResolution(sourceKindWorkflowStep, "notify", "notification", "", "",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"registry": {Name: "registry", Phase: sourcePhaseResolved,
 				ConsumedFields: map[string]interface{}{"data.channel": "#deploys"}},
 		})
@@ -97,12 +97,12 @@ func TestSourceStatusListPrefersAFailure(t *testing.T) {
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "registry", Type: "configmap"})
 
 	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"registry": {Name: "registry", Phase: sourcePhaseResolved,
 				ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
 		})
 	h.recordSourceResolution(sourceKindComponent, "api", "webservice", "remote", "default",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"registry": {Name: "registry", Phase: sourcePhaseFailed, Message: "fetch timed out",
 				ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
 		})
@@ -143,13 +143,13 @@ func TestConsumedReadsCarryTheDestinationProperty(t *testing.T) {
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "db", Type: "dbinfo"})
 
 	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"db": {
 				Name:  "db",
 				Phase: sourcePhaseResolved,
 				// host is assembled from two fields; image from one.
 				ConsumedFields: map[string]interface{}{"addr": "db.internal", "port": 5432, "img": "pg:16"},
-				Reads: []cuedefinition.SourceRead{
+				Reads: []sources.SourceRead{
 					{SourceAttr: "addr", Property: "host", Value: "db.internal"},
 					{SourceAttr: "port", Property: "host", Value: 5432},
 					{SourceAttr: "img", Property: "image", Value: "pg:16"},
@@ -178,12 +178,12 @@ func TestChainedSourceReadsAreNotClaimedByTheComponent(t *testing.T) {
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "atlas", Type: "atlas"})
 
 	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"atlas": {
 				Name:           "atlas",
 				Phase:          sourcePhaseResolved,
 				ConsumedFields: map[string]interface{}{"clusterName": "eu-west-1"},
-				Reads: []cuedefinition.SourceRead{
+				Reads: []sources.SourceRead{
 					// read by the chained source "config", not by the component
 					{SourceAttr: "clusterName", Property: "path", Value: "eu-west-1",
 						ReaderKind: "source", ReaderName: "config"},
@@ -205,12 +205,12 @@ func TestSensitiveValuesSurviveAWholeStructRead(t *testing.T) {
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "creds", Type: "dbcreds"})
 
 	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"creds": {
 				Name: "creds", Phase: sourcePhaseResolved,
 				SensitivePaths: []string{"db.password", "members.token"},
 				ConsumedFields: map[string]interface{}{"db": "x"},
-				Reads: []cuedefinition.SourceRead{
+				Reads: []sources.SourceRead{
 					{SourceAttr: "db", Property: "settings", Value: map[string]interface{}{
 						"host": "db.internal", "password": "hunter2",
 					}},
@@ -242,10 +242,10 @@ func TestConsumerRecordsItsPlacement(t *testing.T) {
 
 	for _, ns := range []string{"team-a", "team-b"} {
 		h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", ns,
-			map[string]cuedefinition.SourceResolutionStatus{
+			map[string]sources.SourceResolutionStatus{
 				"cfg": {Name: "cfg", Phase: sourcePhaseResolved,
 					ConsumedFields: map[string]interface{}{"data.image": "nginx"},
-					Reads: []cuedefinition.SourceRead{
+					Reads: []sources.SourceRead{
 						{SourceAttr: "data.image", Property: "image", Value: "nginx"},
 					}},
 			})
@@ -270,7 +270,7 @@ func TestResolutionsAreKeyedByCacheEntry(t *testing.T) {
 		{"us-east", "cfg-us-east-b2", "2026-08-19T17:00:00Z"},
 	} {
 		h.recordSourceResolution(sourceKindComponent, "web", "webservice", c.cluster, "prod",
-			map[string]cuedefinition.SourceResolutionStatus{
+			map[string]sources.SourceResolutionStatus{
 				"cfg": {Name: "cfg", Phase: sourcePhaseResolved, Config: c.config, ExpiresAt: c.expires,
 					ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
 			})
@@ -292,7 +292,7 @@ func TestASharedCacheEntryIsOneResolution(t *testing.T) {
 
 	for _, cluster := range []string{"eu-west", "us-east"} {
 		h.recordSourceResolution(sourceKindComponent, "web", "webservice", cluster, "prod",
-			map[string]cuedefinition.SourceResolutionStatus{
+			map[string]sources.SourceResolutionStatus{
 				"cfg": {Name: "cfg", Phase: sourcePhaseResolved, Config: "git-file-shared",
 					ConsumedFields: map[string]interface{}{"content": "x"}},
 			})
@@ -310,11 +310,11 @@ func TestBindingPhaseIsTheWorstAcrossClusters(t *testing.T) {
 	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "configmap"})
 
 	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "eu-west", "prod",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"cfg": {Name: "cfg", Phase: sourcePhaseFailed, Config: "cfg-eu", Message: "i/o timeout"},
 		})
 	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "us-east", "prod",
-		map[string]cuedefinition.SourceResolutionStatus{
+		map[string]sources.SourceResolutionStatus{
 			"cfg": {Name: "cfg", Phase: sourcePhaseResolved, Config: "cfg-us"},
 		})
 
@@ -342,7 +342,7 @@ func TestResolutionsDivideWithinOneCluster(t *testing.T) {
 		{"api", "per-component-local-prod-api-b2"},
 	} {
 		h.recordSourceResolution(sourceKindComponent, c.comp, "webservice", "local", "prod",
-			map[string]cuedefinition.SourceResolutionStatus{
+			map[string]sources.SourceResolutionStatus{
 				"percomp": {Name: "percomp", Phase: sourcePhaseResolved, Config: c.key,
 					ConsumedFields: map[string]interface{}{"x": "y"}},
 			})

@@ -19,6 +19,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"maps"
 	"slices"
 	"sort"
@@ -43,7 +44,6 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
-	cuedefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
@@ -461,7 +461,7 @@ collectNext:
 //
 // readerKind filters: a chained source's reads are recorded against the source
 // that made them, so a component's entry must not claim them.
-func consumerValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus,
+func consumerValues(src v1beta1.ApplicationSource, rs sources.SourceResolutionStatus,
 	readerKind, readerName string) []common.SourceValue {
 	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues && !src.StatusPolicy.ExposeResolvedFields {
 		return nil
@@ -472,7 +472,7 @@ func consumerValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 		if rd.ReaderKind != readerKind || rd.ReaderName != readerName {
 			continue
 		}
-		val := cuedefinition.RedactValue(rd.SourceAttr, rd.Value, maskSet)
+		val := sources.RedactValue(rd.SourceAttr, rd.Value, maskSet)
 		out := common.SourceValue{SourceAttr: rd.SourceAttr, Property: rd.Property}
 		if raw, err := mapToRawExtension(map[string]interface{}{"v": val}); err == nil && raw != nil {
 			// Unwrap the single-key envelope mapToRawExtension needs.
@@ -492,7 +492,7 @@ func consumerValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 	return values
 }
 
-func sourceMaskSet(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus) map[string]struct{} {
+func sourceMaskSet(src v1beta1.ApplicationSource, rs sources.SourceResolutionStatus) map[string]struct{} {
 	maskPaths := append([]string{}, rs.SensitivePaths...)
 	if src.StatusPolicy != nil {
 		maskPaths = append(maskPaths, src.StatusPolicy.MaskPaths...)
@@ -509,7 +509,7 @@ func sourceMaskSet(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolut
 // consumedValues renders what one reader took from a source, with sensitive and
 // masked paths redacted. Nil when the binding's statusPolicy withholds values or
 // nothing was consumed.
-func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus) *runtime.RawExtension {
+func consumedValues(src v1beta1.ApplicationSource, rs sources.SourceResolutionStatus) *runtime.RawExtension {
 	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues && !src.StatusPolicy.ExposeResolvedFields {
 		return nil
 	}
@@ -533,7 +533,7 @@ func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 	sort.Strings(paths)
 	props := make(map[string]interface{}, len(paths))
 	for _, p := range paths {
-		props[p] = cuedefinition.RedactValue(p, rs.ConsumedFields[p], maskSet)
+		props[p] = sources.RedactValue(p, rs.ConsumedFields[p], maskSet)
 	}
 	raw, err := mapToRawExtension(props)
 	if err != nil {
@@ -549,7 +549,7 @@ func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 // workflow step has nowhere of its own to report, since its status type belongs
 // to the workflow repo and that engine is deliberately unaware sources exist.
 func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, namespace string,
-	resolved map[string]cuedefinition.SourceResolutionStatus) {
+	resolved map[string]sources.SourceResolutionStatus) {
 	if len(resolved) == 0 {
 		return
 	}
@@ -598,7 +598,7 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, nam
 // on the cluster has an entry per cluster; one keyed on the component has an
 // entry per component inside a single cluster. Keying this by cluster would
 // collapse the second case and invent entries in the first.
-func mergeResolution(entry *common.ApplicationSourceStatus, rs cuedefinition.SourceResolutionStatus, cluster string) {
+func mergeResolution(entry *common.ApplicationSourceStatus, rs sources.SourceResolutionStatus, cluster string) {
 	if rs.Config == "" && rs.Phase == "" {
 		return
 	}
@@ -691,7 +691,7 @@ func (h *AppHandler) recordComponentSourceReads(comp *appfile.Component, status 
 	if len(h.app.Spec.Sources) == 0 || comp == nil || comp.Ctx == nil {
 		return
 	}
-	resolvedStatuses, _ := comp.Ctx.GetData(cuedefinition.SourceResolutionStatusKey).(map[string]cuedefinition.SourceResolutionStatus)
+	resolvedStatuses, _ := comp.Ctx.GetData(sources.SourceResolutionStatusKey).(map[string]sources.SourceResolutionStatus)
 	// The context reports the local cluster as an empty string, but empty already
 	// means "not placed" for a reader like a workflow step. Name it, so the two
 	// are distinguishable in the stored status and not only in whatever renders

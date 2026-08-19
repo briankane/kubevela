@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,7 +29,6 @@ import (
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	velacue "github.com/oam-dev/kubevela/pkg/cue"
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
-	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
@@ -93,11 +93,11 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 	for i, comp := range app.Spec.Components {
 		compRefs, refErrs := collectSourceRefs(comp.Properties, field.NewPath("spec", "components").Index(i).Child("properties"), -1)
 		errs = append(errs, refErrs...)
-		refs = append(refs, withSurface(compRefs, veladefinition.SurfaceComponent)...)
+		refs = append(refs, withSurface(compRefs, sources.SurfaceComponent)...)
 		for j, tr := range comp.Traits {
 			trRefs, trErrs := collectSourceRefs(tr.Properties, field.NewPath("spec", "components").Index(i).Child("traits").Index(j).Child("properties"), -1)
 			errs = append(errs, trErrs...)
-			refs = append(refs, withSurface(trRefs, veladefinition.SurfaceTrait)...)
+			refs = append(refs, withSurface(trRefs, sources.SurfaceTrait)...)
 		}
 	}
 	for i, policy := range app.Spec.Policies {
@@ -109,18 +109,18 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 		for i, step := range app.Spec.Workflow.Steps {
 			stepRefs, stepErrs := collectSourceRefs(step.Properties, field.NewPath("spec", "workflow", "steps").Index(i).Child("properties"), -1)
 			errs = append(errs, stepErrs...)
-			refs = append(refs, withSurface(stepRefs, veladefinition.SurfaceWorkflowStep)...)
+			refs = append(refs, withSurface(stepRefs, sources.SurfaceWorkflowStep)...)
 			for j, sub := range step.SubSteps {
 				subRefs, subErrs := collectSourceRefs(sub.Properties, field.NewPath("spec", "workflow", "steps").Index(i).Child("subSteps").Index(j).Child("properties"), -1)
 				errs = append(errs, subErrs...)
-				refs = append(refs, withSurface(subRefs, veladefinition.SurfaceWorkflowStep)...)
+				refs = append(refs, withSurface(subRefs, sources.SurfaceWorkflowStep)...)
 			}
 		}
 	}
 	for i, src := range app.Spec.Sources {
 		srcRefs, srcErrs := collectSourceRefs(src.Properties, field.NewPath("spec", "sources").Index(i).Child("properties"), i)
 		errs = append(errs, srcErrs...)
-		refs = append(refs, withSurface(srcRefs, veladefinition.SurfaceSource)...)
+		refs = append(refs, withSurface(srcRefs, sources.SurfaceSource)...)
 	}
 
 	schemaValidators := map[string]*sourceSchemaValidator{}
@@ -166,7 +166,7 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 			continue
 		}
 		// A SourceDefinition may restrict where it can be consumed from.
-		if ref.Surface == veladefinition.SurfaceComponent || ref.Surface == veladefinition.SurfaceTrait {
+		if ref.Surface == sources.SurfaceComponent || ref.Surface == sources.SurfaceTrait {
 			surfaces, err := h.loadConsumableFrom(ctx, app.Namespace, sourceType, consumableFromCache, app.GetAnnotations())
 			if err != nil {
 				errs = append(errs, field.Invalid(ref.FieldPath, ref.Path,

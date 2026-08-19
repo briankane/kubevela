@@ -18,6 +18,7 @@ package sourcedefinition
 
 import (
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"slices"
 	"strings"
 
@@ -26,7 +27,6 @@ import (
 	cueparser "cuelang.org/go/cue/parser"
 	cuetoken "cuelang.org/go/cue/token"
 
-	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
@@ -191,9 +191,9 @@ func ParseConsumableFrom(template string) ([]string, error) {
 			if err != nil {
 				return nil, fmt.Errorf("consumableFrom entries must be strings: %w", err)
 			}
-			if !slices.Contains(veladefinition.ConsumableSurfaces, value) {
+			if !slices.Contains(sources.ConsumableSurfaces, value) {
 				return nil, fmt.Errorf("consumableFrom entry %q is not a surface that supports a source read; expected one of %v",
-					value, veladefinition.ConsumableSurfaces)
+					value, sources.ConsumableSurfaces)
 			}
 			surfaces = append(surfaces, value)
 		}
@@ -237,7 +237,7 @@ func ValidateSurfaceCompatibility(template string, consumable []string) error {
 	// Where the author said it may be consumed, or everywhere if unrestricted.
 	declared := consumable
 	if len(declared) == 0 {
-		declared = veladefinition.ConsumableSurfaces
+		declared = sources.ConsumableSurfaces
 	}
 
 	supported := cachekey.SurfacesSupporting(fields, declared)
@@ -248,7 +248,7 @@ func ValidateSurfaceCompatibility(template string, consumable []string) error {
 	// Nothing works. Say why against one surface rather than repeating the same
 	// sentence per surface, and name where it would work if anywhere does.
 	reason := cachekey.CheckSurface(fields, declared[0])
-	if elsewhere := cachekey.SurfacesSupporting(fields, veladefinition.ConsumableSurfaces); len(elsewhere) > 0 {
+	if elsewhere := cachekey.SurfacesSupporting(fields, sources.ConsumableSurfaces); len(elsewhere) > 0 {
 		return fmt.Errorf("this source %v, where it declares it may be consumed; it is available in %s",
 			reason, strings.Join(pluralise(elsewhere), ", "))
 	}

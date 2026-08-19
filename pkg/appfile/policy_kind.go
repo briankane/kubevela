@@ -18,8 +18,8 @@ package appfile
 
 import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
-	"github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // Policies fall into three kinds, and property expressions behave differently in
@@ -83,11 +83,11 @@ var builtinPolicyTypes = map[string]bool{
 func PolicySurface(policyType string, appScoped bool) string {
 	switch {
 	case IsBuiltinPolicyType(policyType):
-		return definition.SurfacePolicy
+		return sources.SurfacePolicy
 	case appScoped:
-		return definition.SurfacePolicyApp
+		return sources.SurfacePolicyApp
 	default:
-		return definition.SurfacePolicyRendered
+		return sources.SurfacePolicyRendered
 	}
 }
 

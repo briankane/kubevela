@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -831,7 +832,7 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 		if !propexpr.HasExpression(decoded) {
 			return nil
 		}
-		if definition.SurfaceReadsSource(surface) {
+		if sources.SurfaceReadsSource(surface) {
 			return nil
 		}
 		// The surface cannot resolve a source, so only `context` is offered.
@@ -849,11 +850,11 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 		}
 	}
 	for _, step := range af.WorkflowSteps {
-		if err := check(step.Properties, definition.SurfaceWorkflowStep, step.Name); err != nil {
+		if err := check(step.Properties, sources.SurfaceWorkflowStep, step.Name); err != nil {
 			return err
 		}
 		for _, sub := range step.SubSteps {
-			if err := check(sub.Properties, definition.SurfaceWorkflowStep, sub.Name); err != nil {
+			if err := check(sub.Properties, sources.SurfaceWorkflowStep, sub.Name); err != nil {
 				return err
 			}
 		}
@@ -911,7 +912,7 @@ func (p *Parser) resolvePolicyExpressions(ctx context.Context, af *Appfile) erro
 		// substituted. Their surfaces differ, though, so each is evaluated
 		// against its own schema rather than a shared one.
 		surface := PolicySurface(af.Policies[i].Type, p.policyAppScoped(ctx, af, af.Policies[i].Type))
-		if surface == definition.SurfacePolicyRendered {
+		if surface == sources.SurfacePolicyRendered {
 			continue
 		}
 		raw := af.Policies[i].Properties

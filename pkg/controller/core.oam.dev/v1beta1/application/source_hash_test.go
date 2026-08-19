@@ -19,6 +19,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +33,6 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/appfile"
-	"github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/oam"
 )
@@ -47,11 +47,11 @@ func compWithConsumed(consumed map[string]map[string]interface{}) *appfile.Compo
 		CompName:  "web",
 	}, nil)
 	if consumed != nil {
-		statuses := map[string]definition.SourceResolutionStatus{}
+		statuses := map[string]sources.SourceResolutionStatus{}
 		for name, fields := range consumed {
-			statuses[name] = definition.SourceResolutionStatus{Name: name, ConsumedFields: fields}
+			statuses[name] = sources.SourceResolutionStatus{Name: name, ConsumedFields: fields}
 		}
-		comp.Ctx.PushData(definition.SourceResolutionStatusKey, statuses)
+		comp.Ctx.PushData(sources.SourceResolutionStatusKey, statuses)
 	}
 	return comp
 }

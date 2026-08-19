@@ -18,6 +18,7 @@ package application
 
 import (
 	"context"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"strconv"
 	"strings"
 	"testing"
@@ -42,8 +43,6 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
-
-	cuedefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 )
 
 const workloadDefinition = `
@@ -483,14 +482,14 @@ func TestMaskedPath(t *testing.T) {
 		{"propertiesExtra", false, "a name that only starts the same"},
 		{"propertiesExtra.token", false, "and its children"},
 	} {
-		if got := cuedefinition.MaskedPath(tc.path, masks); got != tc.masked {
-			t.Errorf("cuedefinition.MaskedPath(%q) = %v, want %v (%s)", tc.path, got, tc.masked, tc.why)
+		if got := sources.MaskedPath(tc.path, masks); got != tc.masked {
+			t.Errorf("sources.MaskedPath(%q) = %v, want %v (%s)", tc.path, got, tc.masked, tc.why)
 		}
 	}
 
 	// No masks means nothing is masked, including paths that would match under
 	// one - the guard runs on every source, most of which declare none.
-	if cuedefinition.MaskedPath("properties.token", map[string]struct{}{}) {
+	if sources.MaskedPath("properties.token", map[string]struct{}{}) {
 		t.Error("nothing should be masked when no marker is set")
 	}
 }

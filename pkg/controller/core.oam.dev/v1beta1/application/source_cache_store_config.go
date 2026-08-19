@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -12,7 +13,6 @@ import (
 	apitypes "github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/config"
-	"github.com/oam-dev/kubevela/pkg/cue/definition"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/oam"
 )
@@ -127,7 +127,7 @@ func (s *configAPISourceCacheStore) Write(ctx context.Context, cacheKey, sourceT
 	// its own annotation rather than overloading the type label.
 	stampMeta := meta
 	stampMeta.TemplateName = templateName
-	definition.ApplySourceCacheMetadata(cfg.Secret, sourceType, stampMeta)
+	sources.ApplySourceCacheMetadata(cfg.Secret, sourceType, stampMeta)
 	cfg.Secret.Annotations[sourceCacheSyncAtKey] = time.Now().UTC().Format(time.RFC3339)
 	return s.factory.CreateOrUpdateConfig(ctx, cfg, sourceCacheNamespace)
 }
@@ -142,7 +142,7 @@ func (s *configAPISourceCacheStore) Touch(ctx context.Context, cacheKey string) 
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: sourceCacheNamespace, Name: cacheKey}, secret); err != nil {
 		return client.IgnoreNotFound(err)
 	}
-	if !definition.ShouldTouchSourceCache(secret.Annotations, time.Now()) {
+	if !sources.ShouldTouchSourceCache(secret.Annotations, time.Now()) {
 		return nil
 	}
 	if secret.Annotations == nil {

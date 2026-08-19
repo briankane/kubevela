@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -29,7 +30,6 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/appfile"
-	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
@@ -87,7 +87,7 @@ func validateExpressions(app *v1beta1.Application, appScoped func(string) bool) 
 		// A policy with a CUE template renders through the same engine a component
 		// does, so a source resolves there; a built-in one has no render at all.
 		roots := contextOnly
-		if veladefinition.SurfaceReadsSource(appfile.PolicySurface(policy.Type, appScoped(policy.Type))) {
+		if sources.SurfaceReadsSource(appfile.PolicySurface(policy.Type, appScoped(policy.Type))) {
 			roots = both
 		}
 		check(policy.Properties, field.NewPath("spec", "policies").Index(i).Child("properties"), roots...)
@@ -232,7 +232,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 		// the engine and sees a render's context.
 		scoped := h.policyIsAppScoped(ctx, app, policy.Type)
 		roots := contextOnly
-		if veladefinition.SurfaceReadsSource(appfile.PolicySurface(policy.Type, scoped)) {
+		if sources.SurfaceReadsSource(appfile.PolicySurface(policy.Type, scoped)) {
 			roots = both
 		}
 		check(flattenLeafPaths(policy.Properties.Raw, base), loadTarget("policy", policy.Type),

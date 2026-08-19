@@ -17,10 +17,9 @@ limitations under the License.
 package sourcedefinition
 
 import (
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"strings"
 	"testing"
-
-	veladefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 )
 
 func TestValidateSourceStorage(t *testing.T) {
@@ -286,16 +285,16 @@ func TestParseConsumableFrom(t *testing.T) {
 }
 
 func TestSurfaceAllowed(t *testing.T) {
-	if !SurfaceAllowed(nil, veladefinition.SurfaceComponent) {
+	if !SurfaceAllowed(nil, sources.SurfaceComponent) {
 		t.Fatal("unrestricted source must be allowed from a component")
 	}
-	if !SurfaceAllowed(nil, veladefinition.SurfaceTrait) {
+	if !SurfaceAllowed(nil, sources.SurfaceTrait) {
 		t.Fatal("unrestricted source must be allowed from a trait")
 	}
-	if !SurfaceAllowed([]string{veladefinition.SurfaceComponent}, veladefinition.SurfaceComponent) {
+	if !SurfaceAllowed([]string{sources.SurfaceComponent}, sources.SurfaceComponent) {
 		t.Fatal("component-only source must be allowed from a component")
 	}
-	if SurfaceAllowed([]string{veladefinition.SurfaceComponent}, veladefinition.SurfaceTrait) {
+	if SurfaceAllowed([]string{sources.SurfaceComponent}, sources.SurfaceTrait) {
 		t.Fatal("component-only source must not be allowed from a trait")
 	}
 }

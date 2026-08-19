@@ -44,13 +44,13 @@ import (
 	"github.com/kubevela/workflow/pkg/cue/model/value"
 	"github.com/kubevela/workflow/pkg/cue/process"
 
-	apitypes "github.com/oam-dev/kubevela/apis/types"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"github.com/oam-dev/kubevela/pkg/cue/task"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 const (
@@ -68,17 +68,6 @@ const (
 	ErrsFieldName = render.ErrsFieldName
 	// TemplateContextPrefix is the base prefix for storing templates in context
 	TemplateContextPrefix = "template-context-"
-	// SourceResolutionStatusKey stores per-source runtime resolution statuses in process context.
-	SourceResolutionStatusKey = "sourceResolutionStatuses"
-	sourceCacheNamespace      = "vela-system"
-	sourceCacheTTL            = 15 * time.Minute
-	sourceCacheSyncAtKey      = apitypes.AnnotationConfigLastSyncAt
-	sourceCacheAccessedKey    = apitypes.AnnotationConfigLastAccessed
-	sourceCacheTTLKey         = apitypes.AnnotationConfigTTL
-	sourceCacheTemplateKey    = apitypes.AnnotationConfigTemplate
-	sourceCacheDataKey        = "input-properties"
-	sourceCachePolicyUseStale = "use-stale"
-	sourceCachePolicyFail     = "fail"
 )
 
 // GetWorkloadTemplateKey returns the context key for storing workload templates
@@ -121,7 +110,7 @@ type workloadDef struct {
 func NewWorkloadAbstractEngine(name string) AbstractEngine {
 	return &workloadDef{
 		def:     def{name: name},
-		surface: SurfaceComponent,
+		surface: sources.SurfaceComponent,
 	}
 }
 
@@ -134,7 +123,7 @@ func NewWorkloadAbstractEngine(name string) AbstractEngine {
 func NewPolicyAbstractEngine(name string) AbstractEngine {
 	return &workloadDef{
 		def:     def{name: name},
-		surface: SurfacePolicyRendered,
+		surface: sources.SurfacePolicyRendered,
 	}
 }
 
@@ -154,9 +143,9 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 	if params != nil {
 		surface := wd.surface
 		if surface == "" {
-			surface = SurfaceComponent
+			surface = sources.SurfaceComponent
 		}
-		resolved, err := resolveSourceExpressions(ctx, params, surface)
+		resolved, err := sources.ResolveSourceExpressions(ctx, params, surface)
 		if err != nil {
 			return errors.WithMessagef(err, "resolve source expressions for %s %s", surface, wd.name)
 		}
@@ -342,7 +331,7 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 	abstractTemplate, _ = upgrade.EnsureCueVersionCompatibility(abstractTemplate, td.name, upgrade.TraitKind, upgrade.TemplateAreaMain)
 	buff := abstractTemplate + "\n"
 	if params != nil {
-		resolved, err := resolveSourceExpressions(ctx, params, SurfaceTrait)
+		resolved, err := sources.ResolveSourceExpressions(ctx, params, sources.SurfaceTrait)
 		if err != nil {
 			return errors.WithMessagef(err, "resolve source expressions for trait %s", td.name)
 		}

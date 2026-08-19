@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"sort"
 	"strings"
 
@@ -41,7 +42,6 @@ import (
 	// config) and is initialized lazily (no init-time kubeconfig dependency).
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/helm"
-	"github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
 	"github.com/oam-dev/kubevela/pkg/features"
 
@@ -62,7 +62,7 @@ func (p *Parser) ValidateCUESchematicAppfile(a *Appfile) error {
 	// would make every admission repeat the source's live I/O, and would have
 	// validation resolve different data than the render that follows it.
 	restore := a.SourceCacheStore
-	a.SourceCacheStore = definition.NewReadOnlySourceCacheStore(sourceCacheStoreFor(a))
+	a.SourceCacheStore = sources.NewReadOnlySourceCacheStore(sourceCacheStoreFor(a))
 	defer func() { a.SourceCacheStore = restore }()
 
 	for _, wl := range a.ParsedComponents {
@@ -162,7 +162,7 @@ func (p *Parser) ValidateComponentParams(ctxData velaprocess.ContextData, wl *Co
 	// ValidateCUESchematicAppfile installs a read-through, write-discarding cache
 	// store for exactly this: the reads happen, and no entry is left behind by a
 	// validation.
-	params, err := definition.ResolveSourceExpressions(ctx, wl.Params, definition.SurfaceComponent)
+	params, err := sources.ResolveSourceExpressions(ctx, wl.Params, sources.SurfaceComponent)
 	if err != nil {
 		return errors.WithMessagef(err, "component %q: resolve source expressions", wl.Name)
 	}
@@ -757,5 +757,5 @@ func sourceCacheStoreFor(a *Appfile) velaprocess.SourceCacheStore {
 	if a.SourceCacheStore != nil {
 		return a.SourceCacheStore
 	}
-	return definition.NewSecretSourceCacheStore(a.KubeClient)
+	return sources.NewSecretSourceCacheStore(a.KubeClient)
 }

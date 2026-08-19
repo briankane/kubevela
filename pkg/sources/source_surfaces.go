@@ -14,15 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package definition
+package sources
 
 import (
 	"fmt"
 	"slices"
 	"sort"
 	"strings"
-
-	"github.com/kubevela/workflow/pkg/cue/process"
 
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
@@ -135,17 +133,4 @@ func readableSurfacesPhrase() string {
 		return names[0]
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
-}
-
-// ResolveSourceExpressions substitutes $(...) expressions in a properties blob,
-// for callers outside the component and trait render paths.
-//
-// Workflow steps are supported by substituting before the workflow engine sees
-// them, rather than by changing that engine - so the engine receives ordinary
-// data and does not know sources exist.
-//
-// surface names the call site, so a source reads the context that site actually
-// offers rather than a set curated for somewhere else.
-func ResolveSourceExpressions(ctx process.Context, params interface{}, surface string) (interface{}, error) {
-	return resolveSourceExpressions(ctx, params, surface)
 }

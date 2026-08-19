@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"strings"
 	"testing"
 
@@ -1764,7 +1765,7 @@ func TestGeneratePolicyManifests(t *testing.T) {
 }
 
 func TestExtractSensitiveOutputPaths(t *testing.T) {
-	paths := definition.ExtractSensitiveOutputPaths(`
+	paths := sources.ExtractSensitiveOutputPaths(`
 output: {
   // +sensitive
   token: string
@@ -1786,7 +1787,7 @@ output: {
 // its examples, but the first implementation only read output:. A definition
 // written to the KEP must still redact.
 func TestExtractSensitiveOutputPathsFromSchema(t *testing.T) {
-	paths := definition.ExtractSensitiveOutputPaths(`
+	paths := sources.ExtractSensitiveOutputPaths(`
 schema: {
   region: string
   // +sensitive
@@ -1804,7 +1805,7 @@ output: {
 }
 
 func TestExtractSensitiveOutputPathsMergesBothBlocks(t *testing.T) {
-	paths := definition.ExtractSensitiveOutputPaths(`
+	paths := sources.ExtractSensitiveOutputPaths(`
 schema: {
   // +sensitive
   token: string
@@ -1821,7 +1822,7 @@ output: {
 }
 
 func TestExtractSensitiveOutputPathsDeduplicates(t *testing.T) {
-	paths := definition.ExtractSensitiveOutputPaths(`
+	paths := sources.ExtractSensitiveOutputPaths(`
 schema: {
   // +sensitive
   token: string

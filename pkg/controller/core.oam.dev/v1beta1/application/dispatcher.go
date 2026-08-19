@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"sort"
 	"strings"
 
@@ -352,7 +353,7 @@ func resolvedSourceHashes(comp *appfile.Component) (map[string]string, bool) {
 	if comp == nil || comp.Ctx == nil {
 		return nil, false
 	}
-	statuses, _ := comp.Ctx.GetData(definition.SourceResolutionStatusKey).(map[string]definition.SourceResolutionStatus)
+	statuses, _ := comp.Ctx.GetData(sources.SourceResolutionStatusKey).(map[string]sources.SourceResolutionStatus)
 	if len(statuses) == 0 {
 		return nil, false
 	}
