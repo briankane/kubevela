@@ -79,10 +79,10 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 	fmt.Fprintf(out, "Sources of %s/%s:\n\n", namespace, appName)
 	summary := tablewriter.NewWriter(out)
 	summary.SetColWidth(60)
-	// One row per cache entry, not per binding. A binding keyed on the cluster has
-	// an entry per cluster, each with its own expiry and its own state, and one
+	// One row per stored entry, not per binding. A binding whose key varies has an
+	// entry per distinct key, each with its own expiry and its own state, and one
 	// row could only ever show one of them.
-	summary.SetHeader([]string{"NAME", "TYPE", "PHASE", "AUTO-UPDATE", "CLUSTERS", "EXPIRES", "CACHE ENTRY"})
+	summary.SetHeader([]string{"NAME", "TYPE", "PHASE", "AUTO-UPDATE", "CLUSTERS", "EXPIRES", "STORAGE KEY"})
 	for _, src := range sources {
 		if len(src.Resolutions) == 0 {
 			summary.Append([]string{src.Name, orDash(src.Type), orDash(src.Phase),
@@ -98,7 +98,7 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 				name, typ, auto = src.Name, orDash(src.Type), formatAutoUpdate(src.AutoUpdate)
 			}
 			summary.Append([]string{name, typ, orDash(res.Phase), auto,
-				orDash(strings.Join(res.Clusters, ",")), orDash(res.ExpiresAt), orDash(res.Config)})
+				orDash(strings.Join(res.Clusters, ",")), orDash(res.ExpiresAt), orDash(res.StorageKey)})
 		}
 	}
 	summary.Render()
@@ -112,7 +112,7 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 		}
 		for _, res := range src.Resolutions {
 			if res.Message != "" {
-				fmt.Fprintf(out, "\n%s (%s): %s\n", src.Name, orDash(res.Config), res.Message)
+				fmt.Fprintf(out, "\n%s (%s): %s\n", src.Name, orDash(res.StorageKey), res.Message)
 			}
 		}
 	}
@@ -265,11 +265,16 @@ func sourceIndicator(phase string) string {
 // the block compete with Services for attention when it is meant to sit
 // alongside it.
 //
-// A binding that resolved differently in different clusters gets a line per
-// cluster underneath, because that is precisely the case a single worst-of
-// indicator cannot express: "one of your clusters cannot reach this" and "none
-// of them can" are the same mark otherwise. A binding that resolved the same way
-// everywhere stays one line, so the common case is unaffected.
+// A binding whose stored entries disagree gets a line per entry underneath,
+// because that is precisely the case a single worst-of indicator cannot express:
+// "one of these cannot be reached" and "none of them can" are the same mark
+// otherwise. A binding whose entries all agree stays one line, so the common case
+// is unaffected.
+//
+// Broken down by storage key rather than by cluster. The key is what a
+// resolution is; a key varying by namespace, component or a label produces
+// several entries inside one cluster, and listing clusters there would print the
+// same name twice and explain nothing.
 func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application) {
 	if len(app.Spec.Sources) == 0 {
 		return
@@ -292,8 +297,13 @@ func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application)
 		}
 		ioStreams.Infof("  - %s %s (%s)\n", sourceIndicator(phase), declared.Name, orDash(shown))
 		for _, res := range dividedResolutions(src) {
-			ioStreams.Infof("      %s %s\n", sourceIndicator(res.Phase),
-				orDash(strings.Join(res.Clusters, ", ")))
+			// The storage key is the identity; clusters are context, and only some
+			// of it - a key may vary by namespace or component just as readily.
+			where := ""
+			if len(res.Clusters) > 0 {
+				where = "  (" + strings.Join(res.Clusters, ", ") + ")"
+			}
+			ioStreams.Infof("      %s %s%s\n", sourceIndicator(res.Phase), orDash(res.StorageKey), where)
 		}
 	}
 	ioStreams.Infof("\n")

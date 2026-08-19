@@ -91,7 +91,7 @@ func sourcesFixture() *v1beta1.Application {
 		Spec:       v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{{Name: "registry"}}},
 		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{{
 			Name: "registry", Type: "configmap@v2", Phase: "Resolved", AutoUpdate: &yes,
-			Resolutions: []common.SourceResolution{{Config: "cm-local-a1", Clusters: []string{"local"}, Phase: "Resolved"}},
+			Resolutions: []common.SourceResolution{{StorageKey: "cm-local-a1", Clusters: []string{"local"}, Phase: "Resolved"}},
 			ConsumedBy: []common.SourceConsumer{
 				{DefinitionKind: "component", Name: "web", Cluster: "local", Namespace: "prod",
 					Values: []common.SourceValue{{Property: "image", SourceAttr: "data.image",
@@ -206,19 +206,19 @@ func TestPrintSourcesOverview(t *testing.T) {
 func TestDividedResolutionsOnlyWhenTheyDiffer(t *testing.T) {
 	r := require.New(t)
 	same := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
-		{Config: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-		{Config: "b", Clusters: []string{"us-east"}, Phase: "Resolved"},
+		{StorageKey: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+		{StorageKey: "b", Clusters: []string{"us-east"}, Phase: "Resolved"},
 	}}
 	r.Nil(dividedResolutions(same), "resolving the same way everywhere stays one line")
 
 	split := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
-		{Config: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-		{Config: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
+		{StorageKey: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+		{StorageKey: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
 	}}
 	r.Len(dividedResolutions(split), 2, "one cluster failing must be distinguishable from all of them failing")
 
 	single := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
-		{Config: "a", Clusters: []string{"local"}, Phase: "Failed"},
+		{StorageKey: "a", Clusters: []string{"local"}, Phase: "Failed"},
 	}}
 	r.Nil(dividedResolutions(single), "a single-cluster app gains nothing from a breakdown")
 }
@@ -232,12 +232,12 @@ func TestPrintSourcesOverviewSplitsDivergentClusters(t *testing.T) {
 		}},
 		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{
 			{Name: "registry", Type: "configmap", Phase: "Failed", Resolutions: []common.SourceResolution{
-				{Config: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-				{Config: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
+				{StorageKey: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+				{StorageKey: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
 			}},
 			{Name: "steady", Type: "configmap", Phase: "Resolved", Resolutions: []common.SourceResolution{
-				{Config: "c", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-				{Config: "d", Clusters: []string{"us-east"}, Phase: "Resolved"},
+				{StorageKey: "c", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+				{StorageKey: "d", Clusters: []string{"us-east"}, Phase: "Resolved"},
 			}},
 		}},
 	}

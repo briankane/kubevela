@@ -277,16 +277,23 @@ type SourceConsumer struct {
 	Values []SourceValue `json:"values,omitempty"`
 }
 
-// SourceResolution is one cache entry backing a binding, and the state of it.
+// SourceResolution is one stored entry backing a binding, and the state of it.
 //
-// Keyed by the entry rather than by cluster because the entry is what a
-// resolution is: two clusters resolving a cluster-keyed source have two entries,
-// and two clusters resolving a source that ignores the cluster share one.
+// Keyed by the storage key rather than by cluster because the key is what a
+// resolution is. A source keyed on the cluster has an entry per cluster; one
+// keyed on the component has an entry per component within a single cluster; one
+// keyed on nothing has a single entry serving everything. Cluster is only ever
+// one of the things a key may vary by.
 type SourceResolution struct {
-	// Config names the cache entry. Inspect it directly to see when it last synced.
-	Config string `json:"config,omitempty"`
-	// Clusters this entry served. More than one where the source's cache key does
-	// not vary by cluster, in which case they genuinely share it.
+	// StorageKey identifies the entry, and is the name of the object holding it -
+	// inspect that directly to see when it last synced. Named for the storage.key
+	// a SourceDefinition author writes and vela def show reports, rather than for
+	// the store it happens to live in.
+	StorageKey string `json:"storageKey,omitempty"`
+	// Clusters this entry served, as context. Not the identity: a cache key may
+	// vary by namespace, appName, componentName or a label just as readily as by
+	// cluster, so two entries can serve one cluster and one entry can serve
+	// several.
 	// +optional
 	Clusters []string `json:"clusters,omitempty"`
 	// Phase is Resolved, Stale or Failed for this entry specifically. The binding's

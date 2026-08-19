@@ -60,7 +60,7 @@ func TestSourceStatusListReportsEveryBindingOnce(t *testing.T) {
 	r.Equal("registry", out[0].Name)
 	r.Equal(sourcePhaseResolved, out[0].Phase)
 	r.Len(out[0].Resolutions, 1, "both readers hit the same cache entry, so it is one resolution")
-	r.Equal("configmap-local-default-abc", out[0].Resolutions[0].Config)
+	r.Equal("configmap-local-default-abc", out[0].Resolutions[0].StorageKey)
 	r.Len(out[0].ConsumedBy, 2, "both readers recorded against the one binding")
 	r.Equal(sourceKindComponent, out[0].ConsumedBy[0].DefinitionKind)
 	r.Equal("webservice", out[0].ConsumedBy[0].Type)
@@ -279,7 +279,7 @@ func TestResolutionsAreKeyedByCacheEntry(t *testing.T) {
 	got := h.sourceStatusList()[0]
 	r.Len(got.Resolutions, 2, "two clusters, two cache entries, two expiries")
 	r.ElementsMatch([]string{"cfg-eu-west-a1", "cfg-us-east-b2"},
-		[]string{got.Resolutions[0].Config, got.Resolutions[1].Config})
+		[]string{got.Resolutions[0].StorageKey, got.Resolutions[1].StorageKey})
 	r.Equal([]string{"eu-west"}, got.Resolutions[0].Clusters)
 }
 
@@ -322,10 +322,36 @@ func TestBindingPhaseIsTheWorstAcrossClusters(t *testing.T) {
 	r.Equal(sourcePhaseFailed, got.Phase, "one cluster failing is a failure")
 	// ...and the failure stays attached to the entry that failed, not to the binding.
 	for _, res := range got.Resolutions {
-		if res.Config == "cfg-eu" {
+		if res.StorageKey == "cfg-eu" {
 			r.Equal("i/o timeout", res.Message)
 		} else {
 			r.Empty(res.Message)
 		}
 	}
+}
+
+// Cluster is not the axis a resolution divides on. A source keyed on the
+// component has an entry per component inside a single cluster, so a breakdown
+// that listed clusters would print the same name twice and explain nothing.
+func TestResolutionsDivideWithinOneCluster(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "percomp", Type: "per-component"})
+
+	for _, c := range []struct{ comp, key string }{
+		{"web", "per-component-local-prod-web-a1"},
+		{"api", "per-component-local-prod-api-b2"},
+	} {
+		h.recordSourceResolution(sourceKindComponent, c.comp, "webservice", "local", "prod",
+			map[string]cuedefinition.SourceResolutionStatus{
+				"percomp": {Name: "percomp", Phase: sourcePhaseResolved, Config: c.key,
+					ConsumedFields: map[string]interface{}{"x": "y"}},
+			})
+	}
+
+	got := h.sourceStatusList()[0]
+	r.Len(got.Resolutions, 2, "two entries, one cluster")
+	for _, res := range got.Resolutions {
+		r.Equal([]string{"local"}, res.Clusters, "both served the same cluster")
+	}
+	r.NotEqual(got.Resolutions[0].StorageKey, got.Resolutions[1].StorageKey)
 }

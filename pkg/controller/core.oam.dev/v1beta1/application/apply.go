@@ -591,17 +591,16 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, nam
 
 // mergeResolution folds one render's view of a binding into the per-entry list.
 //
-// Keyed by the cache entry rather than by the cluster, because the entry is what
-// a resolution is: two clusters resolving a cluster-keyed source have two
-// entries and two expiries, while two clusters resolving a source that ignores
-// the cluster share one. Keying by cluster would invent a second entry for the
-// second case and report the same expiry twice.
+// Keyed by the storage key, because that is what a resolution is. A source keyed
+// on the cluster has an entry per cluster; one keyed on the component has an
+// entry per component inside a single cluster. Keying this by cluster would
+// collapse the second case and invent entries in the first.
 func mergeResolution(entry *common.ApplicationSourceStatus, rs cuedefinition.SourceResolutionStatus, cluster string) {
 	if rs.Config == "" && rs.Phase == "" {
 		return
 	}
 	for i := range entry.Resolutions {
-		if entry.Resolutions[i].Config != rs.Config {
+		if entry.Resolutions[i].StorageKey != rs.Config {
 			continue
 		}
 		got := &entry.Resolutions[i]
@@ -616,10 +615,10 @@ func mergeResolution(entry *common.ApplicationSourceStatus, rs cuedefinition.Sou
 		return
 	}
 	res := common.SourceResolution{
-		Config:    rs.Config,
-		Phase:     rs.Phase,
-		ExpiresAt: rs.ExpiresAt,
-		Message:   rs.Message,
+		StorageKey: rs.Config,
+		Phase:      rs.Phase,
+		ExpiresAt:  rs.ExpiresAt,
+		Message:    rs.Message,
 	}
 	addCluster(&res, cluster)
 	entry.Resolutions = append(entry.Resolutions, res)
