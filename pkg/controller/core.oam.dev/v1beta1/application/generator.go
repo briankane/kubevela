@@ -109,7 +109,12 @@ func (h *AppHandler) GenerateApplicationSteps(ctx monitorContext.Context,
 		KubeClient: h.Client,
 	})
 	ctx.SetContext(ctxWithRuntimeParams)
-	instance, err := generateWorkflowInstance(af, app)
+	instance, err := generateWorkflowInstance(af, app,
+		func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus) {
+			// Cluster is empty: a workflow step is not placed, so its reads are not
+			// per-cluster the way a component's are.
+			h.recordSourceResolution(sourceKindWorkflowStep, name, stepType, "", resolved)
+		})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,7 +164,8 @@ func copyWorkflowStatusToInstance(app *v1beta1.Application, mode *wfTypesv1alpha
 	return status
 }
 
-func generateWorkflowInstance(af *appfile.Appfile, app *v1beta1.Application) (*wfTypes.WorkflowInstance, error) {
+func generateWorkflowInstance(af *appfile.Appfile, app *v1beta1.Application,
+	recordSources func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus)) (*wfTypes.WorkflowInstance, error) {
 	instance := &wfTypes.WorkflowInstance{
 		WorkflowMeta: wfTypes.WorkflowMeta{
 			Name:        af.Name,
@@ -190,7 +196,7 @@ func generateWorkflowInstance(af *appfile.Appfile, app *v1beta1.Application) (*w
 	// source that could not resolve wrote the literal "$(source.x.y)" into a
 	// ConfigMap and the Application reported running. A failure to resolve has to
 	// fail the render.
-	if err := resolveWorkflowStepSources(af, instance.Steps); err != nil {
+	if err := resolveWorkflowStepSources(af, instance.Steps, recordSources); err != nil {
 		return nil, err
 	}
 
@@ -590,7 +596,12 @@ func generateContextDataFromApp(goCtx context.Context, app *v1beta1.Application,
 //
 // This runs entirely inside kubevela: the workflow engine receives ordinary data
 // and does not know sources exist.
-func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.WorkflowStep) error {
+// record is called with what each step resolved. Without it the whole thing is
+// computed and discarded: the resolver writes consumed values, the backing cache
+// entry, the expiry and any failure into pCtx below, and pCtx is local to
+// substitute. A step reading a source left no trace of what it received.
+func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.WorkflowStep,
+	record func(name, stepType string, resolved map[string]veladefinition.SourceResolutionStatus)) error {
 	substitute := func(name, stepType string, raw *runtime.RawExtension) error {
 		if raw == nil || len(raw.Raw) == 0 {
 			return nil
@@ -618,6 +629,10 @@ func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.Wor
 			return err
 		}
 		raw.Raw = out
+		if record != nil {
+			statuses, _ := pCtx.GetData(veladefinition.SourceResolutionStatusKey).(map[string]veladefinition.SourceResolutionStatus)
+			record(name, stepType, statuses)
+		}
 		return nil
 	}
 

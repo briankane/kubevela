@@ -183,7 +183,7 @@ type ApplicationComponentStatus struct {
 	Message         string                    `json:"message,omitempty"`
 	Traits          []ApplicationTraitStatus  `json:"traits,omitempty"`
 	Scopes          []corev1.ObjectReference  `json:"scopes,omitempty"`
-	Sources         []ApplicationSourceStatus `json:"sources,omitempty"`
+	Sources         []ComponentSourceStatus   `json:"sources,omitempty"`
 }
 
 // Equal check if two ApplicationComponentStatus are equal
@@ -203,17 +203,80 @@ type ApplicationTraitStatus struct {
 
 // ApplicationSourceStatus records source resolution status.
 type ApplicationSourceStatus struct {
-	Name   string `json:"name"`
-	Type   string `json:"type,omitempty"`
+	// Name is the spec.sources[] binding this reports on.
+	Name string `json:"name"`
+	// Type is the SourceDefinition that resolved it, carrying the pinned revision
+	// where one was requested, e.g. "configmap@v2".
+	Type string `json:"type,omitempty"`
+	// Phase is Resolved, Stale, Failed or Unused. Stale means a refresh failed and
+	// the previous value is still being served, which is a working Application
+	// with data that has stopped moving - the case a bare healthy/unhealthy cannot
+	// express.
+	Phase string `json:"phase,omitempty"`
+	// Config names the cache entry backing this resolution. Inspect it directly to
+	// see when it last synced.
 	Config string `json:"config,omitempty"`
 	// ExpiresAt is the RFC3339 timestamp when the currently served cache value expires.
 	ExpiresAt string `json:"expiresAt,omitempty"`
-	Message   string `json:"message,omitempty"`
-	// Properties records only source fields actually consumed by this service render.
+	// AutoUpdate reports whether a change to this binding re-dispatches the
+	// components reading it, after the feature gate, the binding's own setting and
+	// any publishVersion pin have all been resolved. When it is false and the
+	// binding asked for true, Message says which of them won.
 	// +optional
-	Properties *runtime.RawExtension `json:"properties,omitempty"`
+	AutoUpdate *bool `json:"autoUpdate,omitempty"`
+	// Message carries the failure when Phase is Failed or Stale, and otherwise
+	// explains a result that would be surprising - most often why AutoUpdate is
+	// false on a binding that asked for true.
+	Message string `json:"message,omitempty"`
+	// ConsumedBy records who read this source and what each of them got.
+	//
+	// Consumption hangs off the source rather than off each consumer because the
+	// consumers do not all have somewhere to put it: a workflow step's status is
+	// workflowv1alpha1.WorkflowStepStatus, owned by the workflow repo, and that
+	// engine is deliberately unaware sources exist - properties are substituted
+	// before it ever sees them.
+	// +optional
+	ConsumedBy []SourceConsumer `json:"consumedBy,omitempty"`
 	// +optional
 	ResolvedFields *runtime.RawExtension `json:"resolvedFields,omitempty"`
+}
+
+// SourceConsumer records one reader of a source and the values it received.
+type SourceConsumer struct {
+	// DefinitionKind is the kind of definition that read it: component, trait,
+	// workflowstep or policy.
+	DefinitionKind string `json:"definitionKind"`
+	// Name identifies the reader within its kind - the component, the step, the
+	// policy. A trait is named "<component>/<trait>", since a trait has no
+	// identity apart from the component it is attached to.
+	Name string `json:"name"`
+	// Type is the reader's own definition type, e.g. "webservice", so a reader can
+	// be understood without cross-referencing the spec.
+	// +optional
+	Type string `json:"type,omitempty"`
+	// Cluster the read happened in. The same binding resolves separately per
+	// cluster when its cache key varies by one, so two entries here may legitimately
+	// hold different values.
+	// +optional
+	Cluster string `json:"cluster,omitempty"`
+	// Values are the source fields this reader actually consumed, keyed by the path
+	// it read. Fields the definition marks sensitive, and any the binding's
+	// statusPolicy masks, are redacted here exactly as they are elsewhere.
+	// +optional
+	Values *runtime.RawExtension `json:"values,omitempty"`
+}
+
+// ComponentSourceStatus records what one component render consumed from a
+// source. Whether the source resolved, what backs it and when it expires belong
+// to the binding, not to each component reading it, and live on
+// AppStatus.Sources - repeating them per component made a source a component did
+// not read indistinguishable from one that failed.
+type ComponentSourceStatus struct {
+	// Name is the spec.sources[] binding.
+	Name string `json:"name"`
+	// Properties records only the source fields this component's render consumed.
+	// +optional
+	Properties *runtime.RawExtension `json:"properties,omitempty"`
 }
 
 // Revision has name and revision number
@@ -302,6 +365,15 @@ type AppStatus struct {
 	// Format: "application-policies-{namespace}-{name}"
 	// +optional
 	ApplicationPoliciesConfigMap string `json:"applicationPoliciesConfigMap,omitempty"`
+
+	// Sources reports each spec.sources[] binding: whether it resolved, what
+	// backs it, when that expires, whether it auto-updates, and who read it.
+	//
+	// Application-level because a binding is declared once for the whole
+	// Application. The per-component list under Services says only what that
+	// component consumed.
+	// +optional
+	Sources []ApplicationSourceStatus `json:"sources,omitempty"`
 
 	// PolicyStatus records the status of policy
 	// Deprecated This field is only used by EnvBinding Policy which is deprecated.

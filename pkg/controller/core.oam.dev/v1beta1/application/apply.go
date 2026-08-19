@@ -69,6 +69,11 @@ type AppHandler struct {
 	appliedResources []common.ClusterObjectReference
 	deletedResources []common.ClusterObjectReference
 
+	// sourceStatuses accumulates one entry per spec.sources[] binding across every
+	// render in this reconcile. Keyed by binding name, because a binding is
+	// declared once for the whole Application even though many surfaces read it.
+	sourceStatuses map[string]*common.ApplicationSourceStatus
+
 	// Application-scoped PolicyDefinitions that were resolved and applied
 	// These need to be stored in the ApplicationRevision for version pinning
 	applicationScopedPolicyDefs map[string]*v1beta1.PolicyDefinition
@@ -343,15 +348,6 @@ func (h *AppHandler) collectHealthStatus(ctx context.Context, comp *appfile.Comp
 		isHealth = true
 		err      error
 	)
-	if len(h.app.Spec.Sources) > 0 {
-		status.Sources = make([]common.ApplicationSourceStatus, 0, len(h.app.Spec.Sources))
-		for _, src := range h.app.Spec.Sources {
-			status.Sources = append(status.Sources, common.ApplicationSourceStatus{
-				Name: src.Name,
-				Type: src.Type,
-			})
-		}
-	}
 
 	status = h.getServiceStatus(status)
 	if !skipWorkload {
@@ -457,76 +453,167 @@ collectNext:
 	return &status, output, outputs, isHealth, nil
 }
 
+// consumedValues renders what one reader took from a source, with sensitive and
+// masked paths redacted. Nil when the binding's statusPolicy withholds values or
+// nothing was consumed.
+func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus) *runtime.RawExtension {
+	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues && !src.StatusPolicy.ExposeResolvedFields {
+		return nil
+	}
+	if len(rs.ConsumedFields) == 0 {
+		return nil
+	}
+	maskPaths := append([]string{}, rs.SensitivePaths...)
+	if src.StatusPolicy != nil {
+		maskPaths = append(maskPaths, src.StatusPolicy.MaskPaths...)
+	}
+	maskSet := make(map[string]struct{}, len(maskPaths))
+	for _, p := range maskPaths {
+		if p != "" {
+			maskSet[p] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(rs.ConsumedFields))
+	for p := range rs.ConsumedFields {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	props := make(map[string]interface{}, len(paths))
+	for _, p := range paths {
+		val := rs.ConsumedFields[p]
+		if maskedPath(p, maskSet) {
+			val = "***"
+		}
+		props[p] = val
+	}
+	raw, err := mapToRawExtension(props)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// recordSourceResolution folds one render's source resolution into the
+// Application-level view, and notes who read what.
+//
+// Called for every surface that resolves sources, not just components: a
+// workflow step has nowhere of its own to report, since its status type belongs
+// to the workflow repo and that engine is deliberately unaware sources exist.
+func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster string,
+	resolved map[string]cuedefinition.SourceResolutionStatus) {
+	if len(resolved) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.sourceStatuses == nil {
+		h.sourceStatuses = map[string]*common.ApplicationSourceStatus{}
+	}
+	for _, src := range h.app.Spec.Sources {
+		rs, ok := resolved[src.Name]
+		if !ok {
+			continue
+		}
+		entry := h.sourceStatuses[src.Name]
+		if entry == nil {
+			entry = &common.ApplicationSourceStatus{Name: src.Name, Type: src.Type}
+			h.sourceStatuses[src.Name] = entry
+		}
+		if rs.Type != "" {
+			entry.Type = rs.Type
+		}
+		// Later renders overwrite: within a reconcile they resolve the same
+		// binding, and a failure seen by any reader is the one worth surfacing.
+		if rs.Phase != "" && (entry.Phase == "" || rs.Phase == sourcePhaseFailed) {
+			entry.Phase = rs.Phase
+		}
+		if rs.Message != "" {
+			entry.Message = rs.Message
+		}
+		if rs.Config != "" {
+			entry.Config = rs.Config
+		}
+		if rs.ExpiresAt != "" {
+			entry.ExpiresAt = rs.ExpiresAt
+		}
+		if len(rs.ConsumedFields) == 0 {
+			continue
+		}
+		entry.ConsumedBy = append(entry.ConsumedBy, common.SourceConsumer{
+			DefinitionKind: kind,
+			Name:           name,
+			Type:           readerType,
+			Cluster:        cluster,
+			Values:         consumedValues(src, rs),
+		})
+	}
+}
+
+// sourceStatusList renders the accumulated view in spec order, so the report
+// reads in the order the bindings were declared rather than in map order.
+//
+// A binding nothing read still appears, as Unused. Silence would be ambiguous
+// with a binding that failed.
+func (h *AppHandler) sourceStatusList() []common.ApplicationSourceStatus {
+	if len(h.app.Spec.Sources) == 0 {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]common.ApplicationSourceStatus, 0, len(h.app.Spec.Sources))
+	autoUpdateDefault := sourceAutoUpdateDefault()
+	_, pinned := h.app.GetAnnotations()[oam.AnnotationPublishVersion]
+	for _, src := range h.app.Spec.Sources {
+		entry := common.ApplicationSourceStatus{Name: src.Name, Type: src.Type, Phase: sourcePhaseUnused}
+		if got := h.sourceStatuses[src.Name]; got != nil {
+			entry = *got
+			if entry.Phase == "" {
+				entry.Phase = sourcePhaseResolved
+			}
+		}
+		wanted := sourceAutoUpdateEnabled(src, autoUpdateDefault)
+		effective := wanted && !pinned
+		entry.AutoUpdate = &effective
+		// A bool cannot say why it is false, so where the binding asked for
+		// auto-update and did not get it, the message carries the reason. Without
+		// this the three ways to end up false - gate off, opted out, pinned - are
+		// indistinguishable, which is exactly the diagnosis that is expensive.
+		if wanted && pinned && entry.Message == "" {
+			entry.Message = "autoUpdate suppressed: the Application is pinned by app.oam.dev/publishVersion"
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// mergeSourceResolutionStatus records what this component's render consumed, and
+// nothing else.
+//
+// Whether a binding resolved, what backs it and when that expires belong to the
+// binding rather than to each component reading it, and are reported once on
+// AppStatus.Sources. Repeating them per component made a source a component did
+// not read look identical to one that failed, and multiplied the same facts by
+// the number of components.
 func (h *AppHandler) mergeSourceResolutionStatus(comp *appfile.Component, status *common.ApplicationComponentStatus) {
 	if len(h.app.Spec.Sources) == 0 || comp == nil || comp.Ctx == nil {
 		return
 	}
-	byName := map[string]common.ApplicationSourceStatus{}
-	for _, src := range status.Sources {
-		byName[src.Name] = src
-	}
-	for _, src := range h.app.Spec.Sources {
-		if _, ok := byName[src.Name]; !ok {
-			byName[src.Name] = common.ApplicationSourceStatus{
-				Name: src.Name,
-				Type: src.Type,
-			}
-		}
-	}
 	resolvedStatuses, _ := comp.Ctx.GetData(cuedefinition.SourceResolutionStatusKey).(map[string]cuedefinition.SourceResolutionStatus)
+	h.recordSourceResolution(sourceKindComponent, status.Name, comp.Type, status.Cluster, resolvedStatuses)
+	consumed := make([]common.ComponentSourceStatus, 0, len(h.app.Spec.Sources))
 	for _, src := range h.app.Spec.Sources {
-		current := byName[src.Name]
-		current.Type = src.Type
-		if rs, ok := resolvedStatuses[src.Name]; ok {
-			current.Message = rs.Message
-			current.Config = rs.Config
-			current.ExpiresAt = rs.ExpiresAt
-			if rs.Type != "" {
-				current.Type = rs.Type
-			}
-			current.ResolvedFields = nil
-			current.Properties = nil
-
-			maskPaths := append([]string{}, rs.SensitivePaths...)
-			if src.StatusPolicy != nil {
-				maskPaths = append(maskPaths, src.StatusPolicy.MaskPaths...)
-			}
-			maskSet := make(map[string]struct{}, len(maskPaths))
-			for _, p := range maskPaths {
-				if p == "" {
-					continue
-				}
-				maskSet[p] = struct{}{}
-			}
-			exposeValues := src.StatusPolicy == nil ||
-				src.StatusPolicy.ExposeConsumedValues ||
-				src.StatusPolicy.ExposeResolvedFields
-			if exposeValues && len(rs.ConsumedFields) > 0 {
-				paths := make([]string, 0, len(rs.ConsumedFields))
-				for p := range rs.ConsumedFields {
-					paths = append(paths, p)
-				}
-				sort.Strings(paths)
-				props := make(map[string]interface{}, len(paths))
-				for _, p := range paths {
-					val := rs.ConsumedFields[p]
-					if maskedPath(p, maskSet) {
-						val = "***"
-					}
-					props[p] = val
-				}
-				if raw, err := mapToRawExtension(props); err == nil {
-					current.Properties = raw
-				}
-			}
+		rs, ok := resolvedStatuses[src.Name]
+		if !ok || len(rs.ConsumedFields) == 0 {
+			// Not read by this component. Saying nothing is the honest report;
+			// an empty entry reads as a failure.
+			continue
 		}
-		byName[src.Name] = current
+		consumed = append(consumed, common.ComponentSourceStatus{
+			Name:       src.Name,
+			Properties: consumedValues(src, rs),
+		})
 	}
-	merged := make([]common.ApplicationSourceStatus, 0, len(h.app.Spec.Sources))
-	for _, src := range h.app.Spec.Sources {
-		merged = append(merged, byName[src.Name])
-	}
-	status.Sources = merged
+	status.Sources = consumed
 }
 
 // maskedPath reports whether a consumed field is covered by a mask, either
@@ -767,3 +854,19 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 	}
 	return nil
 }
+
+// Phases reported on AppStatus.Sources.
+const (
+	sourcePhaseResolved = "Resolved"
+	sourcePhaseStale    = "Stale"
+	sourcePhaseFailed   = "Failed"
+	sourcePhaseUnused   = "Unused"
+)
+
+// Definition kinds reported on SourceConsumer.
+const (
+	sourceKindComponent    = "component"
+	sourceKindTrait        = "trait"
+	sourceKindWorkflowStep = "workflowstep"
+	sourceKindPolicy       = "policy"
+)

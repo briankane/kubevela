@@ -252,6 +252,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	handler.addAppliedResource(true, app.Status.AppliedResources...)
 	app.Status.AppliedResources = handler.appliedResources
 
+	// One row per declared binding, gathered from every surface that resolved
+	// one during this reconcile.
+	app.Status.Sources = handler.sourceStatusList()
+
 	// Remove services[] entries for components that no longer exist in spec
 	filteredServices, componentsRemoved := filterRemovedComponentsFromStatus(
 		app.Spec.Components,

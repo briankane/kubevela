@@ -735,29 +735,21 @@ spec:
                               type: array
                             sources:
                               items:
-                                description: ApplicationSourceStatus records source
-                                  resolution status.
+                                description: |-
+                                  ComponentSourceStatus records what one component render consumed from a
+                                  source. Whether the source resolved, what backs it and when it expires belong
+                                  to the binding, not to each component reading it, and live on
+                                  AppStatus.Sources - repeating them per component made a source a component did
+                                  not read indistinguishable from one that failed.
                                 properties:
-                                  config:
-                                    type: string
-                                  expiresAt:
-                                    description: ExpiresAt is the RFC3339 timestamp
-                                      when the currently served cache value expires.
-                                    type: string
-                                  message:
-                                    type: string
                                   name:
+                                    description: Name is the spec.sources[] binding.
                                     type: string
                                   properties:
-                                    description: Properties records only source fields
-                                      actually consumed by this service render.
+                                    description: Properties records only the source
+                                      fields this component's render consumed.
                                     type: object
                                     x-kubernetes-preserve-unknown-fields: true
-                                  resolvedFields:
-                                    type: object
-                                    x-kubernetes-preserve-unknown-fields: true
-                                  type:
-                                    type: string
                                 required:
                                 - name
                                 type: object
@@ -802,6 +794,110 @@ spec:
                               type: boolean
                           required:
                           - healthy
+                          - name
+                          type: object
+                        type: array
+                      sources:
+                        description: |-
+                          Sources reports each spec.sources[] binding: whether it resolved, what
+                          backs it, when that expires, whether it auto-updates, and who read it.
+
+                          Application-level because a binding is declared once for the whole
+                          Application. The per-component list under Services says only what that
+                          component consumed.
+                        items:
+                          description: ApplicationSourceStatus records source resolution
+                            status.
+                          properties:
+                            autoUpdate:
+                              description: |-
+                                AutoUpdate reports whether a change to this binding re-dispatches the
+                                components reading it, after the feature gate, the binding's own setting and
+                                any publishVersion pin have all been resolved. When it is false and the
+                                binding asked for true, Message says which of them won.
+                              type: boolean
+                            config:
+                              description: |-
+                                Config names the cache entry backing this resolution. Inspect it directly to
+                                see when it last synced.
+                              type: string
+                            consumedBy:
+                              description: |-
+                                ConsumedBy records who read this source and what each of them got.
+
+                                Consumption hangs off the source rather than off each consumer because the
+                                consumers do not all have somewhere to put it: a workflow step's status is
+                                workflowv1alpha1.WorkflowStepStatus, owned by the workflow repo, and that
+                                engine is deliberately unaware sources exist - properties are substituted
+                                before it ever sees them.
+                              items:
+                                description: SourceConsumer records one reader of
+                                  a source and the values it received.
+                                properties:
+                                  cluster:
+                                    description: |-
+                                      Cluster the read happened in. The same binding resolves separately per
+                                      cluster when its cache key varies by one, so two entries here may legitimately
+                                      hold different values.
+                                    type: string
+                                  definitionKind:
+                                    description: |-
+                                      DefinitionKind is the kind of definition that read it: component, trait,
+                                      workflowstep or policy.
+                                    type: string
+                                  name:
+                                    description: |-
+                                      Name identifies the reader within its kind - the component, the step, the
+                                      policy. A trait is named "<component>/<trait>", since a trait has no
+                                      identity apart from the component it is attached to.
+                                    type: string
+                                  type:
+                                    description: |-
+                                      Type is the reader's own definition type, e.g. "webservice", so a reader can
+                                      be understood without cross-referencing the spec.
+                                    type: string
+                                  values:
+                                    description: |-
+                                      Values are the source fields this reader actually consumed, keyed by the path
+                                      it read. Fields the definition marks sensitive, and any the binding's
+                                      statusPolicy masks, are redacted here exactly as they are elsewhere.
+                                    type: object
+                                    x-kubernetes-preserve-unknown-fields: true
+                                required:
+                                - definitionKind
+                                - name
+                                type: object
+                              type: array
+                            expiresAt:
+                              description: ExpiresAt is the RFC3339 timestamp when
+                                the currently served cache value expires.
+                              type: string
+                            message:
+                              description: |-
+                                Message carries the failure when Phase is Failed or Stale, and otherwise
+                                explains a result that would be surprising - most often why AutoUpdate is
+                                false on a binding that asked for true.
+                              type: string
+                            name:
+                              description: Name is the spec.sources[] binding this
+                                reports on.
+                              type: string
+                            phase:
+                              description: |-
+                                Phase is Resolved, Stale, Failed or Unused. Stale means a refresh failed and
+                                the previous value is still being served, which is a working Application
+                                with data that has stopped moving - the case a bare healthy/unhealthy cannot
+                                express.
+                              type: string
+                            resolvedFields:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            type:
+                              description: |-
+                                Type is the SourceDefinition that resolved it, carrying the pinned revision
+                                where one was requested, e.g. "configmap@v2".
+                              type: string
+                          required:
                           - name
                           type: object
                         type: array
