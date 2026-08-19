@@ -79,16 +79,27 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 	fmt.Fprintf(out, "Sources of %s/%s:\n\n", namespace, appName)
 	summary := tablewriter.NewWriter(out)
 	summary.SetColWidth(60)
-	summary.SetHeader([]string{"NAME", "TYPE", "PHASE", "AUTO-UPDATE", "EXPIRES", "CACHE ENTRY"})
+	// One row per cache entry, not per binding. A binding keyed on the cluster has
+	// an entry per cluster, each with its own expiry and its own state, and one
+	// row could only ever show one of them.
+	summary.SetHeader([]string{"NAME", "TYPE", "PHASE", "AUTO-UPDATE", "CLUSTERS", "EXPIRES", "CACHE ENTRY"})
 	for _, src := range sources {
-		summary.Append([]string{
-			src.Name,
-			orDash(src.Type),
-			orDash(src.Phase),
-			formatAutoUpdate(src.AutoUpdate),
-			orDash(src.ExpiresAt),
-			orDash(src.Config),
-		})
+		if len(src.Resolutions) == 0 {
+			summary.Append([]string{src.Name, orDash(src.Type), orDash(src.Phase),
+				formatAutoUpdate(src.AutoUpdate), "-", "-", "-"})
+			continue
+		}
+		for i, res := range src.Resolutions {
+			// The binding's own columns are printed once, against its first entry,
+			// so a fanned-out source reads as one thing with several entries rather
+			// than as several sources.
+			name, typ, auto := "", "", ""
+			if i == 0 {
+				name, typ, auto = src.Name, orDash(src.Type), formatAutoUpdate(src.AutoUpdate)
+			}
+			summary.Append([]string{name, typ, orDash(res.Phase), auto,
+				orDash(strings.Join(res.Clusters, ",")), orDash(res.ExpiresAt), orDash(res.Config)})
+		}
 	}
 	summary.Render()
 
@@ -98,6 +109,11 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 	for _, src := range sources {
 		if src.Message != "" {
 			fmt.Fprintf(out, "\n%s: %s\n", src.Name, src.Message)
+		}
+		for _, res := range src.Resolutions {
+			if res.Message != "" {
+				fmt.Fprintf(out, "\n%s (%s): %s\n", src.Name, orDash(res.Config), res.Message)
+			}
 		}
 	}
 
@@ -244,14 +260,16 @@ func sourceIndicator(phase string) string {
 // printSourcesOverview lists each declared binding and how it is doing, in the
 // default status view.
 //
-// Name, type and an indicator only. Anything more - which cache entry, when it
+// Name, type and an indicator. Anything more - which cache entry, when it
 // expires, who consumed what - belongs to --sources, and putting it here made
 // the block compete with Services for attention when it is meant to sit
 // alongside it.
 //
-// One line per binding rather than per cluster, because a binding is declared
-// once for the whole Application. Where it resolves differently per cluster the
-// indicator shows the worst of them, and --sources says which.
+// A binding that resolved differently in different clusters gets a line per
+// cluster underneath, because that is precisely the case a single worst-of
+// indicator cannot express: "one of your clusters cannot reach this" and "none
+// of them can" are the same mark otherwise. A binding that resolved the same way
+// everywhere stays one line, so the common case is unaffected.
 func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application) {
 	if len(app.Spec.Sources) == 0 {
 		return
@@ -273,6 +291,25 @@ func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application)
 			}
 		}
 		ioStreams.Infof("  - %s %s (%s)\n", sourceIndicator(phase), declared.Name, orDash(shown))
+		for _, res := range dividedResolutions(src) {
+			ioStreams.Infof("      %s %s\n", sourceIndicator(res.Phase),
+				orDash(strings.Join(res.Clusters, ", ")))
+		}
 	}
 	ioStreams.Infof("\n")
+}
+
+// dividedResolutions returns the per-entry breakdown worth showing, and nothing
+// when the binding resolved the same way everywhere.
+func dividedResolutions(src common.ApplicationSourceStatus) []common.SourceResolution {
+	if len(src.Resolutions) < 2 {
+		return nil
+	}
+	first := src.Resolutions[0].Phase
+	for _, res := range src.Resolutions[1:] {
+		if res.Phase != first {
+			return src.Resolutions
+		}
+	}
+	return nil
 }

@@ -795,11 +795,6 @@ spec:
                                 any publishVersion pin have all been resolved. When it is false and the
                                 binding asked for true, Message says which of them won.
                               type: boolean
-                            config:
-                              description: |-
-                                Config names the cache entry backing this resolution. Inspect it directly to
-                                see when it last synced.
-                              type: string
                             consumedBy:
                               description: |-
                                 ConsumedBy records who read this source and what each of them got.
@@ -880,15 +875,11 @@ spec:
                                 - name
                                 type: object
                               type: array
-                            expiresAt:
-                              description: ExpiresAt is the RFC3339 timestamp when
-                                the currently served cache value expires.
-                              type: string
                             message:
                               description: |-
-                                Message carries the failure when Phase is Failed or Stale, and otherwise
-                                explains a result that would be surprising - most often why AutoUpdate is
-                                false on a binding that asked for true.
+                                Message explains a result about the binding as a whole - most often why
+                                AutoUpdate is false on a binding that asked for true. A failure to resolve
+                                belongs to the entry that failed, and is reported on that Resolution.
                               type: string
                             name:
                               description: Name is the spec.sources[] binding this
@@ -901,6 +892,48 @@ spec:
                                 with data that has stopped moving - the case a bare healthy/unhealthy cannot
                                 express.
                               type: string
+                            resolutions:
+                              description: |-
+                                Resolutions are the cache entries backing this binding.
+
+                                More than one when the binding's cache key varies by something that varies -
+                                most often the cluster, since a source keying on context.cluster resolves
+                                separately in each. Collapsing them into a single config and expiry meant
+                                status named one entry when there were three, and named it arbitrarily.
+                              items:
+                                description: |-
+                                  SourceResolution is one cache entry backing a binding, and the state of it.
+
+                                  Keyed by the entry rather than by cluster because the entry is what a
+                                  resolution is: two clusters resolving a cluster-keyed source have two entries,
+                                  and two clusters resolving a source that ignores the cluster share one.
+                                properties:
+                                  clusters:
+                                    description: |-
+                                      Clusters this entry served. More than one where the source's cache key does
+                                      not vary by cluster, in which case they genuinely share it.
+                                    items:
+                                      type: string
+                                    type: array
+                                  config:
+                                    description: Config names the cache entry. Inspect
+                                      it directly to see when it last synced.
+                                    type: string
+                                  expiresAt:
+                                    description: ExpiresAt is the RFC3339 timestamp
+                                      when this entry's value expires.
+                                    type: string
+                                  message:
+                                    description: Message carries the failure when
+                                      this entry is Failed or Stale.
+                                    type: string
+                                  phase:
+                                    description: |-
+                                      Phase is Resolved, Stale or Failed for this entry specifically. The binding's
+                                      own Phase is the worst of these.
+                                    type: string
+                                type: object
+                              type: array
                             resolvedFields:
                               type: object
                               x-kubernetes-preserve-unknown-fields: true

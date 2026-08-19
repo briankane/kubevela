@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -90,6 +91,7 @@ func sourcesFixture() *v1beta1.Application {
 		Spec:       v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{{Name: "registry"}}},
 		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{{
 			Name: "registry", Type: "configmap@v2", Phase: "Resolved", AutoUpdate: &yes,
+			Resolutions: []common.SourceResolution{{Config: "cm-local-a1", Clusters: []string{"local"}, Phase: "Resolved"}},
 			ConsumedBy: []common.SourceConsumer{
 				{DefinitionKind: "component", Name: "web", Cluster: "local", Namespace: "prod",
 					Values: []common.SourceValue{{Property: "image", SourceAttr: "data.image",
@@ -197,4 +199,53 @@ func TestPrintSourcesOverview(t *testing.T) {
 	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf},
 		&v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: "b"}})
 	r.Empty(buf.String())
+}
+
+// A binding fanned across clusters has an entry per cluster, each with its own
+// expiry and its own state. Collapsing them named one arbitrarily.
+func TestDividedResolutionsOnlyWhenTheyDiffer(t *testing.T) {
+	r := require.New(t)
+	same := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
+		{Config: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+		{Config: "b", Clusters: []string{"us-east"}, Phase: "Resolved"},
+	}}
+	r.Nil(dividedResolutions(same), "resolving the same way everywhere stays one line")
+
+	split := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
+		{Config: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+		{Config: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
+	}}
+	r.Len(dividedResolutions(split), 2, "one cluster failing must be distinguishable from all of them failing")
+
+	single := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
+		{Config: "a", Clusters: []string{"local"}, Phase: "Failed"},
+	}}
+	r.Nil(dividedResolutions(single), "a single-cluster app gains nothing from a breakdown")
+}
+
+func TestPrintSourcesOverviewSplitsDivergentClusters(t *testing.T) {
+	r := require.New(t)
+	app := &v1beta1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "prod"},
+		Spec: v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{
+			{Name: "registry", Type: "configmap"}, {Name: "steady", Type: "configmap"},
+		}},
+		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{
+			{Name: "registry", Type: "configmap", Phase: "Failed", Resolutions: []common.SourceResolution{
+				{Config: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+				{Config: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
+			}},
+			{Name: "steady", Type: "configmap", Phase: "Resolved", Resolutions: []common.SourceResolution{
+				{Config: "c", Clusters: []string{"eu-west"}, Phase: "Resolved"},
+				{Config: "d", Clusters: []string{"us-east"}, Phase: "Resolved"},
+			}},
+		}},
+	}
+	var buf bytes.Buffer
+	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf}, app)
+	out := buf.String()
+	r.Contains(out, "eu-west")
+	r.Contains(out, "us-east")
+	// The binding that behaved the same everywhere stays a single line.
+	r.Equal(1, strings.Count(out, "steady"))
 }

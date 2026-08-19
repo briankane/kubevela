@@ -59,7 +59,8 @@ func TestSourceStatusListReportsEveryBindingOnce(t *testing.T) {
 	r.Len(out, 2, "one row per declared binding, in spec order")
 	r.Equal("registry", out[0].Name)
 	r.Equal(sourcePhaseResolved, out[0].Phase)
-	r.Equal("configmap-local-default-abc", out[0].Config)
+	r.Len(out[0].Resolutions, 1, "both readers hit the same cache entry, so it is one resolution")
+	r.Equal("configmap-local-default-abc", out[0].Resolutions[0].Config)
 	r.Len(out[0].ConsumedBy, 2, "both readers recorded against the one binding")
 	r.Equal(sourceKindComponent, out[0].ConsumedBy[0].DefinitionKind)
 	r.Equal("webservice", out[0].ConsumedBy[0].Type)
@@ -107,8 +108,12 @@ func TestSourceStatusListPrefersAFailure(t *testing.T) {
 		})
 
 	out := h.sourceStatusList()
-	r.Equal(sourcePhaseFailed, out[0].Phase)
-	r.Equal("fetch timed out", out[0].Message)
+	r.Equal(sourcePhaseFailed, out[0].Phase, "a failure anywhere is the binding's phase")
+	// The reason belongs to the entry that failed. The binding's own Message is
+	// for things about the binding, like why autoUpdate did not take effect.
+	r.Empty(out[0].Message)
+	r.Len(out[0].Resolutions, 1)
+	r.Equal("fetch timed out", out[0].Resolutions[0].Message)
 }
 
 func TestSourceStatusAutoUpdateIsResolvedNotDeclared(t *testing.T) {
@@ -251,4 +256,76 @@ func TestConsumerRecordsItsPlacement(t *testing.T) {
 	r.Equal("local", consumers[0].Cluster)
 	r.ElementsMatch([]string{"team-a", "team-b"},
 		[]string{consumers[0].Namespace, consumers[1].Namespace})
+}
+
+// A binding keyed on the cluster resolves separately in each, with its own cache
+// entry and its own expiry. Collapsing them into one config and one expiry meant
+// status named one of three, and named it by whichever cluster reconciled last.
+func TestResolutionsAreKeyedByCacheEntry(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "configmap"})
+
+	for _, c := range []struct{ cluster, config, expires string }{
+		{"eu-west", "cfg-eu-west-a1", "2026-08-19T16:00:00Z"},
+		{"us-east", "cfg-us-east-b2", "2026-08-19T17:00:00Z"},
+	} {
+		h.recordSourceResolution(sourceKindComponent, "web", "webservice", c.cluster, "prod",
+			map[string]cuedefinition.SourceResolutionStatus{
+				"cfg": {Name: "cfg", Phase: sourcePhaseResolved, Config: c.config, ExpiresAt: c.expires,
+					ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
+			})
+	}
+
+	got := h.sourceStatusList()[0]
+	r.Len(got.Resolutions, 2, "two clusters, two cache entries, two expiries")
+	r.ElementsMatch([]string{"cfg-eu-west-a1", "cfg-us-east-b2"},
+		[]string{got.Resolutions[0].Config, got.Resolutions[1].Config})
+	r.Equal([]string{"eu-west"}, got.Resolutions[0].Clusters)
+}
+
+// A source whose cache key ignores the cluster genuinely shares one entry, so
+// keying resolutions by cluster would invent a second and report one expiry
+// twice.
+func TestASharedCacheEntryIsOneResolution(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "git-file"})
+
+	for _, cluster := range []string{"eu-west", "us-east"} {
+		h.recordSourceResolution(sourceKindComponent, "web", "webservice", cluster, "prod",
+			map[string]cuedefinition.SourceResolutionStatus{
+				"cfg": {Name: "cfg", Phase: sourcePhaseResolved, Config: "git-file-shared",
+					ConsumedFields: map[string]interface{}{"content": "x"}},
+			})
+	}
+
+	got := h.sourceStatusList()[0]
+	r.Len(got.Resolutions, 1)
+	r.ElementsMatch([]string{"eu-west", "us-east"}, got.Resolutions[0].Clusters)
+}
+
+// The binding's own phase is the worst any cluster saw, so which cluster
+// reconciled last cannot decide whether the Application looks healthy.
+func TestBindingPhaseIsTheWorstAcrossClusters(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "configmap"})
+
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "eu-west", "prod",
+		map[string]cuedefinition.SourceResolutionStatus{
+			"cfg": {Name: "cfg", Phase: sourcePhaseFailed, Config: "cfg-eu", Message: "i/o timeout"},
+		})
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "us-east", "prod",
+		map[string]cuedefinition.SourceResolutionStatus{
+			"cfg": {Name: "cfg", Phase: sourcePhaseResolved, Config: "cfg-us"},
+		})
+
+	got := h.sourceStatusList()[0]
+	r.Equal(sourcePhaseFailed, got.Phase, "one cluster failing is a failure")
+	// ...and the failure stays attached to the entry that failed, not to the binding.
+	for _, res := range got.Resolutions {
+		if res.Config == "cfg-eu" {
+			r.Equal("i/o timeout", res.Message)
+		} else {
+			r.Empty(res.Message)
+		}
+	}
 }

@@ -212,20 +212,23 @@ type ApplicationSourceStatus struct {
 	// with data that has stopped moving - the case a bare healthy/unhealthy cannot
 	// express.
 	Phase string `json:"phase,omitempty"`
-	// Config names the cache entry backing this resolution. Inspect it directly to
-	// see when it last synced.
-	Config string `json:"config,omitempty"`
-	// ExpiresAt is the RFC3339 timestamp when the currently served cache value expires.
-	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Resolutions are the cache entries backing this binding.
+	//
+	// More than one when the binding's cache key varies by something that varies -
+	// most often the cluster, since a source keying on context.cluster resolves
+	// separately in each. Collapsing them into a single config and expiry meant
+	// status named one entry when there were three, and named it arbitrarily.
+	// +optional
+	Resolutions []SourceResolution `json:"resolutions,omitempty"`
 	// AutoUpdate reports whether a change to this binding re-dispatches the
 	// components reading it, after the feature gate, the binding's own setting and
 	// any publishVersion pin have all been resolved. When it is false and the
 	// binding asked for true, Message says which of them won.
 	// +optional
 	AutoUpdate *bool `json:"autoUpdate,omitempty"`
-	// Message carries the failure when Phase is Failed or Stale, and otherwise
-	// explains a result that would be surprising - most often why AutoUpdate is
-	// false on a binding that asked for true.
+	// Message explains a result about the binding as a whole - most often why
+	// AutoUpdate is false on a binding that asked for true. A failure to resolve
+	// belongs to the entry that failed, and is reported on that Resolution.
 	Message string `json:"message,omitempty"`
 	// ConsumedBy records who read this source and what each of them got.
 	//
@@ -272,6 +275,29 @@ type SourceConsumer struct {
 	// statusPolicy masks, are redacted here exactly as they are elsewhere.
 	// +optional
 	Values []SourceValue `json:"values,omitempty"`
+}
+
+// SourceResolution is one cache entry backing a binding, and the state of it.
+//
+// Keyed by the entry rather than by cluster because the entry is what a
+// resolution is: two clusters resolving a cluster-keyed source have two entries,
+// and two clusters resolving a source that ignores the cluster share one.
+type SourceResolution struct {
+	// Config names the cache entry. Inspect it directly to see when it last synced.
+	Config string `json:"config,omitempty"`
+	// Clusters this entry served. More than one where the source's cache key does
+	// not vary by cluster, in which case they genuinely share it.
+	// +optional
+	Clusters []string `json:"clusters,omitempty"`
+	// Phase is Resolved, Stale or Failed for this entry specifically. The binding's
+	// own Phase is the worst of these.
+	Phase string `json:"phase,omitempty"`
+	// ExpiresAt is the RFC3339 timestamp when this entry's value expires.
+	// +optional
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Message carries the failure when this entry is Failed or Stale.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // SourceValue is one value taken from a source: what was read and where it went.

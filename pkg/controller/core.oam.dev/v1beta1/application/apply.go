@@ -568,20 +568,13 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, nam
 		if rs.Type != "" {
 			entry.Type = rs.Type
 		}
-		// Later renders overwrite: within a reconcile they resolve the same
-		// binding, and a failure seen by any reader is the one worth surfacing.
+		// The binding's own phase is the worst any reader saw. A source failing in
+		// one cluster and fine in another is a problem, and reporting the last
+		// render's answer would let which cluster reconciled last decide.
 		if rs.Phase != "" && (entry.Phase == "" || rs.Phase == sourcePhaseFailed) {
 			entry.Phase = rs.Phase
 		}
-		if rs.Message != "" {
-			entry.Message = rs.Message
-		}
-		if rs.Config != "" {
-			entry.Config = rs.Config
-		}
-		if rs.ExpiresAt != "" {
-			entry.ExpiresAt = rs.ExpiresAt
-		}
+		mergeResolution(entry, rs, cluster)
 		if len(rs.ConsumedFields) == 0 {
 			continue
 		}
@@ -594,6 +587,56 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, nam
 			Values:         consumerValues(src, rs, "", ""),
 		})
 	}
+}
+
+// mergeResolution folds one render's view of a binding into the per-entry list.
+//
+// Keyed by the cache entry rather than by the cluster, because the entry is what
+// a resolution is: two clusters resolving a cluster-keyed source have two
+// entries and two expiries, while two clusters resolving a source that ignores
+// the cluster share one. Keying by cluster would invent a second entry for the
+// second case and report the same expiry twice.
+func mergeResolution(entry *common.ApplicationSourceStatus, rs cuedefinition.SourceResolutionStatus, cluster string) {
+	if rs.Config == "" && rs.Phase == "" {
+		return
+	}
+	for i := range entry.Resolutions {
+		if entry.Resolutions[i].Config != rs.Config {
+			continue
+		}
+		got := &entry.Resolutions[i]
+		if rs.Phase != "" && (got.Phase == "" || rs.Phase == sourcePhaseFailed) {
+			got.Phase = rs.Phase
+			got.Message = rs.Message
+		}
+		if rs.ExpiresAt != "" {
+			got.ExpiresAt = rs.ExpiresAt
+		}
+		addCluster(got, cluster)
+		return
+	}
+	res := common.SourceResolution{
+		Config:    rs.Config,
+		Phase:     rs.Phase,
+		ExpiresAt: rs.ExpiresAt,
+		Message:   rs.Message,
+	}
+	addCluster(&res, cluster)
+	entry.Resolutions = append(entry.Resolutions, res)
+}
+
+// addCluster records a cluster this entry served, once. A reader with no
+// placement - a workflow step - contributes none.
+func addCluster(res *common.SourceResolution, cluster string) {
+	if cluster == "" {
+		return
+	}
+	for _, c := range res.Clusters {
+		if c == cluster {
+			return
+		}
+	}
+	res.Clusters = append(res.Clusters, cluster)
 }
 
 // sourceStatusList renders the accumulated view in spec order, so the report
