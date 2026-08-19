@@ -725,7 +725,15 @@ func resolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	if err := json.Unmarshal(bt, &normalized); err != nil {
 		return nil, err
 	}
-	return resolveSourceNode(normalized, newSourceResolver(ctx, surface, sourceInputsFromContext(ctx)), "")
+	r := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), surface, sourceInputsFromContext(ctx))
+	out, err := resolveSourceNode(normalized, r, "")
+	// The Application controller reads what resolved back off its own context.
+	// Pushing here rather than inside the resolver keeps that protocol in the
+	// bridge, where the rest of it already lives.
+	if len(r.statuses) > 0 {
+		ctx.PushData(SourceResolutionStatusKey, r.statuses)
+	}
+	return out, err
 }
 
 // resolveSourceNode walks a properties blob, carrying the path it is at so a
@@ -862,7 +870,7 @@ func celEvalProperty(raw string, resolved map[string]map[string]interface{},
 func (r *sourceResolver) expressionContext() map[string]interface{} {
 	out := map[string]interface{}{}
 	for _, field := range sourceexpr.ContextFor(r.surface).ReadableFields() {
-		if v := r.ctx.GetData(field); v != nil {
+		if v := r.ctxValues[field]; v != nil {
 			out[field] = v
 		}
 	}
@@ -897,7 +905,19 @@ func lookupMapPath(data map[string]interface{}, path string) (interface{}, bool)
 }
 
 type sourceResolver struct {
-	ctx process.Context
+	// goCtx carries deadlines and cancellation into the fetches a template
+	// performs.
+	goCtx context.Context
+	// ctxValues is the render context an expression and a template may read,
+	// already narrowed to what the rules allow. A map rather than a
+	// process.Context because reading field values is all either ever did, and
+	// requiring the render's own context type would put this feature out of reach
+	// of anything that is not an Application render.
+	ctxValues map[string]interface{}
+	// statuses accumulates what resolved, for the caller to report. Returned
+	// rather than pushed back onto a context, so a caller that has no context to
+	// push onto still gets it.
+	statuses map[string]SourceResolutionStatus
 	// readerKind and readerName name the thing currently doing the reading when it
 	// is not the surface being rendered. Set while a chained source resolves its
 	// own properties, empty otherwise.
@@ -994,6 +1014,36 @@ type sourceInputs struct {
 	Compiler SourceCompiler
 }
 
+// contextValuesFor flattens the render context into the field values a source may
+// read, which is every field the cache-key rules allow. Narrowing to a surface
+// happens later, when the source's own context block is rendered.
+func contextValuesFor(ctx process.Context) map[string]interface{} {
+	rules, err := cachekey.LoadRules()
+	if err != nil {
+		klog.Warningf("loading cache key rules for source context: %v", err)
+		return map[string]interface{}{}
+	}
+	out := map[string]interface{}{}
+	for _, field := range rules.Fields() {
+		if v := ctx.GetData(field); v != nil {
+			out[field] = v
+		}
+	}
+	// Readable context is a superset of keyed context: a surface may offer fields
+	// an expression can read but a key may not be built from.
+	for _, surface := range sourceexpr.SurfaceNames() {
+		for _, field := range sourceexpr.ContextFor(surface).ReadableFields() {
+			if _, have := out[field]; have {
+				continue
+			}
+			if v := ctx.GetData(field); v != nil {
+				out[field] = v
+			}
+		}
+	}
+	return out
+}
+
 // sourceInputsFromContext reads what the Application controller pushed. It is the
 // bridge from the render context's protocol to explicit inputs, and the only
 // place that protocol is understood.
@@ -1027,7 +1077,7 @@ func sourceInputsFromContext(ctx process.Context) sourceInputs {
 // ctx is still required, for three things that are genuinely the render's: the
 // context values an expression may read, the Go context for I/O, and recording
 // what resolved so status can report it.
-func newSourceResolver(ctx process.Context, surface string, in sourceInputs) *sourceResolver {
+func newSourceResolver(goCtx context.Context, ctxValues map[string]interface{}, surface string, in sourceInputs) *sourceResolver {
 	// Schemas are derived from the templates rather than supplied: they are a
 	// projection of the definition, so accepting them separately would allow the
 	// two to disagree.
@@ -1048,7 +1098,9 @@ func newSourceResolver(ctx process.Context, surface string, in sourceInputs) *so
 	}
 	return &sourceResolver{
 		surface:         surface,
-		ctx:             ctx,
+		goCtx:           goCtx,
+		ctxValues:       ctxValues,
+		statuses:        map[string]SourceResolutionStatus{},
 		compiler:        compiler,
 		sourceProps:     in.Bindings,
 		sourceTypes:     in.Types,
@@ -1147,7 +1199,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	identity := identityInputs{
 		Template:   templateFingerprint(sourceTemplate),
 		Properties: resolvedProps,
-		Context:    identityContext(r.ctx, sourceName, cachePolicy.KeyInputs),
+		Context:    identityContext(r.ctxValues, sourceName, cachePolicy.KeyInputs),
 	}
 	cachePolicy.Key, err = cacheIdentity(cachePolicy.Key, identity)
 	if err != nil {
@@ -1166,12 +1218,12 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	}
 	// A source is compiled against the context the cache-key rules make readable,
 	// not the component's - so it cannot depend on anything the key ignores.
-	c, err := sourceContext(r.ctx, sourceName, r.surface)
+	c, err := sourceContext(r.ctxValues, sourceName, r.surface)
 	if err != nil {
 		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
 		return nil, err
 	}
-	val, err := r.compiler.CompileString(r.ctx.GetCtx(), strings.Join([]string{
+	val, err := r.compiler.CompileString(r.goCtx, strings.Join([]string{
 		renderTemplate(sourceTemplate), paramFile, c,
 	}, "\n"))
 	if err != nil {
@@ -1240,7 +1292,7 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 			paramFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(raw))
 		}
 	}
-	c, err := sourceContext(r.ctx, sourceName, r.surface)
+	c, err := sourceContext(r.ctxValues, sourceName, r.surface)
 	if err != nil {
 		return policy, err
 	}
@@ -1248,7 +1300,7 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 	// resolved WITHOUT running provider functions. Resolving them here would
 	// perform the very I/O the cache exists to avoid - on every reconcile, before
 	// the cache is even consulted.
-	val, err := r.compiler.CompileStringWithOptions(r.ctx.GetCtx(), strings.Join([]string{
+	val, err := r.compiler.CompileStringWithOptions(r.goCtx, strings.Join([]string{
 		renderTemplate(sourceTemplate), paramFile, c,
 	}, "\n"), upstreamcuex.DisableResolveProviderFunctions{})
 	if err != nil {
@@ -1363,7 +1415,7 @@ func (r *sourceResolver) readSourceCache(cacheKey string, ttl time.Duration) (ma
 	if r.cacheStore == nil || cacheKey == "" {
 		return nil, false, false, time.Time{}, nil
 	}
-	return r.cacheStore.Read(r.ctx.GetCtx(), cacheKey, ttl)
+	return r.cacheStore.Read(r.goCtx, cacheKey, ttl)
 }
 
 func (r *sourceResolver) writeSourceCache(cacheKey, sourceType string, data map[string]interface{},
@@ -1371,7 +1423,7 @@ func (r *sourceResolver) writeSourceCache(cacheKey, sourceType string, data map[
 	if r.cacheStore == nil || cacheKey == "" {
 		return nil
 	}
-	namespace, _ := r.ctx.GetData(velaprocess.ContextNamespace).(string)
+	namespace, _ := r.ctxValues[velaprocess.ContextNamespace].(string)
 	meta := velaprocess.SourceCacheWriteMeta{
 		TTL:                ttl,
 		SourceDefName:      sourceType,
@@ -1382,7 +1434,7 @@ func (r *sourceResolver) writeSourceCache(cacheKey, sourceType string, data map[
 		Properties:         identity.Properties,
 		TemplateHash:       identity.Template,
 	}
-	return r.cacheStore.Write(r.ctx.GetCtx(), cacheKey, sourceType, data, meta)
+	return r.cacheStore.Write(r.goCtx, cacheKey, sourceType, data, meta)
 }
 
 // touchSourceCache advances the last-accessed marker for a stale entry that is
@@ -1397,7 +1449,7 @@ func (r *sourceResolver) touchSourceCache(cacheKey string) {
 	if !ok {
 		return
 	}
-	if err := toucher.Touch(r.ctx.GetCtx(), cacheKey); err != nil {
+	if err := toucher.Touch(r.goCtx, cacheKey); err != nil {
 		klog.Warningf("touch source cache failed for %s: %v", cacheKey, err)
 	}
 }
@@ -1652,10 +1704,7 @@ func ShouldTouchSourceCache(annotations map[string]string, now time.Time) bool {
 }
 
 func (r *sourceResolver) setSourceStatus(sourceName, sourceType, phase, message, config, expiresAt string, resolved map[string]interface{}) {
-	statuses, _ := r.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
-	if statuses == nil {
-		statuses = map[string]SourceResolutionStatus{}
-	}
+	statuses := r.statuses
 	current := statuses[sourceName]
 	consumed := current.ConsumedFields
 	if consumed == nil {
@@ -1672,14 +1721,10 @@ func (r *sourceResolver) setSourceStatus(sourceName, sourceType, phase, message,
 		ConsumedFields: consumed,
 		SensitivePaths: append([]string{}, r.sensitivePaths[sourceType]...),
 	}
-	r.ctx.PushData(SourceResolutionStatusKey, statuses)
 }
 
 func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string, v interface{}, property string) {
-	statuses, _ := r.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
-	if statuses == nil {
-		statuses = map[string]SourceResolutionStatus{}
-	}
+	statuses := r.statuses
 	st := statuses[sourceName]
 	if st.Name == "" {
 		st.Name = sourceName
@@ -1702,7 +1747,6 @@ func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string
 		st.SensitivePaths = append([]string{}, r.sensitivePaths[sourceType]...)
 	}
 	statuses[sourceName] = st
-	r.ctx.PushData(SourceResolutionStatusKey, statuses)
 }
 
 // formatExpiry renders a cache expiry, and renders nothing when there is not

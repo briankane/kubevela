@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubevela/workflow/pkg/cue/process"
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
@@ -41,13 +40,13 @@ import (
 // not the consuming component. That is the sense context.name carries everywhere
 // else in KubeVela: the instance being rendered, rather than the definition it
 // instantiates.
-func sourceContextFile(ctx process.Context, bindingName string, fields []string) (string, error) {
+func sourceContextFile(values map[string]interface{}, bindingName string, fields []string) (string, error) {
 	data := map[string]interface{}{}
 	for _, field := range fields {
 		if field == velaprocess.ContextName {
 			continue // supplied below, from the binding rather than the component
 		}
-		if v := ctx.GetData(field); v != nil {
+		if v := values[field]; v != nil {
 			data[field] = v
 		}
 	}
@@ -73,12 +72,12 @@ func sourceContextFile(ctx process.Context, bindingName string, fields []string)
 // An unrecognised surface is treated as offering everything the rules allow,
 // rather than nothing. Failing open matters here: a caller that forgot to name
 // its surface should behave as it did before, not silently lose its context.
-func sourceContext(ctx process.Context, bindingName, surface string) (string, error) {
+func sourceContext(values map[string]interface{}, bindingName, surface string) (string, error) {
 	rules, err := cachekey.LoadRules()
 	if err != nil {
 		return "", err
 	}
-	return sourceContextFile(ctx, bindingName, availableFields(rules.Fields(), surface))
+	return sourceContextFile(values, bindingName, availableFields(rules.Fields(), surface))
 }
 
 // availableFields narrows the rules' field list to those the surface offers.
@@ -104,7 +103,7 @@ func availableFields(fields []string, surface string) []string {
 // permanently cold. A field that is absent contributes nil and one that is
 // present but empty contributes "", because a template may branch on the
 // difference and the identity has to draw it too.
-func identityContext(ctx process.Context, bindingName string, inputs []string) map[string]interface{} {
+func identityContext(values map[string]interface{}, bindingName string, inputs []string) map[string]interface{} {
 	if len(inputs) == 0 {
 		return nil
 	}
@@ -117,9 +116,9 @@ func identityContext(ctx process.Context, bindingName string, inputs []string) m
 		case field == velaprocess.ContextName:
 			value = bindingName
 		case indexed:
-			value = lookupIndex(ctx.GetData(field), index)
+			value = lookupIndex(values[field], index)
 		default:
-			value = ctx.GetData(field)
+			value = values[field]
 		}
 
 		if indexed {

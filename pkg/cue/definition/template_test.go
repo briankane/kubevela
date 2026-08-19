@@ -1858,7 +1858,7 @@ func TestResolveSourceNode(t *testing.T) {
 		"region": `$(source["cluster-info"].region)`,
 		"tier":   `$(source["cluster-info"].nested.tier)`,
 	}
-	resolver := newSourceResolver(process.NewContext(process.ContextData{}), SurfaceComponent, sourceInputs{})
+	resolver := newSourceResolver(context.Background(), map[string]interface{}{}, SurfaceComponent, sourceInputs{})
 	resolver.resolved = sources
 	resolver.sourceTypes = map[string]string{"cluster-info": "cluster"}
 	got, err := resolveSourceNode(in, resolver, "")
@@ -1867,7 +1867,7 @@ func TestResolveSourceNode(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "us-east-1", out["region"])
 	assert.Equal(t, "prod", out["tier"])
-	statuses, _ := resolver.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	statuses := resolver.statuses
 	require.NotNil(t, statuses)
 	assert.Equal(t, "us-east-1", statuses["cluster-info"].ConsumedFields["region"])
 	assert.Equal(t, "prod", statuses["cluster-info"].ConsumedFields["nested.tier"])
@@ -1875,7 +1875,7 @@ func TestResolveSourceNode(t *testing.T) {
 
 func TestResolveChainedSourceProperties(t *testing.T) {
 	ctx := process.NewContext(process.ContextData{})
-	resolver := newSourceResolver(ctx, SurfaceComponent, sourceInputsFromContext(ctx))
+	resolver := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), SurfaceComponent, sourceInputsFromContext(ctx))
 	resolver.sourceTypes = map[string]string{
 		"sourceA": "typeA",
 		"sourceB": "typeB",
@@ -1990,7 +1990,7 @@ func TestResolveSourceUsesStaleCacheOnRefreshFailure(t *testing.T) {
 
 	ctx := process.NewContext(process.ContextData{})
 	ctx.PushData(process.ContextAppSourceCacheStore, NewSecretSourceCacheStore(cli))
-	resolver := newSourceResolver(ctx, SurfaceComponent, sourceInputsFromContext(ctx))
+	resolver := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), SurfaceComponent, sourceInputsFromContext(ctx))
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": resolver_stale_cache_use_template,
@@ -2001,7 +2001,7 @@ func TestResolveSourceUsesStaleCacheOnRefreshFailure(t *testing.T) {
 	out, err := resolver.resolve("s")
 	require.NoError(t, err)
 	require.Equal(t, "cached", out["value"])
-	statuses, _ := resolver.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	statuses := resolver.statuses
 	require.NotNil(t, statuses)
 	assert.Equal(t, cacheKey, statuses["s"].Config)
 	assert.NotEmpty(t, statuses["s"].ExpiresAt)
@@ -2035,7 +2035,7 @@ func TestResolveSourceFailsOnStaleRefreshFailureWhenPolicyFail(t *testing.T) {
 
 	ctx := process.NewContext(process.ContextData{})
 	ctx.PushData(process.ContextAppSourceCacheStore, NewSecretSourceCacheStore(cli))
-	resolver := newSourceResolver(ctx, SurfaceComponent, sourceInputsFromContext(ctx))
+	resolver := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), SurfaceComponent, sourceInputsFromContext(ctx))
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": resolver_stale_cache_fail_template,
@@ -2044,14 +2044,14 @@ func TestResolveSourceFailsOnStaleRefreshFailureWhenPolicyFail(t *testing.T) {
 
 	_, err = resolver.resolve("s")
 	require.Error(t, err)
-	statuses, _ := resolver.ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+	statuses := resolver.statuses
 	require.NotNil(t, statuses)
 	assert.Equal(t, cacheKey, statuses["s"].Config)
 }
 
 func TestResolveSourceSchemaMismatchFails(t *testing.T) {
 	ctx := process.NewContext(process.ContextData{})
-	resolver := newSourceResolver(ctx, SurfaceComponent, sourceInputsFromContext(ctx))
+	resolver := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), SurfaceComponent, sourceInputsFromContext(ctx))
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": `
@@ -2078,7 +2078,7 @@ parameter: {
 
 func TestResolveSourceErrsFieldFails(t *testing.T) {
 	ctx := process.NewContext(process.ContextData{})
-	resolver := newSourceResolver(ctx, SurfaceComponent, sourceInputsFromContext(ctx))
+	resolver := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), SurfaceComponent, sourceInputsFromContext(ctx))
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": `
@@ -2105,9 +2105,10 @@ parameter: {
 	assert.Contains(t, err.Error(), "reported errors")
 	assert.Contains(t, err.Error(), "value must be non-negative, got -1")
 
-	// The authored error is surfaced on the per-source status too.
-	statuses, ok := ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
-	require.True(t, ok)
+	// The authored error is surfaced on the per-source status too. Read off the
+	// resolver: only the bridge pushes these onto a render context, and this test
+	// drives the resolver directly.
+	statuses := resolver.statuses
 	require.Contains(t, statuses, "s")
 	assert.Equal(t, "Failed", statuses["s"].Phase)
 	assert.Contains(t, statuses["s"].Message, "value must be non-negative")
@@ -2115,7 +2116,7 @@ parameter: {
 
 func TestResolveSourceErrsFieldEmptyIsIgnored(t *testing.T) {
 	ctx := process.NewContext(process.ContextData{})
-	resolver := newSourceResolver(ctx, SurfaceComponent, sourceInputsFromContext(ctx))
+	resolver := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), SurfaceComponent, sourceInputsFromContext(ctx))
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": `
@@ -2190,7 +2191,7 @@ output: {v: "hello"}
 	in := sourceInputsFromContext(pCtx)
 	in.Compiler = spy
 
-	r := newSourceResolver(pCtx, SurfaceComponent, in)
+	r := newSourceResolver(pCtx.GetCtx(), contextValuesFor(pCtx), SurfaceComponent, in)
 	if _, err := r.resolve("s"); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -2200,7 +2201,7 @@ output: {v: "hello"}
 
 	// ...and nil still means the workload compiler, so the Application path is
 	// unchanged.
-	plain := newSourceResolver(pCtx, SurfaceComponent, sourceInputsFromContext(pCtx))
+	plain := newSourceResolver(pCtx.GetCtx(), contextValuesFor(pCtx), SurfaceComponent, sourceInputsFromContext(pCtx))
 	if plain.compiler == nil {
 		t.Fatal("a nil compiler must default, not stay nil")
 	}

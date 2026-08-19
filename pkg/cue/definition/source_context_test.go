@@ -29,6 +29,14 @@ import (
 
 // componentContext stands in for the context a component render would produce -
 // including fields a source is not entitled to.
+// componentValues is what a component render offers a source, flattened the way
+// the bridge flattens it. Built from a real process.Context so the test still
+// exercises the same field names the controller pushes.
+func componentValues(t *testing.T) map[string]interface{} {
+	t.Helper()
+	return contextValuesFor(componentContext(t))
+}
+
 func componentContext(t *testing.T) process.Context {
 	t.Helper()
 	ctx := velaprocess.NewContext(velaprocess.ContextData{
@@ -49,7 +57,7 @@ func TestSourceContextIsBuiltFromTheRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading rules: %v", err)
 	}
-	got, err := sourceContextFile(componentContext(t), "backstage", rules.Fields())
+	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
 	if err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
@@ -73,7 +81,7 @@ func TestSourceContextOmitsUnreadableFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading rules: %v", err)
 	}
-	got, err := sourceContextFile(componentContext(t), "backstage", rules.Fields())
+	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
 	if err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
@@ -97,7 +105,7 @@ func TestSourceContextCarriesConsumerIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading rules: %v", err)
 	}
-	got, err := sourceContextFile(componentContext(t), "backstage", rules.Fields())
+	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
 	if err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
@@ -115,7 +123,7 @@ func TestSourceContextNameIsTheBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading rules: %v", err)
 	}
-	got, err := sourceContextFile(componentContext(t), "backstage", rules.Fields())
+	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
 	if err != nil {
 		t.Fatalf("rendering: %v", err)
 	}
