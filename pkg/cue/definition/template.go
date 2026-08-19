@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 
 	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
 	"github.com/oam-dev/kubevela/pkg/features"
@@ -38,7 +37,6 @@ import (
 
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/kubevela/workflow/pkg/cue/model"
@@ -48,6 +46,7 @@ import (
 
 	apitypes "github.com/oam-dev/kubevela/apis/types"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"github.com/oam-dev/kubevela/pkg/cue/task"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
 	"github.com/oam-dev/kubevela/pkg/oam"
@@ -63,8 +62,10 @@ const (
 	PatchFieldName = "patch"
 	// PatchOutputsFieldName is the name of the struct contains the patch of outputs CR data
 	PatchOutputsFieldName = "patchOutputs"
-	// ErrsFieldName check if errors contained in the cue
-	ErrsFieldName = "errs"
+	// ErrsFieldName check if errors contained in the cue. Kept as an alias so
+	// existing callers of definition.ErrsFieldName still compile; the value lives
+	// in pkg/cue/render, shared with source resolution.
+	ErrsFieldName = render.ErrsFieldName
 	// TemplateContextPrefix is the base prefix for storing templates in context
 	TemplateContextPrefix = "template-context-"
 	// SourceResolutionStatusKey stores per-source runtime resolution statuses in process context.
@@ -179,13 +180,13 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 	abstractTemplate, _ = upgrade.EnsureCueVersionCompatibility(abstractTemplate, wd.name, upgrade.ComponentKind, upgrade.TemplateAreaMain)
 
 	val, err := velacuex.WorkloadCompiler.Get().CompileString(ctx.GetCtx(), strings.Join([]string{
-		renderTemplate(abstractTemplate), paramFile, c,
+		render.Template(abstractTemplate), paramFile, c,
 	}, "\n"))
 	if err != nil {
 		return errors.WithMessagef(err, "failed to compile workload %s after merge parameter and context", wd.name)
 	}
 
-	userErrors := extractUserErrors(val, "Workload definition", wd.name)
+	userErrors := render.UserErrors(val, "Workload definition", wd.name)
 
 	validationErr := val.Validate()
 
@@ -382,7 +383,7 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 		return errors.WithMessagef(err, "failed to compile trait %s after merge parameter and context", td.name)
 	}
 
-	userErrors := extractUserErrors(val, "Trait definition", td.name)
+	userErrors := render.UserErrors(val, "Trait definition", td.name)
 
 	validationErr := val.Validate()
 
@@ -546,12 +547,6 @@ func initRoot(contextLabels map[string]string) map[string]interface{} {
 	}
 	return root
 }
-func renderTemplate(templ string) string {
-	return templ + `
-context: _
-parameter: _
-`
-}
 func (td *traitDef) getTemplateContext(ctx process.Context, cli client.Reader, accessor util.NamespaceAccessor) (map[string]interface{}, error) {
 	baseLabels := GetBaseContextLabels(ctx)
 	var root = initRoot(baseLabels)
@@ -688,164 +683,3 @@ func FormatCUEError(err error, messagePrefix string, entityType, entityName stri
 
 	return fmt.Errorf("%s", strings.TrimRight(result.String(), "\n"))
 }
-
-// resolveSourceExpressions substitutes $(...) expressions in a properties blob.
-//
-// surface names the call site, which decides both what a source may read from
-// context and - once the compatibility check lands - whether it may be consumed
-// here at all.
-// extractUserErrors reads the authored `errs:` field ([]string) from a compiled
-// CUE value and returns its non-empty entries. A malformed `errs:` field is
-// logged and treated as empty so error reporting never masks the real result.
-func extractUserErrors(val cue.Value, entityType, entityName string) []string {
-	errs := val.LookupPath(value.FieldPath(ErrsFieldName))
-	if !errs.Exists() {
-		return nil
-	}
-	var userErrors []string
-	if err := errs.Decode(&userErrors); err != nil {
-		klog.Warningf("%s '%s' has malformed 'errs' field (expected []string): %v. Custom error reporting will be skipped.", entityType, entityName, err)
-		return nil
-	}
-	filtered := userErrors[:0]
-	for _, e := range userErrors {
-		if strings.TrimSpace(e) != "" {
-			filtered = append(filtered, e)
-		}
-	}
-	return filtered
-}
-
-// maxAnnotationValueLen caps a single recorded value. Kubernetes budgets 256KB
-// across all annotations on an object; these are diagnostic, so they take a
-// small slice of that and leave the rest to whatever else annotates the entry.
-const maxAnnotationValueLen = 4096
-
-// maxPropertyValueLen caps one property within that budget, so a single large
-// value cannot crowd out every other property.
-// maxPropertyValueLen caps one property within that budget, so a single large
-// value cannot crowd out every other property.
-const maxPropertyValueLen = 512
-
-// renderProperties marshals the binding's properties for the annotation,
-// replacing any value too large to record with a placeholder.
-//
-// Clamping happens per value rather than on the finished JSON, because clipping
-// a JSON document mid-string leaves something no reader can parse - and an
-// annotation that has to be parsed to be useful is worth keeping valid. The
-// placeholder keeps the shape intact and says what was dropped, so a reader
-// still learns which properties distinguish this entry from its neighbours.
-// renderProperties marshals the binding's properties for the annotation,
-// replacing any value too large to record with a placeholder.
-//
-// Clamping happens per value rather than on the finished JSON, because clipping
-// a JSON document mid-string leaves something no reader can parse - and an
-// annotation that has to be parsed to be useful is worth keeping valid. The
-// placeholder keeps the shape intact and says what was dropped, so a reader
-// still learns which properties distinguish this entry from its neighbours.
-func renderProperties(props map[string]interface{}) (string, bool, error) {
-	out := make(map[string]interface{}, len(props))
-	truncated := false
-
-	for name, value := range props {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			out[name] = "<unrepresentable>"
-			truncated = true
-			continue
-		}
-		if len(raw) > maxPropertyValueLen {
-			out[name] = fmt.Sprintf("<omitted: %d bytes>", len(raw))
-			truncated = true
-			continue
-		}
-		out[name] = value
-	}
-
-	raw, err := json.Marshal(out)
-	if err != nil {
-		return "", false, err
-	}
-	// Still over budget, which takes a great many properties rather than one
-	// large one. Record the names alone: valid JSON, and enough to see what the
-	// binding passed.
-	if len(raw) > maxAnnotationValueLen {
-		all := make([]string, 0, len(props))
-		for name := range props {
-			all = append(all, name)
-		}
-		sort.Strings(all)
-
-		// Sorted, then filled to the cap: enough names to be useful, in an order
-		// that is stable across writes so two entries can be compared. Marshalled
-		// each time rather than length-counted, so the result is valid JSON by
-		// construction rather than by arithmetic about quoting and commas.
-		names := []string{}
-		for _, name := range all {
-			candidate, cerr := json.Marshal(append(names, name))
-			if cerr != nil || len(candidate) > maxAnnotationValueLen {
-				break
-			}
-			names = append(names, name)
-		}
-		raw, err = json.Marshal(names)
-		if err != nil {
-			return "", false, err
-		}
-		truncated = true
-	}
-	return string(raw), truncated, nil
-}
-
-// contextLabels renders the identity's context values as labels, so entries can
-// be selected on them.
-//
-// A value is emitted only when both halves are legal: the field name (with the
-// index folded in, for an indexed read) has to be a valid label key, and the
-// value a valid label value. Neither is guaranteed - an index like
-// "example.org/service-name" would put a second slash in the key, and a label
-// value may hold characters that are legal there and illegal here. Whatever is
-// skipped is still recorded whole in AnnotationSourceContext, so nothing is
-// lost; only selectability is.
-// contextLabels renders the identity's context values as labels, so entries can
-// be selected on them.
-//
-// A value is emitted only when both halves are legal: the field name (with the
-// index folded in, for an indexed read) has to be a valid label key, and the
-// value a valid label value. Neither is guaranteed - an index like
-// "example.org/service-name" would put a second slash in the key, and a label
-// value may hold characters that are legal there and illegal here. Whatever is
-// skipped is still recorded whole in AnnotationSourceContext, so nothing is
-// lost; only selectability is.
-func contextLabels(ctx map[string]interface{}) map[string]string {
-	out := map[string]string{}
-	for field, value := range ctx {
-		switch v := value.(type) {
-		case map[string]interface{}:
-			for index, indexed := range v {
-				addContextLabel(out, field+"."+index, indexed)
-			}
-		default:
-			addContextLabel(out, field, value)
-		}
-	}
-	return out
-}
-func addContextLabel(out map[string]string, name string, value interface{}) {
-	text, ok := value.(string)
-	if !ok || text == "" {
-		// A struct cannot be a label value, and an empty one carries nothing a
-		// selector could use.
-		return
-	}
-	key := apitypes.LabelSourceContextPrefix + name
-	if len(validation.IsQualifiedName(key)) > 0 || len(validation.IsValidLabelValue(text)) > 0 {
-		return
-	}
-	out[key] = text
-}
-
-// shouldTouchSourceCache throttles last-accessed updates: it returns true only
-// when no marker exists yet or the existing one is older than half the entry's
-// TTL, so a hot stale entry is not rewritten on every reconcile. The TTL is read
-// from the entry's own annotation, defaulting to sourceCacheTTL.

@@ -41,6 +41,7 @@ import (
 	apitypes "github.com/oam-dev/kubevela/apis/types"
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
@@ -634,7 +635,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		return nil, err
 	}
 	val, err := r.compiler.CompileString(r.goCtx, strings.Join([]string{
-		renderTemplate(sourceTemplate), paramFile, c,
+		render.Template(sourceTemplate), paramFile, c,
 	}, "\n"))
 	if err != nil {
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
@@ -646,7 +647,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
 		return nil, errors.WithMessagef(err, "compile source definition %s", sourceType)
 	}
-	if userErrs := extractUserErrors(val, "source definition", sourceType); len(userErrs) > 0 {
+	if userErrs := render.UserErrors(val, "source definition", sourceType); len(userErrs) > 0 {
 		errMsg := strings.Join(userErrs, "; ")
 		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
 			r.touchSourceCache(cachePolicy.Key)
@@ -711,7 +712,7 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 	// perform the very I/O the cache exists to avoid - on every reconcile, before
 	// the cache is even consulted.
 	val, err := r.compiler.CompileStringWithOptions(r.goCtx, strings.Join([]string{
-		renderTemplate(sourceTemplate), paramFile, c,
+		render.Template(sourceTemplate), paramFile, c,
 	}, "\n"), upstreamcuex.DisableResolveProviderFunctions{})
 	if err != nil {
 		return policy, errors.WithMessagef(err, "evaluate storage block for source %q", sourceName)
@@ -955,7 +956,7 @@ func ApplySourceCacheMetadata(obj metav1.Object, sourceType string, meta velapro
 	if meta.SourceDefNamespace != "" {
 		labels[apitypes.LabelSourceDefinitionNamespace] = meta.SourceDefNamespace
 	}
-	for k, v := range contextLabels(meta.Context) {
+	for k, v := range render.ContextLabels(meta.Context) {
 		labels[k] = v
 	}
 	obj.SetLabels(labels)
@@ -984,7 +985,7 @@ func ApplySourceCacheMetadata(obj metav1.Object, sourceType string, meta velapro
 		}
 	}
 	if len(meta.Properties) > 0 {
-		if raw, truncated, err := renderProperties(meta.Properties); err == nil {
+		if raw, truncated, err := render.Properties(meta.Properties); err == nil {
 			annotations[apitypes.AnnotationSourceProperties] = raw
 			if truncated {
 				// Say so explicitly, so a clipped value is never mistaken for the
@@ -996,7 +997,7 @@ func ApplySourceCacheMetadata(obj metav1.Object, sourceType string, meta velapro
 	obj.SetAnnotations(annotations)
 }
 
-// maxAnnotationValueLen caps a single recorded value. Kubernetes budgets 256KB
+// render.MaxAnnotationValueLen caps a single recorded value. Kubernetes budgets 256KB
 // across all annotations on an object; these are diagnostic, so they take a
 // small slice of that and leave the rest to whatever else annotates the entry.
 

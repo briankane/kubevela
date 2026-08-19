@@ -19,6 +19,7 @@ package definition
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"sort"
 	"strings"
 	"testing"
@@ -154,14 +155,14 @@ func TestCacheEntryClampsLargeProperties(t *testing.T) {
 	meta := identityMeta()
 	meta.Properties = map[string]interface{}{
 		"image": "nginx:1.25.0",
-		"blob":  strings.Repeat("x", maxAnnotationValueLen*2),
+		"blob":  strings.Repeat("x", render.MaxAnnotationValueLen*2),
 	}
 
 	annotations := applied(meta).GetAnnotations()
 	raw := annotations[apitypes.AnnotationSourceProperties]
 
-	if len(raw) > maxAnnotationValueLen {
-		t.Fatalf("properties annotation is %d bytes, over the %d cap", len(raw), maxAnnotationValueLen)
+	if len(raw) > render.MaxAnnotationValueLen {
+		t.Fatalf("properties annotation is %d bytes, over the %d cap", len(raw), render.MaxAnnotationValueLen)
 	}
 	if annotations[apitypes.AnnotationSourcePropertiesTruncated] != "true" {
 		t.Error("a clipped value must be marked, or it reads as complete")
@@ -194,8 +195,8 @@ func TestCacheEntryClampsManyProperties(t *testing.T) {
 	annotations := applied(meta).GetAnnotations()
 	raw := annotations[apitypes.AnnotationSourceProperties]
 
-	if len(raw) > maxAnnotationValueLen {
-		t.Fatalf("properties annotation is %d bytes, over the %d cap", len(raw), maxAnnotationValueLen)
+	if len(raw) > render.MaxAnnotationValueLen {
+		t.Fatalf("properties annotation is %d bytes, over the %d cap", len(raw), render.MaxAnnotationValueLen)
 	}
 	if annotations[apitypes.AnnotationSourcePropertiesTruncated] != "true" {
 		t.Error("expected the truncation marker")
