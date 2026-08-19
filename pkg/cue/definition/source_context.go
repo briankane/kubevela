@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"strings"
 
-
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
