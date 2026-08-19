@@ -258,103 +258,90 @@ func sourceIndicator(phase string) string {
 	}
 }
 
-// printSourcesOverview lists each declared binding and how it is doing, in the
-// default status view.
+// distinctReaders names who consumed a binding, deduplicated by reader rather
+// than by consumption: one component placed in three clusters is one reader that
+// runs in three places, and listing it three times would say more about the
+// topology than about the source.
+func distinctReaders(src common.ApplicationSourceStatus) []common.SourceConsumer {
+	seen := map[string]struct{}{}
+	var out []common.SourceConsumer
+	for _, by := range src.ConsumedBy {
+		key := by.DefinitionKind + "/" + by.Name
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, by)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DefinitionKind != out[j].DefinitionKind {
+			return out[i].DefinitionKind < out[j].DefinitionKind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// printSourcesOverview lists each declared binding in the default status view,
+// in the shape Services uses directly above it.
 //
-// Name, type and an indicator. Anything more - which cache entry, when it
-// expires, who consumed what - belongs to --sources, and putting it here made
-// the block compete with Services for attention when it is meant to sit
-// alongside it.
-//
-// A binding whose stored entries disagree gets a line per entry underneath,
-// because that is precisely the case a single worst-of indicator cannot express:
-// "one of these cannot be reached" and "none of them can" are the same mark
-// otherwise. A binding whose entries all agree stays one line, so the common case
-// is unaffected.
-//
-// Broken down by storage key rather than by cluster. The key is what a
-// resolution is; a key varying by namespace, component or a label produces
-// several entries inside one cluster, and listing clusters there would print the
-// same name twice and explain nothing.
+// Instances are the stored entries backing the binding, one per distinct storage
+// key, which is what a resolution is. Consumers are who read it, without what any
+// of them took: that detail is --sources' job and would swamp a block meant to
+// sit alongside Services rather than compete with it.
 func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application) {
 	if len(app.Spec.Sources) == 0 {
 		return
 	}
+	const maxConsumers = 5
 	ioStreams.Infof("Sources:\n\n")
 	byName := map[string]common.ApplicationSourceStatus{}
 	for _, src := range app.Status.Sources {
 		byName[src.Name] = src
 	}
 	for _, declared := range app.Spec.Sources {
-		src, resolved := byName[declared.Name]
-		// A declared binding with no status yet is listed as in-progress. Omitting
-		// it would read as "no such source" rather than "not resolved yet".
-		phase, shown := "", declared.Type
-		if resolved {
-			phase = src.Phase
-			if src.Type != "" {
-				shown = src.Type
+		// A declared binding with no status yet still appears, as in-progress.
+		// Omitting it would read as "no such source" rather than "not resolved yet".
+		src := byName[declared.Name]
+		shown := declared.Type
+		if src.Type != "" {
+			shown = src.Type
+		}
+		ioStreams.Infof("  - Name: %s\n", declared.Name)
+		ioStreams.Infof("    Type: %s\n", orDash(shown))
+		ioStreams.Infof("    Healthy: %s\n", sourceIndicator(src.Phase))
+		if src.Message != "" {
+			ioStreams.Infof("      Message: %s\n", src.Message)
+		}
+
+		if len(src.Resolutions) > 0 {
+			ioStreams.Infof("    Instances:\n")
+			for _, res := range src.Resolutions {
+				ioStreams.Infof("      - %s %s\n", orDash(res.StorageKey), sourceIndicator(res.Phase))
+				// A failing instance says why here, the way a component's Health does
+				// directly above. Without it the next step is always a second command.
+				if res.Message != "" {
+					ioStreams.Infof("          Message: %s\n", res.Message)
+				}
 			}
 		}
-		ioStreams.Infof("  - %s %s (%s)\n", sourceIndicator(phase), declared.Name, orDash(shown))
-		if readers := summariseReaders(src); readers != "" {
-			ioStreams.Infof("      read by %s\n", readers)
+
+		readers := distinctReaders(src)
+		if len(readers) == 0 {
+			continue
 		}
-		for _, res := range dividedResolutions(src) {
-			// The storage key is the identity; clusters are context, and only some
-			// of it - a key may vary by namespace or component just as readily.
-			where := ""
-			if len(res.Clusters) > 0 {
-				where = "  (" + strings.Join(res.Clusters, ", ") + ")"
+		ioStreams.Infof("    Consumers:\n")
+		for i, by := range readers {
+			if i == maxConsumers {
+				// A binding read by thirty components is a fact worth knowing; thirty
+				// entries scrolling past is not.
+				ioStreams.Infof("      ... and %d more\n", len(readers)-maxConsumers)
+				break
 			}
-			ioStreams.Infof("      %s %s%s\n", sourceIndicator(res.Phase), orDash(res.StorageKey), where)
+			ioStreams.Infof("      - Name: %s\n", by.Name)
+			ioStreams.Infof("        Type: %s\n", orDash(by.Type))
+			ioStreams.Infof("        Kind: %s\n", by.DefinitionKind)
 		}
 	}
 	ioStreams.Infof("\n")
-}
-
-// summariseReaders names who consumed a binding, without saying what they took.
-//
-// Deduplicated by reader rather than by consumption: one component placed in
-// three clusters is one reader that happens to run in three places, and listing
-// it three times would say more about the topology than about the source. The
-// values each of them took are --sources' job.
-//
-// Truncated past a handful. A binding read by thirty components is a fact worth
-// knowing; thirty names wrapped across a terminal is not.
-func summariseReaders(src common.ApplicationSourceStatus) string {
-	const show = 4
-	seen := map[string]struct{}{}
-	var readers []string
-	for _, by := range src.ConsumedBy {
-		name := by.DefinitionKind + "/" + by.Name
-		if _, dup := seen[name]; dup {
-			continue
-		}
-		seen[name] = struct{}{}
-		readers = append(readers, name)
-	}
-	if len(readers) == 0 {
-		return ""
-	}
-	sort.Strings(readers)
-	if len(readers) <= show {
-		return strings.Join(readers, ", ")
-	}
-	return fmt.Sprintf("%s and %d more", strings.Join(readers[:show], ", "), len(readers)-show)
-}
-
-// dividedResolutions returns the per-entry breakdown worth showing, and nothing
-// when the binding resolved the same way everywhere.
-func dividedResolutions(src common.ApplicationSourceStatus) []common.SourceResolution {
-	if len(src.Resolutions) < 2 {
-		return nil
-	}
-	first := src.Resolutions[0].Phase
-	for _, res := range src.Resolutions[1:] {
-		if res.Phase != first {
-			return src.Resolutions
-		}
-	}
-	return nil
 }

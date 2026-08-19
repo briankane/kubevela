@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -166,122 +165,85 @@ func TestSourceIndicatorVocabulary(t *testing.T) {
 	r.Equal(emojiExecuting, sourceIndicator(""))
 }
 
-func TestPrintSourcesOverview(t *testing.T) {
+
+
+
+func consumer(kind, name, cluster string) common.SourceConsumer {
+	return common.SourceConsumer{DefinitionKind: kind, Name: name, Cluster: cluster}
+}
+
+
+
+
+// One component placed in three clusters is one reader that runs in three
+// places, not three consumers.
+func TestDistinctReadersDeduplicatesPlacements(t *testing.T) {
 	r := require.New(t)
-	yes := true
+	src := common.ApplicationSourceStatus{ConsumedBy: []common.SourceConsumer{
+		consumer("component", "web", "eu-west"),
+		consumer("component", "web", "us-east"),
+		consumer("trait", "web/ingress", "eu-west"),
+	}}
+	got := distinctReaders(src)
+	r.Len(got, 2)
+	r.Equal("web", got[0].Name)
+	r.Equal("component", got[0].DefinitionKind)
+}
+
+func TestPrintSourcesOverviewShape(t *testing.T) {
+	r := require.New(t)
 	app := &v1beta1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "prod"},
 		Spec: v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{
 			{Name: "registry", Type: "configmap"}, {Name: "pending", Type: "atlas"},
 		}},
 		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{
-			{Name: "registry", Type: "configmap", Phase: "Failed", AutoUpdate: &yes,
-				Message: "vault: permission denied"},
+			{Name: "registry", Type: "configmap", Phase: "Failed",
+				Resolutions: []common.SourceResolution{
+					{StorageKey: "configmap-eu-a1", Phase: "Resolved"},
+					{StorageKey: "configmap-us-b2", Phase: "Failed", Message: "dial tcp: i/o timeout"},
+				},
+				ConsumedBy: []common.SourceConsumer{
+					{DefinitionKind: "component", Name: "api", Type: "webservice", Cluster: "eu-west"},
+				}},
 		}},
 	}
 	var buf bytes.Buffer
 	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf}, app)
 	out := buf.String()
 
-	r.Contains(out, "registry (configmap)")
-	r.Contains(out, emojiFail)
-	// Name, type and indicator only. The reason, the cache entry and who consumed
-	// what are --sources' job; this block sits beside Services, not above it.
-	r.NotContains(out, "vault: permission denied")
-	r.NotContains(out, "Resolved")
-	// Declared but not yet in status still appears, as in-progress: silence would
-	// read as "no such source" rather than "not resolved yet".
-	r.Contains(out, "pending (atlas)")
+	r.Contains(out, "  - Name: registry")
+	r.Contains(out, "    Type: configmap")
+	r.Contains(out, "    Instances:")
+	r.Contains(out, "configmap-us-b2")
+	// A failing instance says why, the way a component's Health does above it.
+	r.Contains(out, "dial tcp: i/o timeout")
+	r.Contains(out, "    Consumers:")
+	r.Contains(out, "        Kind: component")
+	r.Contains(out, "        Type: webservice")
+	// Declared but not yet resolved still appears, as in-progress.
+	r.Contains(out, "  - Name: pending")
 	r.Contains(out, emojiExecuting)
 
-	// An Application with no sources says nothing at all.
 	buf.Reset()
 	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf},
 		&v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: "b"}})
-	r.Empty(buf.String())
+	r.Empty(buf.String(), "an Application with no sources says nothing at all")
 }
 
-// A binding fanned across clusters has an entry per cluster, each with its own
-// expiry and its own state. Collapsing them named one arbitrarily.
-func TestDividedResolutionsOnlyWhenTheyDiffer(t *testing.T) {
+func TestPrintSourcesOverviewTruncatesConsumers(t *testing.T) {
 	r := require.New(t)
-	same := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
-		{StorageKey: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-		{StorageKey: "b", Clusters: []string{"us-east"}, Phase: "Resolved"},
-	}}
-	r.Nil(dividedResolutions(same), "resolving the same way everywhere stays one line")
-
-	split := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
-		{StorageKey: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-		{StorageKey: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
-	}}
-	r.Len(dividedResolutions(split), 2, "one cluster failing must be distinguishable from all of them failing")
-
-	single := common.ApplicationSourceStatus{Resolutions: []common.SourceResolution{
-		{StorageKey: "a", Clusters: []string{"local"}, Phase: "Failed"},
-	}}
-	r.Nil(dividedResolutions(single), "a single-cluster app gains nothing from a breakdown")
-}
-
-func TestPrintSourcesOverviewSplitsDivergentClusters(t *testing.T) {
-	r := require.New(t)
+	src := common.ApplicationSourceStatus{Name: "cfg", Type: "configmap", Phase: "Resolved"}
+	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		src.ConsumedBy = append(src.ConsumedBy, consumer("component", n, "local"))
+	}
 	app := &v1beta1.Application{
-		ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "prod"},
-		Spec: v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{
-			{Name: "registry", Type: "configmap"}, {Name: "steady", Type: "configmap"},
-		}},
-		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{
-			{Name: "registry", Type: "configmap", Phase: "Failed", Resolutions: []common.SourceResolution{
-				{StorageKey: "a", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-				{StorageKey: "b", Clusters: []string{"us-east"}, Phase: "Failed"},
-			}},
-			{Name: "steady", Type: "configmap", Phase: "Resolved", Resolutions: []common.SourceResolution{
-				{StorageKey: "c", Clusters: []string{"eu-west"}, Phase: "Resolved"},
-				{StorageKey: "d", Clusters: []string{"us-east"}, Phase: "Resolved"},
-			}},
-		}},
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Spec:       v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{{Name: "cfg"}}},
+		Status:     common.AppStatus{Sources: []common.ApplicationSourceStatus{src}},
 	}
 	var buf bytes.Buffer
 	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf}, app)
-	out := buf.String()
-	r.Contains(out, "eu-west")
-	r.Contains(out, "us-east")
-	// The binding that behaved the same everywhere stays a single line.
-	r.Equal(1, strings.Count(out, "steady"))
-}
-
-func consumer(kind, name, cluster string) common.SourceConsumer {
-	return common.SourceConsumer{DefinitionKind: kind, Name: name, Cluster: cluster}
-}
-
-// One component placed in three clusters is one reader that runs in three
-// places. Listing it three times would say more about the topology than about
-// the source.
-func TestSummariseReadersDeduplicatesPlacements(t *testing.T) {
-	r := require.New(t)
-	src := common.ApplicationSourceStatus{ConsumedBy: []common.SourceConsumer{
-		consumer("component", "web", "eu-west"),
-		consumer("component", "web", "us-east"),
-		consumer("trait", "web/ingress", "eu-west"),
-		consumer("workflowstep", "notify", ""),
-	}}
-	r.Equal("component/web, trait/web/ingress, workflowstep/notify", summariseReaders(src))
-}
-
-// A binding read by thirty components is worth knowing; thirty names wrapped
-// across a terminal is not.
-func TestSummariseReadersTruncates(t *testing.T) {
-	r := require.New(t)
-	var src common.ApplicationSourceStatus
-	for _, n := range []string{"a", "b", "c", "d", "e", "f"} {
-		src.ConsumedBy = append(src.ConsumedBy, consumer("component", n, "local"))
-	}
-	got := summariseReaders(src)
-	r.Contains(got, "and 2 more")
-	r.Contains(got, "component/a")
-	r.NotContains(got, "component/f")
-}
-
-func TestSummariseReadersSilentWhenNothingRead(t *testing.T) {
-	require.Equal(t, "", summariseReaders(common.ApplicationSourceStatus{}))
+	r.Contains(buf.String(), "... and 2 more")
+	r.NotContains(buf.String(), "Name: g")
 }
