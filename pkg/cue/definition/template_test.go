@@ -17,9 +17,12 @@ limitations under the License.
 package definition
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"cuelang.org/go/cue"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,9 +34,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	upstreamcuex "github.com/kubevela/pkg/cue/cuex"
 	wfprocess "github.com/kubevela/workflow/pkg/cue/process"
 
 	"github.com/oam-dev/kubevela/apis/types"
+	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	"github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 )
@@ -2147,5 +2152,56 @@ func TestFormatExpiryOmitsTheZeroTime(t *testing.T) {
 	at := time.Date(2026, 8, 19, 15, 4, 5, 0, time.UTC)
 	if got := formatExpiry(at); got != "2026-08-19T15:04:05Z" {
 		t.Fatalf("real expiry should render RFC3339, got %q", got)
+	}
+}
+
+// recordingCompiler stands in for the workload compiler so a test can prove the
+// resolver used what it was given rather than the package singleton.
+type recordingCompiler struct {
+	inner  SourceCompiler
+	called int
+}
+
+func (c *recordingCompiler) CompileString(ctx context.Context, src string) (cue.Value, error) {
+	c.called++
+	return c.inner.CompileString(ctx, src)
+}
+
+func (c *recordingCompiler) CompileStringWithOptions(ctx context.Context, src string,
+	opts ...upstreamcuex.CompileOption) (cue.Value, error) {
+	c.called++
+	return c.inner.CompileStringWithOptions(ctx, src, opts...)
+}
+
+// A supplied compiler has to be the one that runs. A default that quietly fell
+// back to the singleton would behave identically for the Application and leave a
+// second caller's providers unused, with nothing to notice.
+func TestResolverUsesTheSuppliedCompiler(t *testing.T) {
+	pCtx := process.NewContext(process.ContextData{Namespace: "default", CompName: "web", AppName: "app"})
+	pCtx.PushData(process.ContextAppSources, map[string]map[string]interface{}{"s": {}})
+	pCtx.PushData(process.ContextAppSourceTypes, map[string]string{"s": "demo"})
+	pCtx.PushData(process.ContextAppSourceTemplates, map[string]string{"demo": `
+schema: {v: string}
+$internal: {key: "demo", keyInputs: []}
+output: {v: "hello"}
+`})
+
+	spy := &recordingCompiler{inner: velacuex.WorkloadCompiler.Get()}
+	in := sourceInputsFromContext(pCtx)
+	in.Compiler = spy
+
+	r := newSourceResolver(pCtx, SurfaceComponent, in)
+	if _, err := r.resolve("s"); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if spy.called == 0 {
+		t.Fatal("the resolver ignored the supplied compiler and used the singleton")
+	}
+
+	// ...and nil still means the workload compiler, so the Application path is
+	// unchanged.
+	plain := newSourceResolver(pCtx, SurfaceComponent, sourceInputsFromContext(pCtx))
+	if plain.compiler == nil {
+		t.Fatal("a nil compiler must default, not stay nil")
 	}
 }

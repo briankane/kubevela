@@ -913,6 +913,7 @@ type sourceResolver struct {
 	sourceSchemas   map[string]string
 	sensitivePaths  map[string][]string
 	cacheStore      velaprocess.SourceCacheStore
+	compiler        SourceCompiler
 	resolved        map[string]map[string]interface{}
 	resolving       map[string]bool
 }
@@ -955,6 +956,18 @@ type SourceResolutionStatus struct {
 	SensitivePaths []string
 }
 
+// SourceCompiler evaluates a source's CUE template. Satisfied by
+// *cuex.Compiler.
+//
+// An interface rather than the package singleton so a caller can supply its own
+// provider set, and so a test can compile without reaching for global state. The
+// resolver needs both methods: the template is evaluated with providers, and the
+// storage block deliberately without them.
+type SourceCompiler interface {
+	CompileString(ctx context.Context, src string) (cue.Value, error)
+	CompileStringWithOptions(ctx context.Context, src string, opts ...upstreamcuex.CompileOption) (cue.Value, error)
+}
+
 // sourceInputs is everything a resolution needs that is not the properties being
 // resolved: which bindings exist, what definition backs each, and where values
 // are cached.
@@ -976,6 +989,9 @@ type sourceInputs struct {
 	// Store persists resolved values. Nil disables caching, which resolves
 	// correctly and simply re-fetches.
 	Store velaprocess.SourceCacheStore
+	// Compiler evaluates source templates. Nil takes the workload compiler, which
+	// is what the Application render has always used.
+	Compiler SourceCompiler
 }
 
 // sourceInputsFromContext reads what the Application controller pushed. It is the
@@ -1026,9 +1042,14 @@ func newSourceResolver(ctx process.Context, surface string, in sourceInputs) *so
 			sourceSchemas[sourceType] = schemaExpr
 		}
 	}
+	compiler := in.Compiler
+	if compiler == nil {
+		compiler = velacuex.WorkloadCompiler.Get()
+	}
 	return &sourceResolver{
 		surface:         surface,
 		ctx:             ctx,
+		compiler:        compiler,
 		sourceProps:     in.Bindings,
 		sourceTypes:     in.Types,
 		sourceTemplates: in.Templates,
@@ -1150,7 +1171,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
 		return nil, err
 	}
-	val, err := velacuex.WorkloadCompiler.Get().CompileString(r.ctx.GetCtx(), strings.Join([]string{
+	val, err := r.compiler.CompileString(r.ctx.GetCtx(), strings.Join([]string{
 		renderTemplate(sourceTemplate), paramFile, c,
 	}, "\n"))
 	if err != nil {
@@ -1227,7 +1248,7 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 	// resolved WITHOUT running provider functions. Resolving them here would
 	// perform the very I/O the cache exists to avoid - on every reconcile, before
 	// the cache is even consulted.
-	val, err := velacuex.WorkloadCompiler.Get().CompileStringWithOptions(r.ctx.GetCtx(), strings.Join([]string{
+	val, err := r.compiler.CompileStringWithOptions(r.ctx.GetCtx(), strings.Join([]string{
 		renderTemplate(sourceTemplate), paramFile, c,
 	}, "\n"), upstreamcuex.DisableResolveProviderFunctions{})
 	if err != nil {
