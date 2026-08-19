@@ -78,7 +78,7 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 	fmt.Printf("\nConsumed by:\n\n")
 	reads := tablewriter.NewWriter(os.Stdout)
 	reads.SetColWidth(60)
-	reads.SetHeader([]string{"SOURCE", "READER", "PLACEMENT", "PROPERTY", "SOURCE ATTR", "VALUE"})
+	reads.SetHeader([]string{"SOURCE", "READER", "CLUSTER", "NAMESPACE", "PROPERTY", "SOURCE ATTR", "VALUE"})
 	rows := 0
 	for _, src := range app.Status.Sources {
 		for _, by := range src.ConsumedBy {
@@ -89,7 +89,8 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 				reads.Append([]string{
 					src.Name,
 					formatReader(by),
-					orDash(formatPlacement(by)),
+					formatCluster(by.Cluster),
+					orDash(by.Namespace),
 					orDash(v.Property),
 					v.SourceAttr,
 					formatValue(v.Value),
@@ -126,15 +127,12 @@ func formatReader(by common.SourceConsumer) string {
 	return out
 }
 
-func formatPlacement(by common.SourceConsumer) string {
-	parts := make([]string, 0, 2)
-	if by.Cluster != "" {
-		parts = append(parts, by.Cluster)
-	}
-	if by.Namespace != "" {
-		parts = append(parts, by.Namespace)
-	}
-	return strings.Join(parts, "/")
+// formatCluster renders the recorded cluster. A placed reader always has one -
+// the controller names the local cluster rather than leaving it blank - so an
+// empty value here means the reader is not placed at all, which is true of a
+// workflow step and is not the same as running locally.
+func formatCluster(cluster string) string {
+	return orDash(cluster)
 }
 
 // formatAutoUpdate distinguishes "off" from "not reported", which a bare bool

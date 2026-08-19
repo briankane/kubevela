@@ -56,8 +56,11 @@ func TestFormatReaderAndPlacement(t *testing.T) {
 	// A workflow step has no placement, so it must not render a stray separator.
 	r.Equal("workflowstep/notify", formatReader(common.SourceConsumer{
 		DefinitionKind: "workflowstep", Name: "notify"}))
-	r.Equal("local/team-a", formatPlacement(common.SourceConsumer{Cluster: "local", Namespace: "team-a"}))
-	r.Equal("", formatPlacement(common.SourceConsumer{}))
+	// A placed reader always carries a cluster name, so an empty one means the
+	// reader is not placed - a workflow step - rather than running locally.
+	r.Equal("local", formatCluster("local"))
+	r.Equal("eu-west", formatCluster("eu-west"))
+	r.Equal("-", formatCluster(""))
 }
 
 func TestConsumerFilterComposesWithTheExistingFlags(t *testing.T) {

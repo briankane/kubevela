@@ -647,7 +647,15 @@ func (h *AppHandler) recordComponentSourceReads(comp *appfile.Component, status 
 		return
 	}
 	resolvedStatuses, _ := comp.Ctx.GetData(cuedefinition.SourceResolutionStatusKey).(map[string]cuedefinition.SourceResolutionStatus)
-	h.recordSourceResolution(sourceKindComponent, status.Name, comp.Type, status.Cluster, status.Namespace, resolvedStatuses)
+	// The context reports the local cluster as an empty string, but empty already
+	// means "not placed" for a reader like a workflow step. Name it, so the two
+	// are distinguishable in the stored status and not only in whatever renders
+	// it.
+	cluster := status.Cluster
+	if cluster == "" {
+		cluster = multicluster.ClusterLocalName
+	}
+	h.recordSourceResolution(sourceKindComponent, status.Name, comp.Type, cluster, status.Namespace, resolvedStatuses)
 }
 
 // maskedPath reports whether a consumed field is covered by a mask, either
