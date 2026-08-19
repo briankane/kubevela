@@ -196,27 +196,7 @@ parameter: {
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(app), latest); err != nil {
 				return "", err
 			}
-			if len(latest.Status.Services) == 0 || len(latest.Status.Services[0].Sources) == 0 {
-				return "", fmt.Errorf("source status not ready")
-			}
-			for _, src := range latest.Status.Services[0].Sources {
-				if src.Name != "img" {
-					continue
-				}
-				if src.Properties == nil {
-					return "", fmt.Errorf("source properties missing")
-				}
-				var props map[string]interface{}
-				if err := json.Unmarshal(src.Properties.Raw, &props); err != nil {
-					return "", err
-				}
-				image, _ := props["image"].(string)
-				if image == "" {
-					return "", fmt.Errorf("image property missing")
-				}
-				return image, nil
-			}
-			return "", fmt.Errorf("source status for img not found")
+			return consumedValue(latest, "img", "image")
 		}, 60*time.Second, time.Second).Should(Equal("***"))
 	})
 
@@ -443,22 +423,15 @@ parameter: {
 			}, latest); err != nil {
 				return "", "", err
 			}
-			for _, svc := range latest.Status.Services {
-				for _, src := range svc.Sources {
-					if src.Name != "img" {
-						continue
-					}
-					var props map[string]interface{}
-					if len(src.Properties.Raw) > 0 {
-						if err := json.Unmarshal(src.Properties.Raw, &props); err != nil {
-							return "", "", err
-						}
-					}
-					got, _ := props["image"].(string)
-					return src.Config, got, nil
-				}
+			key, err := storageKeyOf(latest, "img")
+			if err != nil {
+				return "", "", err
 			}
-			return "", "", fmt.Errorf("no resolved source named %q in status yet", "img")
+			got, err := consumedValue(latest, "img", "image")
+			if err != nil {
+				return "", "", err
+			}
+			return key, got, nil
 		}
 
 		var firstConfig string

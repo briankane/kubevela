@@ -351,18 +351,14 @@ output: {
 			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(app), latest); err != nil {
 				return err
 			}
-			for _, svc := range latest.Status.Services {
-				for _, src := range svc.Sources {
-					if src.Name != "infra" {
-						continue
-					}
-					if src.Config == "" {
-						return fmt.Errorf("no cache entry recorded for a binding read via an expression")
-					}
-					return nil
-				}
+			key, err := storageKeyOf(latest, "infra")
+			if err != nil {
+				return err
 			}
-			return fmt.Errorf("source %q missing from status", "infra")
+			if key == "" {
+				return fmt.Errorf("no storage entry recorded for a binding read via an expression")
+			}
+			return nil
 		}, 90*time.Second, 2*time.Second).Should(Succeed())
 	})
 
