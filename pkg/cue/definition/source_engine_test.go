@@ -206,3 +206,53 @@ func TestEverySurfaceConstantIsDeclared(t *testing.T) {
 		}
 	}
 }
+
+// Check is what makes the engine usable before anything has been fetched, and
+// what a caller reaches for instead of resolving and hoping.
+func TestSourceEngineCheck(t *testing.T) {
+	r := require.New(t)
+	engine, err := NewSourceEngine(demoEngineOptions())
+	r.NoError(err)
+
+	r.Empty(engine.Check(map[string]interface{}{
+		"a": "$(source.cfg.region)",
+		"b": "tier-$(source.cfg.tier)",
+		"c": "no expression",
+	}), "valid expressions produce no findings")
+
+	found := engine.Check(map[string]interface{}{
+		"bad":     "$(source.cfg.nosuchfield)",
+		"unknown": "$(source.nosuchbinding.x)",
+		"nested":  map[string]interface{}{"deep": "$(source.cfg.region)"},
+		"list":    []interface{}{"$(source.cfg.alsomissing)"},
+	})
+	// Every problem, not the first: a caller validating a blob wants them all.
+	r.Len(found, 3)
+
+	byProp := map[string]CheckError{}
+	for _, f := range found {
+		byProp[f.Property] = f
+	}
+	// The path says where, including through lists.
+	r.Contains(byProp, "bad")
+	r.Contains(byProp, "unknown")
+	r.Contains(byProp, "list[0]")
+	r.NotContains(byProp, "nested.deep", "a valid expression at depth is not reported")
+	r.Contains(byProp["bad"].Error(), "bad")
+}
+
+// The typed environment is the point. The permissive one types every source read
+// as dyn, so a string feeding an int passes unnoticed; this is what Check and a
+// caller's target comparison both rely on.
+func TestSourceEngineTypeOf(t *testing.T) {
+	r := require.New(t)
+	engine, err := NewSourceEngine(demoEngineOptions())
+	r.NoError(err)
+
+	typ, err := engine.TypeOf("source.cfg.region")
+	r.NoError(err)
+	r.Equal("string", typ.String())
+
+	_, err = engine.TypeOf("source.cfg.nosuchfield")
+	r.Error(err, "an undeclared path is a type error, not a dyn")
+}

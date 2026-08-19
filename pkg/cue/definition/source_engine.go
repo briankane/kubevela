@@ -20,7 +20,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/cel-go/cel"
+
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
 )
 
@@ -218,6 +221,122 @@ func walkStrings(node interface{}, fn func(string) error) error {
 		}
 	case string:
 		return fn(val)
+	}
+	return nil
+}
+
+// CheckError is one expression that will not compile, and where it was found.
+type CheckError struct {
+	// Property is the path within the properties blob, e.g. "env[0].value".
+	Property string
+	// Expr is the expression source, without the surrounding $( ).
+	Expr string
+	Err  error
+}
+
+func (c CheckError) Error() string {
+	if c.Property == "" {
+		return fmt.Sprintf("%s: %v", c.Expr, c.Err)
+	}
+	return fmt.Sprintf("%s: %s: %v", c.Property, c.Expr, c.Err)
+}
+
+// typedEnv is the environment in which every source read carries the shape its
+// definition declares, and every context read the shape its surface declares.
+//
+// The permissive environment types both as dyn, which is enough to evaluate but
+// not to catch a string flowing into an int. Building this from the templates the
+// engine already holds is what lets Check mean something.
+func (e *SourceEngine) typedEnv() (*cel.Env, error) {
+	// Keyed by binding, not by definition type: an expression reads
+	// source.<binding>, and two bindings of one type may be read differently.
+	schemas := map[string]string{}
+	for binding, sourceType := range e.opts.Types {
+		template, ok := e.opts.Templates[sourceType]
+		if !ok {
+			continue
+		}
+		expr, err := extractSourceSchemaExpr(template)
+		if err != nil || expr == "" {
+			// A definition whose schema will not parse types as absent, so the read
+			// is reported as undeclared rather than as a fault in the definition -
+			// which the definition's own validation reports, with the real cause.
+			continue
+		}
+		schemas[binding] = expr
+	}
+	return celexpr.EnvForContext(schemas, sourceexpr.ContextFor(e.opts.Surface))
+}
+
+// Check reports every expression in properties that will not compile against the
+// bindings and surface this engine was built for.
+//
+// No I/O and no resolution: this is a parse and a type-check, so it is safe on a
+// value that has not been admitted and cheap enough to run before deciding
+// whether to resolve at all.
+//
+// It answers "is this expression valid here" - an undeclared binding, a path the
+// schema does not declare, a type error within the expression. It does not
+// answer "does the result fit where it is going", because the engine does not
+// know the destination; use TypeOf and compare against your own target.
+//
+// Every problem is reported rather than the first, since a caller validating a
+// blob wants all of them in one pass.
+func (e *SourceEngine) Check(properties interface{}) []CheckError {
+	env, err := e.typedEnv()
+	if err != nil {
+		return []CheckError{{Err: err}}
+	}
+	var out []CheckError
+	_ = walkStringsWithPath(properties, "", func(path, raw string) error {
+		parsed, perr := sourceexpr.Parse(raw)
+		if perr != nil {
+			out = append(out, CheckError{Property: path, Expr: raw, Err: perr})
+			return nil
+		}
+		if !parsed.HasExpr() {
+			return nil
+		}
+		for _, fragment := range parsed.Fragments {
+			if !fragment.IsExpr() {
+				continue
+			}
+			if _, cerr := celexpr.OutputType(env, fragment.Expr); cerr != nil {
+				out = append(out, CheckError{Property: path, Expr: fragment.Expr, Err: cerr})
+			}
+		}
+		return nil
+	})
+	return out
+}
+
+// TypeOf returns the result type of a single expression, for a caller comparing
+// it against the parameter it feeds.
+func (e *SourceEngine) TypeOf(expr string) (*cel.Type, error) {
+	env, err := e.typedEnv()
+	if err != nil {
+		return nil, err
+	}
+	return celexpr.OutputType(env, expr)
+}
+
+// walkStringsWithPath visits every string leaf, carrying where it was found.
+func walkStringsWithPath(node interface{}, path string, fn func(path, raw string) error) error {
+	switch val := node.(type) {
+	case map[string]interface{}:
+		for k, child := range val {
+			if err := walkStringsWithPath(child, joinPropertyPath(path, k), fn); err != nil {
+				return err
+			}
+		}
+	case []interface{}:
+		for i, child := range val {
+			if err := walkStringsWithPath(child, fmt.Sprintf("%s[%d]", path, i), fn); err != nil {
+				return err
+			}
+		}
+	case string:
+		return fn(path, val)
 	}
 	return nil
 }
