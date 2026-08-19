@@ -219,8 +219,7 @@ func TestPrintSourcesOverviewShape(t *testing.T) {
 	// A failing instance says why, the way a component's Health does above it.
 	r.Contains(out, "dial tcp: i/o timeout")
 	r.Contains(out, "    Consumers:")
-	r.Contains(out, "        Kind: component")
-	r.Contains(out, "        Type: webservice")
+	r.Contains(out, "        Type: webservice (component)")
 	// Declared but not yet resolved still appears, as in-progress.
 	r.Contains(out, "  - Name: pending")
 	r.Contains(out, emojiExecuting)
@@ -246,4 +245,15 @@ func TestPrintSourcesOverviewTruncatesConsumers(t *testing.T) {
 	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf}, app)
 	r.Contains(buf.String(), "... and 2 more")
 	r.NotContains(buf.String(), "Name: g")
+}
+
+func TestFormatConsumerType(t *testing.T) {
+	r := require.New(t)
+	r.Equal("webservice (component)", formatConsumerType(
+		common.SourceConsumer{DefinitionKind: "component", Type: "webservice"}))
+	r.Equal("notification (workflowstep)", formatConsumerType(
+		common.SourceConsumer{DefinitionKind: "workflowstep", Type: "notification"}))
+	// A reader whose type is unset is still a component, and that half is worth
+	// keeping - better than an empty parenthetical.
+	r.Equal("component", formatConsumerType(common.SourceConsumer{DefinitionKind: "component"}))
 }

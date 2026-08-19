@@ -282,6 +282,20 @@ func distinctReaders(src common.ApplicationSourceStatus) []common.SourceConsumer
 	return out
 }
 
+// formatConsumerType renders a reader's own type with the kind of definition it
+// is, as "webservice (component)". Two facts, but only one of them is ever the
+// interesting one, and a line each made a consumer three lines deep for no gain.
+//
+// Falls back to the kind alone rather than printing an empty parenthetical: a
+// reader whose type is somehow unset is still a component or a workflow step,
+// and that is the half worth keeping.
+func formatConsumerType(by common.SourceConsumer) string {
+	if by.Type == "" {
+		return by.DefinitionKind
+	}
+	return fmt.Sprintf("%s (%s)", by.Type, by.DefinitionKind)
+}
+
 // printSourcesOverview lists each declared binding in the default status view,
 // in the shape Services uses directly above it.
 //
@@ -339,8 +353,7 @@ func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application)
 				break
 			}
 			ioStreams.Infof("      - Name: %s\n", by.Name)
-			ioStreams.Infof("        Type: %s\n", orDash(by.Type))
-			ioStreams.Infof("        Kind: %s\n", by.DefinitionKind)
+			ioStreams.Infof("        Type: %s\n", formatConsumerType(by))
 		}
 	}
 	ioStreams.Infof("\n")
