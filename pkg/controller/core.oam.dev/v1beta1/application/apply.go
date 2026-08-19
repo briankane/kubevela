@@ -469,10 +469,7 @@ func consumedReads(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolut
 		if rd.ReaderKind != readerKind || rd.ReaderName != readerName {
 			continue
 		}
-		val := rd.Value
-		if maskedPath(rd.Field, maskSet) {
-			val = "***"
-		}
+		val := redactValue(rd.Field, rd.Value, maskSet)
 		out := common.SourceRead{Field: rd.Field, Property: rd.Property}
 		if raw, err := mapToRawExtension(map[string]interface{}{"v": val}); err == nil && raw != nil {
 			// Unwrap the single-key envelope mapToRawExtension needs.
@@ -533,11 +530,7 @@ func consumedValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolu
 	sort.Strings(paths)
 	props := make(map[string]interface{}, len(paths))
 	for _, p := range paths {
-		val := rs.ConsumedFields[p]
-		if maskedPath(p, maskSet) {
-			val = "***"
-		}
-		props[p] = val
+		props[p] = redactValue(p, rs.ConsumedFields[p], maskSet)
 	}
 	raw, err := mapToRawExtension(props)
 	if err != nil {
@@ -677,6 +670,49 @@ func (h *AppHandler) mergeSourceResolutionStatus(comp *appfile.Component, status
 // whatever template produced it - has nowhere to put a marker except on the
 // struct itself. Matching exactly would mask a read of `properties` and publish
 // `properties.token` beside it, which is the one case the marker exists for.
+// redactValue blanks anything marked sensitive inside a read value.
+//
+// maskedPath alone is not enough. It answers "is this path at or below a mark",
+// which covers reading db.password directly, but an expression may substitute a
+// whole collection - "$(source.creds.db)" - and then the read path is db while
+// the mark is db.password, one level below. Nothing matched and the secret went
+// into status verbatim.
+//
+// Marks are schema paths and carry no list indices, since collectSensitivePaths
+// descends only into struct literals. So elements of a list share their parent's
+// path: a mark of "members.token" applies to the token of every member.
+func redactValue(path string, v interface{}, masks map[string]struct{}) interface{} {
+	if len(masks) == 0 {
+		return v
+	}
+	if maskedPath(path, masks) {
+		return "***"
+	}
+	switch val := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(val))
+		for k, child := range val {
+			out[k] = redactValue(joinPath(path, k), child, masks)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, 0, len(val))
+		for _, child := range val {
+			out = append(out, redactValue(path, child, masks))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func joinPath(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
+}
+
 func maskedPath(path string, masks map[string]struct{}) bool {
 	if _, ok := masks[path]; ok {
 		return true

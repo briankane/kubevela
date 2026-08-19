@@ -189,3 +189,41 @@ func TestChainedSourceReadsAreNotClaimedByTheComponent(t *testing.T) {
 	r.Empty(h.sourceStatusList()[0].ConsumedBy[0].Reads,
 		"the component made no reads of its own, so it must claim none")
 }
+
+// A sensitive field must stay redacted when the read is the struct above it.
+// Marks are schema paths - "db.password" - and an expression may substitute a
+// whole collection, so a read of "db" carries the password with it. Checking
+// only whether the read sits at or below a mark misses that entirely and writes
+// the secret into a status anyone with get on Applications can read.
+func TestSensitiveValuesSurviveAWholeStructRead(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "creds", Type: "dbcreds"})
+
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local",
+		map[string]cuedefinition.SourceResolutionStatus{
+			"creds": {
+				Name: "creds", Phase: sourcePhaseResolved,
+				SensitivePaths: []string{"db.password", "members.token"},
+				ConsumedFields: map[string]interface{}{"db": "x"},
+				Reads: []cuedefinition.SourceRead{
+					{Field: "db", Property: "settings", Value: map[string]interface{}{
+						"host": "db.internal", "password": "hunter2",
+					}},
+					{Field: "members", Property: "team", Value: []interface{}{
+						map[string]interface{}{"name": "ana", "token": "t-secret"},
+					}},
+				},
+			},
+		})
+
+	reads := h.sourceStatusList()[0].ConsumedBy[0].Reads
+	for _, rd := range reads {
+		raw := string(rd.Value.Raw)
+		r.NotContains(raw, "hunter2", "a password under a read struct must not reach status")
+		r.NotContains(raw, "t-secret", "a token inside a read list must not reach status either")
+		r.Contains(raw, "***")
+	}
+	// Redaction is surgical: what was not marked still shows.
+	r.Contains(string(reads[0].Value.Raw)+string(reads[1].Value.Raw), "db.internal")
+	r.Contains(string(reads[0].Value.Raw)+string(reads[1].Value.Raw), "ana")
+}
