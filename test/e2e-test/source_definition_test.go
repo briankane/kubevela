@@ -200,6 +200,154 @@ parameter: {
 		}, 60*time.Second, time.Second).Should(Equal("***"))
 	})
 
+	// A resource whose name derives from source data is renamed when that value
+	// changes, and a rename dispatches a second object rather than updating the
+	// first. Garbage collection cannot reap the original: it recycles whole
+	// ResourceTrackers, and a tracker retires only when a new ApplicationRevision
+	// supersedes it. A source refresh mints none, so without an explicit prune the
+	// old object stays tracked and running.
+	//
+	// The value therefore has to move WITHOUT touching the Application. Editing
+	// spec.sources[].properties would be a spec change, which mints a revision and
+	// lets ordinary GC do the reaping - a spec written that way passes whether the
+	// prune works or not. Here the source reads a ConfigMap and the ConfigMap is
+	// edited instead, so the Application and its definitions are untouched.
+	It("reaps a resource the component no longer renders after a source change", func() {
+		naming := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "naming-input", Namespace: namespaceName},
+			Data:       map[string]string{"suffix": "one"},
+		}
+		Expect(k8sClient.Create(ctx, naming)).Should(Succeed())
+
+		Expect(k8sClient.Create(ctx, &v1beta1.SourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "naming-source", Namespace: namespaceName},
+			Spec: v1beta1.SourceDefinitionSpec{
+				Schematic: &oamcomm.Schematic{CUE: &oamcomm.CUE{Template: `
+import "vela/kube"
+
+schema: {
+  data: [string]: string
+}
+$internal: {
+  key: "naming-source-\(context.cluster)-\(context.namespace)"
+  keyInputs: ["cluster", "namespace"]
+}
+storage: {
+  // Short, so the edit below is noticed inside the spec's patience rather than
+  // at the default TTL.
+  storageTTL: "5s"
+}
+_cm: kube.#Get & {
+  $params: {
+    cluster: context.cluster
+    resource: {
+      apiVersion: "v1"
+      kind:       "ConfigMap"
+      metadata: {
+        name:      parameter.name
+        namespace: context.namespace
+      }
+    }
+  }
+}
+output: data: _cm.$returns.data
+parameter: {
+  name: string
+}
+`}},
+			},
+		})).Should(Succeed())
+
+		// The component's resource name comes from a parameter, so a source value
+		// reaches metadata.name - the case that renames rather than updates.
+		Expect(k8sClient.Create(ctx, exprComponentDefinition(namespaceName, "named-cm", `
+parameter: {name: string}
+output: {
+  apiVersion: "v1"
+  kind:       "ConfigMap"
+  metadata: name: parameter.name
+  data: {marker: "from-source"}
+}
+`))).Should(Succeed())
+
+		autoUpdate := true
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "source-prune-app", Namespace: namespaceName},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: []v1beta1.ApplicationSource{{
+					Name:       "naming",
+					Type:       "naming-source",
+					AutoUpdate: &autoUpdate,
+					Properties: &runtime.RawExtension{Raw: []byte(`{"name":"naming-input"}`)},
+				}},
+				Components: []oamcomm.ApplicationComponent{
+					{
+						Name:       "renamed",
+						Type:       "named-cm",
+						Properties: &runtime.RawExtension{Raw: []byte(`{"name":"cm-$(has(source.naming.data.suffix) ? source.naming.data.suffix : \"none\")"}`)},
+					},
+					// A sibling that reads nothing. Pruning is attributed per
+					// component, so this must survive untouched.
+					{
+						Name:       "bystander",
+						Type:       "named-cm",
+						Properties: &runtime.RawExtension{Raw: []byte(`{"name":"cm-bystander"}`)},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
+
+		cmExists := func(name string) func() bool {
+			return func() bool {
+				cm := &corev1.ConfigMap{}
+				return k8sClient.Get(ctx, client.ObjectKey{Namespace: namespaceName, Name: name}, cm) == nil
+			}
+		}
+		Eventually(cmExists("cm-one"), 90*time.Second, time.Second).Should(BeTrue())
+		Eventually(cmExists("cm-bystander"), 90*time.Second, time.Second).Should(BeTrue())
+
+		revisionBefore := func() string {
+			latest := &v1beta1.Application{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(app), latest); err != nil {
+				return ""
+			}
+			if latest.Status.LatestRevision == nil {
+				return ""
+			}
+			return latest.Status.LatestRevision.Name
+		}()
+		Expect(revisionBefore).ShouldNot(BeEmpty())
+
+		// Move the value the source reads. Nothing about the Application changes.
+		Eventually(func() error {
+			live := &corev1.ConfigMap{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(naming), live); err != nil {
+				return err
+			}
+			live.Data["suffix"] = "two"
+			return k8sClient.Update(ctx, live)
+		}, 20*time.Second, time.Second).Should(Succeed())
+
+		Eventually(cmExists("cm-two"), 180*time.Second, 2*time.Second).Should(BeTrue(),
+			"autoUpdate must re-dispatch the component under its new name")
+
+		// The point of the spec: the object the component stopped rendering is
+		// gone, and no new revision retired the tracker that held it.
+		Eventually(cmExists("cm-one"), 180*time.Second, 2*time.Second).Should(BeFalse(),
+			"the renamed-away ConfigMap must be reaped by the prune, not left running")
+		Expect(revisionBefore).Should(Equal(func() string {
+			latest := &v1beta1.Application{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(app), latest)).Should(Succeed())
+			return latest.Status.LatestRevision.Name
+		}()), "no new ApplicationRevision: the reaping must be the prune, not ordinary GC")
+
+		// ...and pruning stayed inside the component that changed.
+		Consistently(cmExists("cm-bystander"), 10*time.Second, 2*time.Second).Should(BeTrue(),
+			"a sibling component's resource must survive a prune")
+	})
+
 	It("creates source cache using storage key policy", func() {
 		sourceDef := &v1beta1.SourceDefinition{
 			ObjectMeta: metav1.ObjectMeta{
