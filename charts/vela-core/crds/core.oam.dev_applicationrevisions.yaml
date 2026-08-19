@@ -851,44 +851,45 @@ spec:
                                       policy. A trait is named "<component>/<trait>", since a trait has no
                                       identity apart from the component it is attached to.
                                     type: string
-                                  reads:
-                                    description: |-
-                                      Reads are the values this reader took, each saying what was read and which
-                                      of the reader's properties received it. A list rather than a map because
-                                      one source field can feed several properties, and one property can be
-                                      assembled from several fields - "host: $(source.db.addr):$(source.db.port)"
-                                      is two reads into one property, which a map cannot express.
-
-                                      Fields the definition marks sensitive, and any the binding's statusPolicy
-                                      masks, are redacted here exactly as they are elsewhere.
-                                    items:
-                                      description: 'SourceRead is one value taken
-                                        from a source: what was read and where it
-                                        went.'
-                                      properties:
-                                        field:
-                                          description: Field is the source path that
-                                            was read, e.g. "data.image".
-                                          type: string
-                                        property:
-                                          description: |-
-                                            Property is the reader's property that received it, e.g. "image" or
-                                            "env[0].value".
-                                          type: string
-                                        value:
-                                          description: Value is what was read, redacted
-                                            where the field is sensitive or masked.
-                                          type: object
-                                          x-kubernetes-preserve-unknown-fields: true
-                                      required:
-                                      - field
-                                      type: object
-                                    type: array
                                   type:
                                     description: |-
                                       Type is the reader's own definition type, e.g. "webservice", so a reader can
                                       be understood without cross-referencing the spec.
                                     type: string
+                                  values:
+                                    description: |-
+                                      Values are what this reader took, each saying which source attribute was
+                                      read and which of the reader's properties received it. A list rather than a
+                                      map because one source attribute can feed several properties, and one
+                                      property can be assembled from several attributes -
+                                      "host: $(source.db.addr):$(source.db.port)" is two values into one
+                                      property, which a map cannot express.
+
+                                      Attributes the definition marks sensitive, and any the binding's
+                                      statusPolicy masks, are redacted here exactly as they are elsewhere.
+                                    items:
+                                      description: 'SourceValue is one value taken
+                                        from a source: what was read and where it
+                                        went.'
+                                      properties:
+                                        property:
+                                          description: |-
+                                            Property is the reader's property that received it, e.g. "image" or
+                                            "env[0].value".
+                                          type: string
+                                        sourceAttr:
+                                          description: SourceAttr is the attribute
+                                            of the source that was read, e.g. "data.image".
+                                          type: string
+                                        value:
+                                          description: Value is what was read, redacted
+                                            where the attribute is sensitive or masked.
+                                          type: object
+                                          x-kubernetes-preserve-unknown-fields: true
+                                      required:
+                                      - sourceAttr
+                                      type: object
+                                    type: array
                                 required:
                                 - definitionKind
                                 - name

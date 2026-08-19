@@ -145,25 +145,25 @@ func TestConsumedReadsCarryTheDestinationProperty(t *testing.T) {
 				// host is assembled from two fields; image from one.
 				ConsumedFields: map[string]interface{}{"addr": "db.internal", "port": 5432, "img": "pg:16"},
 				Reads: []cuedefinition.SourceRead{
-					{Field: "addr", Property: "host", Value: "db.internal"},
-					{Field: "port", Property: "host", Value: 5432},
-					{Field: "img", Property: "image", Value: "pg:16"},
+					{SourceAttr: "addr", Property: "host", Value: "db.internal"},
+					{SourceAttr: "port", Property: "host", Value: 5432},
+					{SourceAttr: "img", Property: "image", Value: "pg:16"},
 				},
 			},
 		})
 
-	reads := h.sourceStatusList()[0].ConsumedBy[0].Reads
-	r.Len(reads, 3)
+	values := h.sourceStatusList()[0].ConsumedBy[0].Values
+	r.Len(values, 3)
 	// Sorted by property then field, so the report is stable across reconciles
 	// rather than following Go's map iteration order.
-	r.Equal("host", reads[0].Property)
-	r.Equal("addr", reads[0].Field)
-	r.Equal("host", reads[1].Property)
-	r.Equal("port", reads[1].Field)
-	r.Equal("image", reads[2].Property)
-	r.Equal("img", reads[2].Field)
-	r.JSONEq(`"db.internal"`, string(reads[0].Value.Raw))
-	r.JSONEq(`5432`, string(reads[1].Value.Raw))
+	r.Equal("host", values[0].Property)
+	r.Equal("addr", values[0].SourceAttr)
+	r.Equal("host", values[1].Property)
+	r.Equal("port", values[1].SourceAttr)
+	r.Equal("image", values[2].Property)
+	r.Equal("img", values[2].SourceAttr)
+	r.JSONEq(`"db.internal"`, string(values[0].Value.Raw))
+	r.JSONEq(`5432`, string(values[1].Value.Raw))
 }
 
 // A chained source reads on its own behalf. Attributing those reads to whichever
@@ -180,13 +180,13 @@ func TestChainedSourceReadsAreNotClaimedByTheComponent(t *testing.T) {
 				ConsumedFields: map[string]interface{}{"clusterName": "eu-west-1"},
 				Reads: []cuedefinition.SourceRead{
 					// read by the chained source "config", not by the component
-					{Field: "clusterName", Property: "path", Value: "eu-west-1",
+					{SourceAttr: "clusterName", Property: "path", Value: "eu-west-1",
 						ReaderKind: "source", ReaderName: "config"},
 				},
 			},
 		})
 
-	r.Empty(h.sourceStatusList()[0].ConsumedBy[0].Reads,
+	r.Empty(h.sourceStatusList()[0].ConsumedBy[0].Values,
 		"the component made no reads of its own, so it must claim none")
 }
 
@@ -206,24 +206,24 @@ func TestSensitiveValuesSurviveAWholeStructRead(t *testing.T) {
 				SensitivePaths: []string{"db.password", "members.token"},
 				ConsumedFields: map[string]interface{}{"db": "x"},
 				Reads: []cuedefinition.SourceRead{
-					{Field: "db", Property: "settings", Value: map[string]interface{}{
+					{SourceAttr: "db", Property: "settings", Value: map[string]interface{}{
 						"host": "db.internal", "password": "hunter2",
 					}},
-					{Field: "members", Property: "team", Value: []interface{}{
+					{SourceAttr: "members", Property: "team", Value: []interface{}{
 						map[string]interface{}{"name": "ana", "token": "t-secret"},
 					}},
 				},
 			},
 		})
 
-	reads := h.sourceStatusList()[0].ConsumedBy[0].Reads
-	for _, rd := range reads {
+	values := h.sourceStatusList()[0].ConsumedBy[0].Values
+	for _, rd := range values {
 		raw := string(rd.Value.Raw)
 		r.NotContains(raw, "hunter2", "a password under a read struct must not reach status")
 		r.NotContains(raw, "t-secret", "a token inside a read list must not reach status either")
 		r.Contains(raw, "***")
 	}
 	// Redaction is surgical: what was not marked still shows.
-	r.Contains(string(reads[0].Value.Raw)+string(reads[1].Value.Raw), "db.internal")
-	r.Contains(string(reads[0].Value.Raw)+string(reads[1].Value.Raw), "ana")
+	r.Contains(string(values[0].Value.Raw)+string(values[1].Value.Raw), "db.internal")
+	r.Contains(string(values[0].Value.Raw)+string(values[1].Value.Raw), "ana")
 }

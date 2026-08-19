@@ -453,40 +453,40 @@ collectNext:
 	return &status, output, outputs, isHealth, nil
 }
 
-// consumedReads renders the individual reads one consumer made, each carrying
-// the source field, the property it landed in, and the value.
+// consumerValues renders the individual values one consumer took, each carrying
+// the source attribute, the property it landed in, and the value.
 //
 // readerKind filters: a chained source's reads are recorded against the source
 // that made them, so a component's entry must not claim them.
-func consumedReads(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus,
-	readerKind, readerName string) []common.SourceRead {
+func consumerValues(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus,
+	readerKind, readerName string) []common.SourceValue {
 	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues && !src.StatusPolicy.ExposeResolvedFields {
 		return nil
 	}
 	maskSet := sourceMaskSet(src, rs)
-	reads := make([]common.SourceRead, 0, len(rs.Reads))
+	values := make([]common.SourceValue, 0, len(rs.Reads))
 	for _, rd := range rs.Reads {
 		if rd.ReaderKind != readerKind || rd.ReaderName != readerName {
 			continue
 		}
-		val := redactValue(rd.Field, rd.Value, maskSet)
-		out := common.SourceRead{Field: rd.Field, Property: rd.Property}
+		val := redactValue(rd.SourceAttr, rd.Value, maskSet)
+		out := common.SourceValue{SourceAttr: rd.SourceAttr, Property: rd.Property}
 		if raw, err := mapToRawExtension(map[string]interface{}{"v": val}); err == nil && raw != nil {
 			// Unwrap the single-key envelope mapToRawExtension needs.
 			out.Value = unwrapValue(raw)
 		}
-		reads = append(reads, out)
+		values = append(values, out)
 	}
-	sort.Slice(reads, func(i, j int) bool {
-		if reads[i].Property != reads[j].Property {
-			return reads[i].Property < reads[j].Property
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].Property != values[j].Property {
+			return values[i].Property < values[j].Property
 		}
-		return reads[i].Field < reads[j].Field
+		return values[i].SourceAttr < values[j].SourceAttr
 	})
-	if len(reads) == 0 {
+	if len(values) == 0 {
 		return nil
 	}
-	return reads
+	return values
 }
 
 func sourceMaskSet(src v1beta1.ApplicationSource, rs cuedefinition.SourceResolutionStatus) map[string]struct{} {
@@ -590,7 +590,7 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster stri
 			Name:           name,
 			Type:           readerType,
 			Cluster:        cluster,
-			Reads:          consumedReads(src, rs, "", ""),
+			Values:         consumerValues(src, rs, "", ""),
 		})
 	}
 }

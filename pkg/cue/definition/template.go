@@ -921,8 +921,8 @@ type sourceResolver struct {
 // SourceRead is one value taken from a source: what was read, where it went,
 // and who read it.
 type SourceRead struct {
-	// Field is the source path that was read, e.g. "data.image".
-	Field string
+	// SourceAttr is the attribute of the source that was read, e.g. "data.image".
+	SourceAttr string
 	// Property is the consumer's property it landed in, e.g. "image" or
 	// "env[0].value". Empty when the read happened somewhere without a property
 	// path, which today means a source resolving its own properties.
@@ -949,8 +949,8 @@ type SourceResolutionStatus struct {
 	// existing workload's stamped hash changing on upgrade and re-dispatching.
 	ConsumedFields map[string]interface{}
 	// Reads is the same information with the destination attached: which property
-	// of the consumer each value landed in, and which reader made the read.
-	// Reporting only, never hashed.
+	// of the consumer each value landed in, and which reader took it. Reporting
+	// only, never hashed.
 	Reads []SourceRead
 	SensitivePaths []string
 }
@@ -1632,7 +1632,7 @@ func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string
 	}
 	st.ConsumedFields[path] = v
 	st.Reads = append(st.Reads, SourceRead{
-		Field:      path,
+		SourceAttr: path,
 		Property:   property,
 		ReaderKind: r.readerKind,
 		ReaderName: r.readerName,
