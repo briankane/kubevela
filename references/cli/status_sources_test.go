@@ -17,12 +17,19 @@ limitations under the License.
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	velacommon "github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
 func TestFormatAutoUpdate(t *testing.T) {
@@ -73,4 +80,71 @@ func TestConsumerFilterComposesWithTheExistingFlags(t *testing.T) {
 	r.False(Filter{Component: "web"}.matchConsumer(db))
 	r.True(Filter{Cluster: "remote"}.matchConsumer(db))
 	r.False(Filter{Cluster: "remote"}.matchConsumer(web))
+}
+
+func sourcesFixture() *v1beta1.Application {
+	yes := true
+	return &v1beta1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "checkout", Namespace: "prod"},
+		Spec:       v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{{Name: "registry"}}},
+		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{{
+			Name: "registry", Type: "configmap@v2", Phase: "Resolved", AutoUpdate: &yes,
+			ConsumedBy: []common.SourceConsumer{
+				{DefinitionKind: "component", Name: "web", Cluster: "local", Namespace: "prod",
+					Values: []common.SourceValue{{Property: "image", SourceAttr: "data.image",
+						Value: &runtime.RawExtension{Raw: []byte(`"nginx:1.27"`)}}}},
+				{DefinitionKind: "component", Name: "api", Cluster: "eu-west", Namespace: "prod",
+					Values: []common.SourceValue{{Property: "image", SourceAttr: "data.image",
+						Value: &runtime.RawExtension{Raw: []byte(`"nginx:1.27"`)}}}},
+			},
+		}}},
+	}
+}
+
+// The table is for reading; -o is for scripting. Without it the only way to get
+// at this is scraping column output, which is exactly what a stable format
+// exists to avoid.
+func TestPrintAppSourcesMachineReadable(t *testing.T) {
+	r := require.New(t)
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
+
+	var buf bytes.Buffer
+	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{}, "json", &buf))
+	var got sourcesOutput
+	r.NoError(json.Unmarshal(buf.Bytes(), &got))
+	r.Equal("checkout", got.Name)
+	r.Equal("prod", got.Namespace)
+	r.Len(got.Sources, 1)
+	r.Equal("registry", got.Sources[0].Name)
+	r.Len(got.Sources[0].ConsumedBy, 2)
+
+	buf.Reset()
+	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{}, "yaml", &buf))
+	r.Contains(buf.String(), "sourceAttr: data.image")
+	r.NotContains(buf.String(), "+---", "yaml output must not carry table decoration")
+}
+
+// A filter that narrowed the table but not the machine-readable form would be a
+// trap for anything scripting against it.
+func TestPrintAppSourcesFiltersMachineReadableToo(t *testing.T) {
+	r := require.New(t)
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
+
+	var buf bytes.Buffer
+	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout",
+		Filter{Cluster: "eu-west"}, "json", &buf))
+	var got sourcesOutput
+	r.NoError(json.Unmarshal(buf.Bytes(), &got))
+	r.Len(got.Sources, 1, "the binding is still reported: whether it resolved does not depend on the filter")
+	r.Len(got.Sources[0].ConsumedBy, 1)
+	r.Equal("api", got.Sources[0].ConsumedBy[0].Name)
+}
+
+func TestPrintAppSourcesJSONPath(t *testing.T) {
+	r := require.New(t)
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
+	var buf bytes.Buffer
+	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{},
+		"jsonpath={.sources[0].phase}", &buf))
+	r.Equal("Resolved", buf.String())
 }

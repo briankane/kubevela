@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/olekukonko/tablewriter"
@@ -36,25 +36,49 @@ import (
 // second answers "who used it and what did they get", which is genuinely per
 // reader and per placement, and is the part that is unreadable as raw YAML once
 // there is more than one cluster.
-func printAppSources(ctx context.Context, cli client.Client, namespace, appName string, filter Filter) error {
+func printAppSources(ctx context.Context, cli client.Client, namespace, appName string,
+	filter Filter, outputFormat string, out io.Writer) error {
 	app, err := loadRemoteApplication(cli, namespace, appName)
 	if err != nil {
 		return err
 	}
+	sources := filterSources(app.Status.Sources, filter)
+
+	// A machine-readable form of the same thing, so this is scriptable rather
+	// than only readable. The filters apply here too - narrowing to a cluster and
+	// then getting every cluster back would be a surprise.
+	//
+	// Wrapped in an object rather than emitted as a bare array because jsonpath
+	// cannot address one: RelaxedJSONPathExpression turns every form of
+	// "{.[0].phase}" into an empty result, silently. The wrapper also gives the
+	// output somewhere to say which Application it describes.
+	if outputFormat != "" {
+		str, err := printObj(outputFormat, sourcesOutput{
+			Name:      appName,
+			Namespace: namespace,
+			Sources:   sources,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = out.Write([]byte(str))
+		return err
+	}
+
 	if len(app.Spec.Sources) == 0 {
-		fmt.Printf("Application %s/%s declares no sources.\n", namespace, appName)
+		fmt.Fprintf(out, "Application %s/%s declares no sources.\n", namespace, appName)
 		return nil
 	}
 	if len(app.Status.Sources) == 0 {
-		fmt.Printf("Application %s/%s has declared sources but has not resolved them yet.\n", namespace, appName)
+		fmt.Fprintf(out, "Application %s/%s has declared sources but has not resolved them yet.\n", namespace, appName)
 		return nil
 	}
 
-	fmt.Printf("Sources of %s/%s:\n\n", namespace, appName)
-	summary := tablewriter.NewWriter(os.Stdout)
+	fmt.Fprintf(out, "Sources of %s/%s:\n\n", namespace, appName)
+	summary := tablewriter.NewWriter(out)
 	summary.SetColWidth(60)
 	summary.SetHeader([]string{"NAME", "TYPE", "PHASE", "AUTO-UPDATE", "EXPIRES", "CACHE ENTRY"})
-	for _, src := range app.Status.Sources {
+	for _, src := range sources {
 		summary.Append([]string{
 			src.Name,
 			orDash(src.Type),
@@ -69,22 +93,19 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 	// A message is the only place a false auto-update says which of the gate, the
 	// binding and a publishVersion pin won, so it must not be swallowed by the
 	// table's column width.
-	for _, src := range app.Status.Sources {
+	for _, src := range sources {
 		if src.Message != "" {
-			fmt.Printf("\n%s: %s\n", src.Name, src.Message)
+			fmt.Fprintf(out, "\n%s: %s\n", src.Name, src.Message)
 		}
 	}
 
-	fmt.Printf("\nConsumed by:\n\n")
-	reads := tablewriter.NewWriter(os.Stdout)
+	fmt.Fprintf(out, "\nConsumed by:\n\n")
+	reads := tablewriter.NewWriter(out)
 	reads.SetColWidth(60)
 	reads.SetHeader([]string{"SOURCE", "READER", "CLUSTER", "NAMESPACE", "PROPERTY", "SOURCE ATTR", "VALUE"})
 	rows := 0
-	for _, src := range app.Status.Sources {
+	for _, src := range sources {
 		for _, by := range src.ConsumedBy {
-			if !filter.matchConsumer(by) {
-				continue
-			}
 			for _, v := range by.Values {
 				reads.Append([]string{
 					src.Name,
@@ -100,11 +121,37 @@ func printAppSources(ctx context.Context, cli client.Client, namespace, appName 
 		}
 	}
 	if rows == 0 {
-		fmt.Println("  (nothing has consumed a source value)")
+		fmt.Fprintln(out, "  (nothing has consumed a source value)")
 		return nil
 	}
 	reads.Render()
 	return nil
+}
+
+// sourcesOutput is the machine-readable shape of this view.
+type sourcesOutput struct {
+	Name      string                           `json:"name"`
+	Namespace string                           `json:"namespace"`
+	Sources   []common.ApplicationSourceStatus `json:"sources"`
+}
+
+// filterSources narrows who is reported without dropping any binding. The
+// summary answers "did my data arrive", which is a property of the binding and
+// is true regardless of which cluster you asked about - hiding a stale source
+// because you filtered to one cluster would be worse than useless.
+func filterSources(sources []common.ApplicationSourceStatus, filter Filter) []common.ApplicationSourceStatus {
+	out := make([]common.ApplicationSourceStatus, 0, len(sources))
+	for _, src := range sources {
+		kept := make([]common.SourceConsumer, 0, len(src.ConsumedBy))
+		for _, by := range src.ConsumedBy {
+			if filter.matchConsumer(by) {
+				kept = append(kept, by)
+			}
+		}
+		src.ConsumedBy = kept
+		out = append(out, src)
+	}
+	return out
 }
 
 // matchConsumer applies the component and cluster filters the other status views
@@ -171,4 +218,3 @@ func orDash(s string) string {
 	}
 	return s
 }
-
