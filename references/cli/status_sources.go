@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
 
 // printAppSources renders what an Application read from its declared sources.
@@ -217,4 +218,48 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// summariseSources is the one line the default status view shows about sources.
+//
+// It exists for a case the rest of that view cannot express: an Application can
+// be Running and healthy while a source has quietly stopped refreshing, because
+// a stale source serves its previous value rather than failing. "Healthy" is
+// then true and misleading, and nothing else on screen hints that the data has
+// stopped moving.
+//
+// Returns "" when the Application declares no sources, so apps that do not use
+// the feature see nothing about it.
+func summariseSources(app *v1beta1.Application) string {
+	if len(app.Spec.Sources) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	for _, src := range app.Status.Sources {
+		phase := src.Phase
+		if phase == "" {
+			phase = "pending"
+		}
+		counts[strings.ToLower(phase)]++
+	}
+	if len(counts) == 0 {
+		return fmt.Sprintf("%d declared, none resolved yet", len(app.Spec.Sources))
+	}
+	// Fixed order, worst first, so the thing worth acting on leads and the line
+	// does not reshuffle between reconciles.
+	var parts []string
+	unhealthy := 0
+	for _, phase := range []string{"failed", "stale", "pending", "resolved", "unused"} {
+		if n := counts[phase]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, phase))
+			if phase == "failed" || phase == "stale" {
+				unhealthy += n
+			}
+		}
+	}
+	line := strings.Join(parts, ", ")
+	if unhealthy > 0 {
+		line = emojiFail + line
+	}
+	return line + "  (--sources for detail)"
 }

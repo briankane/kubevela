@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -147,4 +148,44 @@ func TestPrintAppSourcesJSONPath(t *testing.T) {
 	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{},
 		"jsonpath={.sources[0].phase}", &buf))
 	r.Equal("Resolved", buf.String())
+}
+
+func appWithSourcePhases(declared int, phases ...string) *v1beta1.Application {
+	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "prod"}}
+	for i := 0; i < declared; i++ {
+		app.Spec.Sources = append(app.Spec.Sources, v1beta1.ApplicationSource{Name: string(rune('a' + i))})
+	}
+	for i, p := range phases {
+		app.Status.Sources = append(app.Status.Sources,
+			common.ApplicationSourceStatus{Name: string(rune('a' + i)), Phase: p})
+	}
+	return app
+}
+
+// The default view must say nothing about sources to an Application that does
+// not use them.
+func TestSummariseSourcesIsSilentWithoutSources(t *testing.T) {
+	require.Equal(t, "", summariseSources(appWithSourcePhases(0)))
+}
+
+// An Application can be Running and healthy while a source has quietly stopped
+// refreshing, because a stale source serves its previous value rather than
+// failing. That is the case this line exists for, so it has to stand out.
+func TestSummariseSourcesFlagsTroubleFirst(t *testing.T) {
+	r := require.New(t)
+
+	clean := summariseSources(appWithSourcePhases(2, "Resolved", "Unused"))
+	r.Contains(clean, "1 resolved, 1 unused")
+	r.NotContains(clean, emojiFail, "nothing wrong, so no alarm")
+	r.Contains(clean, "--sources")
+
+	stale := summariseSources(appWithSourcePhases(3, "Resolved", "Stale", "Failed"))
+	r.Contains(stale, emojiFail)
+	// Worst first, and a fixed order so the line does not reshuffle per reconcile.
+	r.True(strings.Index(stale, "1 failed") < strings.Index(stale, "1 stale"))
+	r.True(strings.Index(stale, "1 stale") < strings.Index(stale, "1 resolved"))
+}
+
+func TestSummariseSourcesBeforeAnythingResolves(t *testing.T) {
+	require.Equal(t, "2 declared, none resolved yet", summariseSources(appWithSourcePhases(2)))
 }

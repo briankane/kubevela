@@ -212,6 +212,9 @@ func printAppStatus(_ context.Context, c client.Client, ioStreams cmdutil.IOStre
 	table.AddRow("  Created at:", app.CreationTimestamp.String())
 	table.AddRow("  Healthy:", healthStatusEmoji)
 	table.AddRow("  Details:", getAppPhaseColor(app.Status.Phase).Sprint(app.Status.Phase))
+	if sources := summariseSources(app); sources != "" {
+		table.AddRow("  Sources:", sources)
+	}
 	cmd.Printf("%s\n\n", table.String())
 	if err := printWorkflowStatus(c, ioStreams, appName, namespace, detail); err != nil {
 		return err
