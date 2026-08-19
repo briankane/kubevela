@@ -1,0 +1,193 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package definition
+
+import (
+	"context"
+	"fmt"
+
+	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/definition/sourceexpr"
+)
+
+// SourceEngineOptions describes one caller's world: which bindings exist, what
+// backs them, and what context they resolve against.
+//
+// Everything here was previously read off a process.Context that only the
+// Application controller knew how to populate. Stating it makes source
+// resolution usable by anything that can name its bindings and supply a surface.
+type SourceEngineOptions struct {
+	// Surface names the call site, and decides which context fields a source may
+	// read. One of sourceexpr.SurfaceNames().
+	Surface string
+	// Context is the value for each field the surface offers, as far as the caller
+	// has them. Fields may legitimately be absent rather than empty - appRevision
+	// before the first revision exists, publishVersion unless set - so this is not
+	// required to be complete, and an expression reading an absent field is
+	// refused at admission by the surface's own schema rather than here.
+	Context map[string]interface{}
+
+	// Bindings is binding name -> that binding's own properties, which may
+	// themselves contain expressions reading an earlier binding.
+	Bindings map[string]map[string]interface{}
+	// Types is binding name -> SourceDefinition type, carrying a pinned revision
+	// where one was requested.
+	Types map[string]string
+	// Templates is definition type -> its CUE template.
+	Templates map[string]string
+	// Sensitive is definition type -> paths its schema marks +sensitive. Derived
+	// from the template by the caller that loaded it.
+	Sensitive map[string][]string
+
+	// Store persists resolved values between reconciles. Nil resolves correctly
+	// and simply re-fetches every time.
+	Store velaprocess.SourceCacheStore
+	// Compiler evaluates templates. Nil uses the workload compiler.
+	Compiler SourceCompiler
+}
+
+// SourceEngine resolves source expressions in a properties blob.
+//
+// One engine is one caller's view for one render: it caches what it resolves so
+// a binding read by several properties is fetched once, and it accumulates what
+// resolved so the caller can report it. Build a new one per render rather than
+// sharing.
+type SourceEngine struct {
+	opts SourceEngineOptions
+}
+
+// SourceResult is a resolution: the substituted properties, and what it took to
+// produce them.
+type SourceResult struct {
+	// Properties is the input with every $( ) expression replaced.
+	Properties interface{}
+	// Statuses is what each binding resolved to, keyed by binding name - the
+	// phase, the storage key, the expiry, and the values consumed. Enough to
+	// build status from without the caller knowing how resolution works.
+	Statuses map[string]SourceResolutionStatus
+}
+
+// NewSourceEngine validates the options and returns an engine.
+//
+// The surface must be one the registry declares. That is checked here because
+// the alternative is silent: an unrecognised surface fails open to "offers
+// everything", so a typo would widen what sources may read instead of erroring.
+//
+// The context deliberately is not checked for completeness. A render populates
+// only the fields that have values, so requiring all of them would reject the
+// Application's own calls.
+func NewSourceEngine(opts SourceEngineOptions) (*SourceEngine, error) {
+	if opts.Surface == "" {
+		return nil, fmt.Errorf("a surface is required; one of %v", sourceexpr.SurfaceNames())
+	}
+	if !sourceexpr.SurfaceDeclared(opts.Surface) {
+		return nil, fmt.Errorf("unknown surface %q; declared surfaces are %v",
+			opts.Surface, sourceexpr.SurfaceNames())
+	}
+	return &SourceEngine{opts: opts}, nil
+}
+
+// Resolve substitutes every $( ) expression in properties.
+//
+// properties is any JSON-shaped value - a map, a list, a scalar - and is walked
+// to any depth, so an expression inside a list entry or a nested object resolves
+// like any other.
+func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (SourceResult, error) {
+	if properties == nil {
+		return SourceResult{}, nil
+	}
+	r := newSourceResolver(ctx, e.opts.Context, e.opts.Surface, sourceInputs{
+		Bindings:  e.opts.Bindings,
+		Types:     e.opts.Types,
+		Templates: e.opts.Templates,
+		Sensitive: e.opts.Sensitive,
+		Store:     e.opts.Store,
+		Compiler:  e.opts.Compiler,
+	})
+	out, err := resolveSourceNode(properties, r, "")
+	if err != nil {
+		return SourceResult{Statuses: r.statuses}, err
+	}
+	return SourceResult{Properties: out, Statuses: r.statuses}, nil
+}
+
+// Reads reports the bindings and context a properties blob reads, without
+// resolving anything.
+//
+// No I/O: this is a parse and a type-check, so it is safe to call on a value
+// that has not been admitted and cheap enough for dependency ordering.
+func (e *SourceEngine) Reads(properties interface{}) ([]sourceexpr.Reference, error) {
+	var out []sourceexpr.Reference
+	seen := map[string]struct{}{}
+	err := walkStrings(properties, func(raw string) error {
+		parsed, err := sourceexpr.Parse(raw)
+		if err != nil || !parsed.HasExpr() {
+			return err
+		}
+		for _, fragment := range parsed.Fragments {
+			if !fragment.IsExpr() {
+				continue
+			}
+			refs, rerr := expressionReferences(fragment.Expr)
+			if rerr != nil {
+				return rerr
+			}
+			for _, ref := range refs {
+				key := ref.Root + "." + joinPath(ref.Path)
+				if _, dup := seen[key]; dup {
+					continue
+				}
+				seen[key] = struct{}{}
+				out = append(out, ref)
+			}
+		}
+		return nil
+	})
+	return out, err
+}
+
+func joinPath(path []string) string {
+	out := ""
+	for i, p := range path {
+		if i > 0 {
+			out += "."
+		}
+		out += p
+	}
+	return out
+}
+
+// walkStrings visits every string leaf in a JSON-shaped value.
+func walkStrings(node interface{}, fn func(string) error) error {
+	switch val := node.(type) {
+	case map[string]interface{}:
+		for _, child := range val {
+			if err := walkStrings(child, fn); err != nil {
+				return err
+			}
+		}
+	case []interface{}:
+		for _, child := range val {
+			if err := walkStrings(child, fn); err != nil {
+				return err
+			}
+		}
+	case string:
+		return fn(val)
+	}
+	return nil
+}

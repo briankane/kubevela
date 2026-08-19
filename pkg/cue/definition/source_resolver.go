@@ -75,15 +75,31 @@ func resolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	if err := json.Unmarshal(bt, &normalized); err != nil {
 		return nil, err
 	}
-	r := newSourceResolver(ctx.GetCtx(), contextValuesFor(ctx), surface, sourceInputsFromContext(ctx))
-	out, err := resolveSourceNode(normalized, r, "")
-	// The Application controller reads what resolved back off its own context.
-	// Pushing here rather than inside the resolver keeps that protocol in the
-	// bridge, where the rest of it already lives.
-	if len(r.statuses) > 0 {
-		ctx.PushData(SourceResolutionStatusKey, r.statuses)
+
+	// The Application render is one caller of the engine, not the owner of the
+	// machinery. Everything specific to it - reading the pushed inputs, flattening
+	// the render context, pushing the statuses back - lives here and nowhere else.
+	in := sourceInputsFromContext(ctx)
+	engine, err := NewSourceEngine(SourceEngineOptions{
+		Surface:   surface,
+		Context:   contextValuesFor(ctx),
+		Bindings:  in.Bindings,
+		Types:     in.Types,
+		Templates: in.Templates,
+		Sensitive: in.Sensitive,
+		Store:     in.Store,
+	})
+	if err != nil {
+		return nil, err
 	}
-	return out, err
+	res, err := engine.Resolve(ctx.GetCtx(), normalized)
+	if len(res.Statuses) > 0 {
+		ctx.PushData(SourceResolutionStatusKey, res.Statuses)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return res.Properties, nil
 }
 
 // resolveSourceNode walks a properties blob, carrying the path it is at so a

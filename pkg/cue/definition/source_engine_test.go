@@ -1,0 +1,123 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package definition
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+)
+
+// The point of the engine: a caller that can name its bindings and its surface
+// resolves expressions without knowing anything about process.Context, the
+// render pipeline, or how caching works.
+func demoEngineOptions() SourceEngineOptions {
+	return SourceEngineOptions{
+		Surface: SurfaceComponent,
+		Context: map[string]interface{}{
+			velaprocess.ContextNamespace: "team-a",
+			velaprocess.ContextAppName:   "checkout",
+		},
+		Bindings: map[string]map[string]interface{}{"cfg": {}},
+		Types:    map[string]string{"cfg": "demo"},
+		Templates: map[string]string{"demo": `
+schema: {region: string, tier: string}
+$internal: {key: "demo", keyInputs: []}
+output: {region: "eu-west", tier: "gold"}
+`},
+	}
+}
+
+func TestSourceEngineResolves(t *testing.T) {
+	r := require.New(t)
+	engine, err := NewSourceEngine(demoEngineOptions())
+	r.NoError(err)
+
+	res, err := engine.Resolve(context.Background(), map[string]interface{}{
+		"image": "acme/web",
+		"where": "$(source.cfg.region)",
+		"nested": map[string]interface{}{
+			"label": "tier-$(source.cfg.tier)",
+		},
+		"list": []interface{}{"$(source.cfg.region)"},
+	})
+	r.NoError(err)
+
+	out := res.Properties.(map[string]interface{})
+	r.Equal("acme/web", out["image"], "a property with no expression is untouched")
+	r.Equal("eu-west", out["where"])
+	// Expressions resolve at any depth, in objects and in list entries alike.
+	r.Equal("tier-gold", out["nested"].(map[string]interface{})["label"])
+	r.Equal("eu-west", out["list"].([]interface{})[0])
+
+	// The caller gets enough to report status without knowing how resolution works.
+	r.Contains(res.Statuses, "cfg")
+	r.Equal("Resolved", res.Statuses["cfg"].Phase)
+}
+
+// An unknown surface has to be an error. availableFields fails open - an
+// unrecognised surface is treated as offering everything - so a typo would
+// silently widen what a source may read rather than failing.
+func TestSourceEngineRejectsAnUnknownSurface(t *testing.T) {
+	r := require.New(t)
+	opts := demoEngineOptions()
+	opts.Surface = "compnent"
+	_, err := NewSourceEngine(opts)
+	r.Error(err)
+	r.Contains(err.Error(), "unknown surface")
+	r.Contains(err.Error(), "compnent")
+
+	opts.Surface = ""
+	_, err = NewSourceEngine(opts)
+	r.Error(err)
+}
+
+// A render populates only the context fields that have values, so requiring the
+// caller to supply every field a surface declares would reject the Application's
+// own calls.
+func TestSourceEngineAcceptsPartialContext(t *testing.T) {
+	opts := demoEngineOptions()
+	opts.Context = map[string]interface{}{}
+	_, err := NewSourceEngine(opts)
+	require.NoError(t, err)
+}
+
+// Reads answers "what does this depend on" without any I/O, which is what makes
+// it usable for ordering before anything has been fetched.
+func TestSourceEngineReads(t *testing.T) {
+	r := require.New(t)
+	engine, err := NewSourceEngine(demoEngineOptions())
+	r.NoError(err)
+
+	refs, err := engine.Reads(map[string]interface{}{
+		"a": "$(source.cfg.region)",
+		"b": "$(source.cfg.region)-$(context.appName)",
+		"c": "no expression here",
+	})
+	r.NoError(err)
+
+	var got []string
+	for _, ref := range refs {
+		got = append(got, ref.Root+"."+joinPath(ref.Path))
+	}
+	// Deduplicated: cfg.region is read twice and reported once.
+	assert.ElementsMatch(t, []string{"source.cfg.region", "context.appName"}, got)
+}
