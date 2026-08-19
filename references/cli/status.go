@@ -213,11 +213,16 @@ func printAppStatus(_ context.Context, c client.Client, ioStreams cmdutil.IOStre
 	table.AddRow("  Healthy:", healthStatusEmoji)
 	table.AddRow("  Details:", getAppPhaseColor(app.Status.Phase).Sprint(app.Status.Phase))
 	cmd.Printf("%s\n\n", table.String())
-	printSourcesOverview(ioStreams, app)
 	if err := printWorkflowStatus(c, ioStreams, appName, namespace, detail); err != nil {
 		return err
 	}
-	return loopCheckStatus(c, ioStreams, appName, namespace)
+	if err := loopCheckStatus(c, ioStreams, appName, namespace); err != nil {
+		return err
+	}
+	// After Services: a source feeds components, so it reads as context for what
+	// is above it rather than as a preamble to the workflow.
+	printSourcesOverview(ioStreams, app)
+	return nil
 }
 
 func formatEndpoints(endpoints []types2.ServiceEndpoint) [][]string {

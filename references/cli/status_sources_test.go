@@ -183,11 +183,14 @@ func TestPrintSourcesOverview(t *testing.T) {
 
 	r.Contains(out, "registry (configmap)")
 	r.Contains(out, emojiFail)
-	r.Contains(out, "vault: permission denied", "a failure has to say why, inline")
-	// Declared but not yet in status still appears: silence would read as
-	// "no such source" rather than "not resolved yet".
+	// Name, type and indicator only. The reason, the cache entry and who consumed
+	// what are --sources' job; this block sits beside Services, not above it.
+	r.NotContains(out, "vault: permission denied")
+	r.NotContains(out, "Resolved")
+	// Declared but not yet in status still appears, as in-progress: silence would
+	// read as "no such source" rather than "not resolved yet".
 	r.Contains(out, "pending (atlas)")
-	r.Contains(out, "not resolved yet")
+	r.Contains(out, emojiExecuting)
 
 	// An Application with no sources says nothing at all.
 	buf.Reset()

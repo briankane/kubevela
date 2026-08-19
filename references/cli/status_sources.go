@@ -244,10 +244,14 @@ func sourceIndicator(phase string) string {
 // printSourcesOverview lists each declared binding and how it is doing, in the
 // default status view.
 //
-// It sits with the Application's own summary rather than under Services because
-// a binding is declared once for the whole Application: the same source feeds
-// several components, and reporting it per component is what the status rework
-// moved away from.
+// Name, type and an indicator only. Anything more - which cache entry, when it
+// expires, who consumed what - belongs to --sources, and putting it here made
+// the block compete with Services for attention when it is meant to sit
+// alongside it.
+//
+// One line per binding rather than per cluster, because a binding is declared
+// once for the whole Application. Where it resolves differently per cluster the
+// indicator shows the worst of them, and --sources says which.
 func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application) {
 	if len(app.Spec.Sources) == 0 {
 		return
@@ -259,20 +263,16 @@ func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application)
 	}
 	for _, declared := range app.Spec.Sources {
 		src, resolved := byName[declared.Name]
-		if !resolved {
-			ioStreams.Infof("  - %s %s (%s)  not resolved yet\n",
-				emojiExecuting, declared.Name, orDash(declared.Type))
-			continue
+		// A declared binding with no status yet is listed as in-progress. Omitting
+		// it would read as "no such source" rather than "not resolved yet".
+		phase, shown := "", declared.Type
+		if resolved {
+			phase = src.Phase
+			if src.Type != "" {
+				shown = src.Type
+			}
 		}
-		line := fmt.Sprintf("  - %s %s (%s)  %s", sourceIndicator(src.Phase),
-			src.Name, orDash(src.Type), orDash(src.Phase))
-		if src.AutoUpdate != nil && *src.AutoUpdate {
-			line += "  auto-update"
-		}
-		ioStreams.Infof("%s\n", line)
-		if src.Message != "" {
-			ioStreams.Infof("      %s\n", src.Message)
-		}
+		ioStreams.Infof("  - %s %s (%s)\n", sourceIndicator(phase), declared.Name, orDash(shown))
 	}
 	ioStreams.Infof("\n")
 }
