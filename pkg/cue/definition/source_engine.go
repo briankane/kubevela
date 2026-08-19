@@ -65,6 +65,16 @@ type SourceEngineOptions struct {
 	Store velaprocess.SourceCacheStore
 	// Compiler evaluates templates. Nil uses the workload compiler.
 	Compiler SourceCompiler
+
+	// Validate runs Check before resolving, and refuses rather than resolving an
+	// expression that will not type.
+	//
+	// Off by default, and deliberately not the only way to get typing. The
+	// Application checks at admission, where a failure has a field path and a user
+	// to show it to; the same failure at render is a component that will not
+	// reconcile. A caller with no admission step of its own sets this and gets the
+	// check without having to know to call Check separately.
+	Validate bool
 }
 
 // appendMissing adds entries not already present, so a caller adding a path a
@@ -142,6 +152,13 @@ func NewSourceEngine(opts SourceEngineOptions) (*SourceEngine, error) {
 func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (SourceResult, error) {
 	if properties == nil {
 		return SourceResult{}, nil
+	}
+	if e.opts.Validate {
+		if bad := e.Check(properties); len(bad) > 0 {
+			// The first is enough to act on, and carries the rest's shape. A caller
+			// wanting all of them calls Check itself.
+			return SourceResult{}, fmt.Errorf("source expressions did not type check: %w", bad[0])
+		}
 	}
 	r := newSourceResolver(ctx, e.opts.Context, e.opts.Surface, sourceInputs{
 		Bindings:  e.opts.Bindings,
@@ -233,6 +250,9 @@ type CheckError struct {
 	Expr string
 	Err  error
 }
+
+// Unwrap exposes the underlying compile error, so a caller can match on it.
+func (c CheckError) Unwrap() error { return c.Err }
 
 func (c CheckError) Error() string {
 	if c.Property == "" {

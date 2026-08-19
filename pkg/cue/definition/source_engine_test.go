@@ -18,6 +18,7 @@ package definition
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -255,4 +256,37 @@ func TestSourceEngineTypeOf(t *testing.T) {
 
 	_, err = engine.TypeOf("source.cfg.nosuchfield")
 	r.Error(err, "an undeclared path is a type error, not a dyn")
+}
+
+// A caller with no admission step of its own opts in and gets the check without
+// having to know to call Check separately.
+func TestSourceEngineValidateOnResolve(t *testing.T) {
+	r := require.New(t)
+	bad := map[string]interface{}{"x": "$(source.cfg.nosuchfield)"}
+
+	// Off by default: the Application checks at admission, and a type error at
+	// render is a component that will not reconcile rather than a rejected apply.
+	loose, err := NewSourceEngine(demoEngineOptions())
+	r.NoError(err)
+	_, err = loose.Resolve(context.Background(), bad)
+	r.Error(err, "the read still fails, but as a resolution error rather than a type check")
+	r.NotContains(err.Error(), "did not type check")
+
+	opts := demoEngineOptions()
+	opts.Validate = true
+	strict, err := NewSourceEngine(opts)
+	r.NoError(err)
+	_, err = strict.Resolve(context.Background(), bad)
+	r.Error(err)
+	r.Contains(err.Error(), "did not type check")
+
+	// A CheckError unwraps, so a caller can match on the underlying cause.
+	var ce CheckError
+	r.True(errors.As(err, &ce))
+	r.Equal("x", ce.Property)
+
+	// ...and valid properties still resolve with validation on.
+	res, err := strict.Resolve(context.Background(), map[string]interface{}{"x": "$(source.cfg.region)"})
+	r.NoError(err)
+	r.Equal("eu-west", res.Properties.(map[string]interface{})["x"])
 }
