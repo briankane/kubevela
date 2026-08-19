@@ -249,3 +249,39 @@ func TestPrintSourcesOverviewSplitsDivergentClusters(t *testing.T) {
 	// The binding that behaved the same everywhere stays a single line.
 	r.Equal(1, strings.Count(out, "steady"))
 }
+
+func consumer(kind, name, cluster string) common.SourceConsumer {
+	return common.SourceConsumer{DefinitionKind: kind, Name: name, Cluster: cluster}
+}
+
+// One component placed in three clusters is one reader that runs in three
+// places. Listing it three times would say more about the topology than about
+// the source.
+func TestSummariseReadersDeduplicatesPlacements(t *testing.T) {
+	r := require.New(t)
+	src := common.ApplicationSourceStatus{ConsumedBy: []common.SourceConsumer{
+		consumer("component", "web", "eu-west"),
+		consumer("component", "web", "us-east"),
+		consumer("trait", "web/ingress", "eu-west"),
+		consumer("workflowstep", "notify", ""),
+	}}
+	r.Equal("component/web, trait/web/ingress, workflowstep/notify", summariseReaders(src))
+}
+
+// A binding read by thirty components is worth knowing; thirty names wrapped
+// across a terminal is not.
+func TestSummariseReadersTruncates(t *testing.T) {
+	r := require.New(t)
+	var src common.ApplicationSourceStatus
+	for _, n := range []string{"a", "b", "c", "d", "e", "f"} {
+		src.ConsumedBy = append(src.ConsumedBy, consumer("component", n, "local"))
+	}
+	got := summariseReaders(src)
+	r.Contains(got, "and 2 more")
+	r.Contains(got, "component/a")
+	r.NotContains(got, "component/f")
+}
+
+func TestSummariseReadersSilentWhenNothingRead(t *testing.T) {
+	require.Equal(t, "", summariseReaders(common.ApplicationSourceStatus{}))
+}

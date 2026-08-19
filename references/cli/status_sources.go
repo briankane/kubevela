@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/olekukonko/tablewriter"
@@ -296,6 +297,9 @@ func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application)
 			}
 		}
 		ioStreams.Infof("  - %s %s (%s)\n", sourceIndicator(phase), declared.Name, orDash(shown))
+		if readers := summariseReaders(src); readers != "" {
+			ioStreams.Infof("      read by %s\n", readers)
+		}
 		for _, res := range dividedResolutions(src) {
 			// The storage key is the identity; clusters are context, and only some
 			// of it - a key may vary by namespace or component just as readily.
@@ -307,6 +311,37 @@ func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application)
 		}
 	}
 	ioStreams.Infof("\n")
+}
+
+// summariseReaders names who consumed a binding, without saying what they took.
+//
+// Deduplicated by reader rather than by consumption: one component placed in
+// three clusters is one reader that happens to run in three places, and listing
+// it three times would say more about the topology than about the source. The
+// values each of them took are --sources' job.
+//
+// Truncated past a handful. A binding read by thirty components is a fact worth
+// knowing; thirty names wrapped across a terminal is not.
+func summariseReaders(src common.ApplicationSourceStatus) string {
+	const show = 4
+	seen := map[string]struct{}{}
+	var readers []string
+	for _, by := range src.ConsumedBy {
+		name := by.DefinitionKind + "/" + by.Name
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		readers = append(readers, name)
+	}
+	if len(readers) == 0 {
+		return ""
+	}
+	sort.Strings(readers)
+	if len(readers) <= show {
+		return strings.Join(readers, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(readers[:show], ", "), len(readers)-show)
 }
 
 // dividedResolutions returns the per-entry breakdown worth showing, and nothing
