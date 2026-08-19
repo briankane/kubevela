@@ -242,6 +242,20 @@ func GetCapabilityDefinition(ctx context.Context, cli client.Reader, definition 
 
 		return GetDefinition(ctx, cli, definition, definitionName)
 	}
+	// A DefinitionRevision is named "<definition>-v<n>" with no kind in it, so
+	// definitions of different kinds sharing a name share revision names too -
+	// KubeVela ships a "configmap" trait, and a SourceDefinition named after what
+	// it reads collides with it. Without this check the mismatch is silent: the
+	// switch below copies the field for the kind asked for, which on a revision
+	// of another kind is a zero struct, so the caller gets an empty definition
+	// and no error. That surfaces much later as "declares no parameters" or
+	// "undefined field", neither of which points at the collision.
+	if defRev.Spec.DefinitionType != definitionType {
+		return fmt.Errorf("definition revision %q holds a %s definition, but %s was requested as a %s; "+
+			"revision names do not carry the kind, so definitions of different kinds sharing the name %q share revisions",
+			defRev.Name, defRev.Spec.DefinitionType, definitionName, definitionType,
+			strings.Split(definitionName, "@")[0])
+	}
 	switch def := definition.(type) {
 	case *v1beta1.ComponentDefinition:
 		*def = defRev.Spec.ComponentDefinition
