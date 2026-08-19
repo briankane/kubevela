@@ -28,6 +28,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	cmdutil "github.com/oam-dev/kubevela/pkg/utils/util"
 )
 
 // printAppSources renders what an Application read from its declared sources.
@@ -220,46 +221,58 @@ func orDash(s string) string {
 	return s
 }
 
-// summariseSources is the one line the default status view shows about sources.
+// sourceIndicator maps a phase to the vocabulary the rest of vela status already
+// uses, so a source reads the same way a component or a workflow step does.
 //
-// It exists for a case the rest of that view cannot express: an Application can
-// be Running and healthy while a source has quietly stopped refreshing, because
-// a stale source serves its previous value rather than failing. "Healthy" is
-// then true and misleading, and nothing else on screen hints that the data has
-// stopped moving.
+// Stale is deliberately not a failure. A stale source is serving its previous
+// value, which means the Application is working and its data has stopped moving
+// - worth attention, but a cross would say something untrue. Unused is not a
+// problem at all, only a fact.
+func sourceIndicator(phase string) string {
+	switch strings.ToLower(phase) {
+	case "resolved":
+		return emojiSucceed
+	case "failed":
+		return emojiFail
+	case "unused":
+		return emojiSkip
+	default: // stale, pending, anything a newer controller reports
+		return emojiExecuting
+	}
+}
+
+// printSourcesOverview lists each declared binding and how it is doing, in the
+// default status view.
 //
-// Returns "" when the Application declares no sources, so apps that do not use
-// the feature see nothing about it.
-func summariseSources(app *v1beta1.Application) string {
+// It sits with the Application's own summary rather than under Services because
+// a binding is declared once for the whole Application: the same source feeds
+// several components, and reporting it per component is what the status rework
+// moved away from.
+func printSourcesOverview(ioStreams cmdutil.IOStreams, app *v1beta1.Application) {
 	if len(app.Spec.Sources) == 0 {
-		return ""
+		return
 	}
-	counts := map[string]int{}
+	ioStreams.Infof("Sources:\n\n")
+	byName := map[string]common.ApplicationSourceStatus{}
 	for _, src := range app.Status.Sources {
-		phase := src.Phase
-		if phase == "" {
-			phase = "pending"
+		byName[src.Name] = src
+	}
+	for _, declared := range app.Spec.Sources {
+		src, resolved := byName[declared.Name]
+		if !resolved {
+			ioStreams.Infof("  - %s %s (%s)  not resolved yet\n",
+				emojiExecuting, declared.Name, orDash(declared.Type))
+			continue
 		}
-		counts[strings.ToLower(phase)]++
-	}
-	if len(counts) == 0 {
-		return fmt.Sprintf("%d declared, none resolved yet", len(app.Spec.Sources))
-	}
-	// Fixed order, worst first, so the thing worth acting on leads and the line
-	// does not reshuffle between reconciles.
-	var parts []string
-	unhealthy := 0
-	for _, phase := range []string{"failed", "stale", "pending", "resolved", "unused"} {
-		if n := counts[phase]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", n, phase))
-			if phase == "failed" || phase == "stale" {
-				unhealthy += n
-			}
+		line := fmt.Sprintf("  - %s %s (%s)  %s", sourceIndicator(src.Phase),
+			src.Name, orDash(src.Type), orDash(src.Phase))
+		if src.AutoUpdate != nil && *src.AutoUpdate {
+			line += "  auto-update"
+		}
+		ioStreams.Infof("%s\n", line)
+		if src.Message != "" {
+			ioStreams.Infof("      %s\n", src.Message)
 		}
 	}
-	line := strings.Join(parts, ", ")
-	if unhealthy > 0 {
-		line = emojiFail + line
-	}
-	return line + "  (--sources for detail)"
+	ioStreams.Infof("\n")
 }

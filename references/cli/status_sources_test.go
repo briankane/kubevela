@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,6 +30,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	velacommon "github.com/oam-dev/kubevela/pkg/utils/common"
+	cmdutil "github.com/oam-dev/kubevela/pkg/utils/util"
 )
 
 func TestFormatAutoUpdate(t *testing.T) {
@@ -150,42 +150,48 @@ func TestPrintAppSourcesJSONPath(t *testing.T) {
 	r.Equal("Resolved", buf.String())
 }
 
-func appWithSourcePhases(declared int, phases ...string) *v1beta1.Application {
-	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "prod"}}
-	for i := 0; i < declared; i++ {
-		app.Spec.Sources = append(app.Spec.Sources, v1beta1.ApplicationSource{Name: string(rune('a' + i))})
-	}
-	for i, p := range phases {
-		app.Status.Sources = append(app.Status.Sources,
-			common.ApplicationSourceStatus{Name: string(rune('a' + i)), Phase: p})
-	}
-	return app
-}
-
-// The default view must say nothing about sources to an Application that does
-// not use them.
-func TestSummariseSourcesIsSilentWithoutSources(t *testing.T) {
-	require.Equal(t, "", summariseSources(appWithSourcePhases(0)))
-}
-
-// An Application can be Running and healthy while a source has quietly stopped
-// refreshing, because a stale source serves its previous value rather than
-// failing. That is the case this line exists for, so it has to stand out.
-func TestSummariseSourcesFlagsTroubleFirst(t *testing.T) {
+func TestSourceIndicatorVocabulary(t *testing.T) {
 	r := require.New(t)
-
-	clean := summariseSources(appWithSourcePhases(2, "Resolved", "Unused"))
-	r.Contains(clean, "1 resolved, 1 unused")
-	r.NotContains(clean, emojiFail, "nothing wrong, so no alarm")
-	r.Contains(clean, "--sources")
-
-	stale := summariseSources(appWithSourcePhases(3, "Resolved", "Stale", "Failed"))
-	r.Contains(stale, emojiFail)
-	// Worst first, and a fixed order so the line does not reshuffle per reconcile.
-	r.True(strings.Index(stale, "1 failed") < strings.Index(stale, "1 stale"))
-	r.True(strings.Index(stale, "1 stale") < strings.Index(stale, "1 resolved"))
+	r.Equal(emojiSucceed, sourceIndicator("Resolved"))
+	r.Equal(emojiFail, sourceIndicator("Failed"))
+	r.Equal(emojiSkip, sourceIndicator("Unused"))
+	// Stale is not a failure. The Application works; its data has stopped moving,
+	// and a cross would say something untrue.
+	r.Equal(emojiExecuting, sourceIndicator("Stale"))
+	// An unknown phase from a newer controller reads as in-progress rather than
+	// as success, which is the safe direction.
+	r.Equal(emojiExecuting, sourceIndicator("SomethingNew"))
+	r.Equal(emojiExecuting, sourceIndicator(""))
 }
 
-func TestSummariseSourcesBeforeAnythingResolves(t *testing.T) {
-	require.Equal(t, "2 declared, none resolved yet", summariseSources(appWithSourcePhases(2)))
+func TestPrintSourcesOverview(t *testing.T) {
+	r := require.New(t)
+	yes := true
+	app := &v1beta1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "prod"},
+		Spec: v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{
+			{Name: "registry", Type: "configmap"}, {Name: "pending", Type: "atlas"},
+		}},
+		Status: common.AppStatus{Sources: []common.ApplicationSourceStatus{
+			{Name: "registry", Type: "configmap", Phase: "Failed", AutoUpdate: &yes,
+				Message: "vault: permission denied"},
+		}},
+	}
+	var buf bytes.Buffer
+	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf}, app)
+	out := buf.String()
+
+	r.Contains(out, "registry (configmap)")
+	r.Contains(out, emojiFail)
+	r.Contains(out, "vault: permission denied", "a failure has to say why, inline")
+	// Declared but not yet in status still appears: silence would read as
+	// "no such source" rather than "not resolved yet".
+	r.Contains(out, "pending (atlas)")
+	r.Contains(out, "not resolved yet")
+
+	// An Application with no sources says nothing at all.
+	buf.Reset()
+	printSourcesOverview(cmdutil.IOStreams{Out: &buf, ErrOut: &buf},
+		&v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: "b"}})
+	r.Empty(buf.String())
 }
