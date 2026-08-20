@@ -281,6 +281,21 @@ func (r *sourceResolver) expressionContext() map[string]interface{} {
 }
 
 func lookupMapPath(data map[string]interface{}, path string) (interface{}, bool) {
+	// An empty path is a read of the binding entire - `$(source.cfg)` rather
+	// than `$(source.cfg.host)`, whose reference is Path=["cfg"] and so leaves
+	// nothing after the name.
+	//
+	// Without this, strings.Split("", ".") yields one empty segment, the lookup
+	// asks for the key "" and finds nothing, and the read goes unrecorded. The
+	// value still substituted, so it looked fine; what was lost is the hash that
+	// resolvedSourceHashes stamps, and with it auto-update for that binding.
+	//
+	// Recording it under the empty path is what redaction already expects:
+	// RedactValue descends from the read path and joinMaskPath treats an empty
+	// prefix as the root, so a +sensitive field one level down is still masked.
+	if path == "" {
+		return data, true
+	}
 	cur := interface{}(data)
 	for _, p := range strings.Split(path, ".") {
 		// A segment is an index when what it is being applied to is a list. The
