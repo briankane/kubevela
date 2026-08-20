@@ -19,7 +19,6 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"maps"
 	"slices"
 	"sort"
@@ -51,6 +50,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/resourcekeeper"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // AppHandler handles application reconcile

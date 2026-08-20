@@ -43,7 +43,11 @@ func asNotFound(err error, path string) error {
 		return err
 	}
 	if statusOf(err) == http.StatusNotFound {
-		return fmt.Errorf("reading %q: %w", path, ErrFileNotFound)
+		// Both are wrapped: the sentinel so a caller can branch on absence, and
+		// the backend's own error so a log still says which 404 it was. GitHub
+		// answers "no such repository" and "no such file" with the same status,
+		// and dropping the cause made them indistinguishable after the fact.
+		return fmt.Errorf("reading %q: %w: %w", path, ErrFileNotFound, err)
 	}
 	return err
 }

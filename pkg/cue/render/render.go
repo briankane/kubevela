@@ -41,12 +41,23 @@ import (
 const ErrsFieldName = "errs"
 
 // MaxAnnotationValueLen is the budget for everything recorded on one object.
+//
+// Kubernetes allows 256KB across all annotations on an object; these are
+// diagnostic, so they take a small slice and leave the rest to whatever else
+// annotates the entry. Contrast MaxPropertyValueLen, which caps one value
+// within this budget.
 const MaxAnnotationValueLen = 4096
 
 // MaxPropertyValueLen caps one property within that budget, so a single large
 // value cannot crowd out every other property.
 const MaxPropertyValueLen = 512
 
+// Template closes a definition's CUE over the fields a render supplies, so it
+// compiles on its own.
+//
+// `context` and `parameter` are open here rather than declared: the caller
+// unifies real values in afterwards, and declaring shapes this package cannot
+// know would reject templates it has no business judging.
 func Template(templ string) string {
 	return templ + `
 context: _
@@ -54,14 +65,13 @@ parameter: _
 `
 }
 
-// resolveSourceExpressions substitutes $(...) expressions in a properties blob.
+// UserErrors reads the authored `errs:` field from a compiled CUE value and
+// returns its non-empty entries.
 //
-// surface names the call site, which decides both what a source may read from
-// context and - once the compatibility check lands - whether it may be consumed
-// here at all.
-// extractUserErrors reads the authored `errs:` field ([]string) from a compiled
-// CUE value and returns its non-empty entries. A malformed `errs:` field is
-// logged and treated as empty so error reporting never masks the real result.
+// A definition uses `errs:` to say why it refused, in its own words, rather than
+// leaving a reader to infer it from a unification failure. A malformed field is
+// logged and treated as empty, so a mistake in error reporting never masks the
+// result it was reporting on.
 func UserErrors(val cue.Value, entityType, entityName string) []string {
 	errs := val.LookupPath(value.FieldPath(ErrsFieldName))
 	if !errs.Exists() {
@@ -81,20 +91,8 @@ func UserErrors(val cue.Value, entityType, entityName string) []string {
 	return filtered
 }
 
-// MaxAnnotationValueLen caps a single recorded value. Kubernetes budgets 256KB
-// across all annotations on an object; these are diagnostic, so they take a
-// small slice of that and leave the rest to whatever else annotates the entry.
-
-// renderProperties marshals the binding's properties for the annotation,
-// replacing any value too large to record with a placeholder.
-//
-// Clamping happens per value rather than on the finished JSON, because clipping
-// a JSON document mid-string leaves something no reader can parse - and an
-// annotation that has to be parsed to be useful is worth keeping valid. The
-// placeholder keeps the shape intact and says what was dropped, so a reader
-// still learns which properties distinguish this entry from its neighbours.
-// renderProperties marshals the binding's properties for the annotation,
-// replacing any value too large to record with a placeholder.
+// Properties marshals a binding's properties for the annotation, replacing any
+// value too large to record with a placeholder.
 //
 // Clamping happens per value rather than on the finished JSON, because clipping
 // a JSON document mid-string leaves something no reader can parse - and an
@@ -154,27 +152,6 @@ func Properties(props map[string]interface{}) (string, bool, error) {
 	}
 	return string(raw), truncated, nil
 }
-
-// contextLabels renders the identity's context values as labels, so entries can
-// be selected on them.
-//
-// A value is emitted only when both halves are legal: the field name (with the
-// index folded in, for an indexed read) has to be a valid label key, and the
-// value a valid label value. Neither is guaranteed - an index like
-// "example.org/service-name" would put a second slash in the key, and a label
-// value may hold characters that are legal there and illegal here. Whatever is
-// skipped is still recorded whole in AnnotationSourceContext, so nothing is
-// lost; only selectability is.
-// contextLabels renders the identity's context values as labels, so entries can
-// be selected on them.
-//
-// A value is emitted only when both halves are legal: the field name (with the
-// index folded in, for an indexed read) has to be a valid label key, and the
-// value a valid label value. Neither is guaranteed - an index like
-// "example.org/service-name" would put a second slash in the key, and a label
-// value may hold characters that are legal there and illegal here. Whatever is
-// skipped is still recorded whole in AnnotationSourceContext, so nothing is
-// lost; only selectability is.
 
 // contextLabels renders the identity's context values as labels, so entries can
 // be selected on them.

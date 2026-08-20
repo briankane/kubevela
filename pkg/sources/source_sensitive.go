@@ -59,8 +59,8 @@ func ExtractSensitiveOutputPaths(template string) []string {
 	return paths
 }
 
-// findTopLevelStruct returns the named top-level struct of a template, or nil.
-
+// collectSensitivePaths walks a struct literal and records the dotted path of
+// every field carrying a `// +sensitive` marker, descending into nested structs.
 func collectSensitivePaths(st *ast.StructLit, prefix []string, out *[]string) {
 	for _, elt := range st.Elts {
 		field, ok := elt.(*ast.Field)
@@ -103,9 +103,6 @@ func labelName(label ast.Label) string {
 	}
 }
 
-// WorkflowClient cache retrieved workflow if ApplicationRevision not exists in appfile
-// else use the workflow in ApplicationRevision
-
 // sensitiveMarkerBlocks are the template blocks a `// +sensitive` marker is
 // honoured in. schema: is where KEP-2.16 documents the marker and where its
 // examples place it; output: is where the first implementation read it from.
@@ -113,6 +110,7 @@ func labelName(label ast.Label) string {
 // silently exposing the value because the marker sat in the other block.
 var sensitiveMarkerBlocks = []string{"schema", "output"}
 
+// findTopLevelStruct returns the named top-level struct of a template, or nil.
 func findTopLevelStruct(f *ast.File, name string) *ast.StructLit {
 	for _, decl := range f.Decls {
 		field, ok := decl.(*ast.Field)
@@ -152,17 +150,9 @@ func (s SourceResolutionStatus) RedactedFields(extra ...string) map[string]inter
 	return out
 }
 
-// maskedPath reports whether a consumed field is covered by a mask, either
-// exactly or by sitting underneath one.
+// RedactValue blanks anything marked sensitive inside a read value.
 //
-// The descent matters. A marker can only be written where the schema declares a
-// field, so a source exposing an open struct - `properties: _`, whose shape is
-// whatever template produced it - has nowhere to put a marker except on the
-// struct itself. Matching exactly would mask a read of `properties` and publish
-// `properties.token` beside it, which is the one case the marker exists for.
-// redactValue blanks anything marked sensitive inside a read value.
-//
-// maskedPath alone is not enough. It answers "is this path at or below a mark",
+// MaskedPath alone is not enough. It answers "is this path at or below a mark",
 // which covers reading db.password directly, but an expression may substitute a
 // whole collection - "$(source.creds.db)" - and then the read path is db while
 // the mark is db.password, one level below. Nothing matched and the secret went
@@ -203,6 +193,14 @@ func joinMaskPath(prefix, key string) string {
 	return prefix + "." + key
 }
 
+// MaskedPath reports whether a consumed field is covered by a mask, either
+// exactly or by sitting underneath one.
+//
+// The descent matters. A marker can only be written where the schema declares a
+// field, so a source exposing an open struct - `properties: _`, whose shape is
+// whatever template produced it - has nowhere to put a marker except on the
+// struct itself. Matching exactly would mask a read of `properties` and publish
+// `properties.token` beside it, which is the one case the marker exists for.
 func MaskedPath(path string, masks map[string]struct{}) bool {
 	if _, ok := masks[path]; ok {
 		return true

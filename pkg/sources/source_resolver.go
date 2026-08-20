@@ -108,11 +108,6 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 // recorded read can say which property received the value. Without it status can
 // report what was read but not where it went, which is the half that matters
 // once a property is assembled from more than one source.
-
-// resolveSourceNode walks a properties blob, carrying the path it is at so a
-// recorded read can say which property received the value. Without it status can
-// report what was read but not where it went, which is the half that matters
-// once a property is assembled from more than one source.
 func resolveSourceNode(node interface{}, resolver *sourceResolver, path string) (interface{}, error) {
 	switch val := node.(type) {
 	case map[string]interface{}:
@@ -154,18 +149,6 @@ func joinPropertyPath(prefix, key string) string {
 	}
 	return prefix + "." + key
 }
-
-// evaluateSourceExpression substitutes $(...) expressions in a property value.
-//
-// A value
-// with no delimiter comes back byte-identical, so nothing that works today
-// changes. What it adds is the ability to combine a resolved value with anything
-// else, which the directive cannot do - it yields a whole value or nothing.
-//
-// Resolving here rather than at admission matters for status: reading a source
-// through an expression must drive the same resolution and the same consumed-value
-// recording a directive would have done, or a binding used only by an expression would
-// show as unresolved.
 
 // evaluateSourceExpression substitutes $(...) expressions in a property value.
 //
@@ -223,10 +206,6 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 // expressionReferences extracts the reads an expression makes, through whichever
 // engine is selected. Both must agree, or dependency ordering and +sensitive
 // redaction would differ between them.
-
-// expressionReferences extracts the reads an expression makes, through whichever
-// engine is selected. Both must agree, or dependency ordering and +sensitive
-// redaction would differ between them.
 func expressionReferences(expr string) ([]propexpr.Reference, error) {
 	env, err := celexpr.DynEnv()
 	if err != nil {
@@ -247,9 +226,6 @@ func expressionReferences(expr string) ([]propexpr.Reference, error) {
 
 // celEvalProperty evaluates a whole property value with CEL, interpolation
 // included. The $( ) splitting is shared, so only the contents differ.
-
-// celEvalProperty evaluates a whole property value with CEL, interpolation
-// included. The $( ) splitting is shared, so only the contents differ.
 func celEvalProperty(raw string, resolved map[string]map[string]interface{},
 	ctx map[string]interface{}) (interface{}, error) {
 	env, err := celexpr.DynEnv()
@@ -264,9 +240,6 @@ func celEvalProperty(raw string, resolved map[string]map[string]interface{},
 	in["source"] = sources
 	return celexpr.EvalProperty(env, raw, in)
 }
-
-// expressionContext pulls the fields this surface declares readable out of
-// the render's process context.
 
 // expressionContext pulls the fields this surface declares readable out of
 // the render's process context.
@@ -506,27 +479,10 @@ func mergeStatus(before, cur SourceResolutionStatus) SourceResolutionStatus {
 // provider set, and so a test can compile without reaching for global state. The
 // resolver needs both methods: the template is evaluated with providers, and the
 // storage block deliberately without them.
-
-// SourceCompiler evaluates a source's CUE template. Satisfied by
-// *cuex.Compiler.
-//
-// An interface rather than the package singleton so a caller can supply its own
-// provider set, and so a test can compile without reaching for global state. The
-// resolver needs both methods: the template is evaluated with providers, and the
-// storage block deliberately without them.
 type SourceCompiler interface {
 	CompileString(ctx context.Context, src string) (cue.Value, error)
 	CompileStringWithOptions(ctx context.Context, src string, opts ...upstreamcuex.CompileOption) (cue.Value, error)
 }
-
-// sourceInputs is everything a resolution needs that is not the properties being
-// resolved: which bindings exist, what definition backs each, and where values
-// are cached.
-//
-// Explicit rather than pulled from the render context. The Application controller
-// pushes these onto process.Context for its own reasons, but a resolver should
-// not have to know that protocol to be usable - and a second caller has no
-// process.Context to push onto.
 
 // sourceInputs is everything a resolution needs that is not the properties being
 // resolved: which bindings exist, what definition backs each, and where values
@@ -553,10 +509,6 @@ type sourceInputs struct {
 	// is what the Application render has always used.
 	Compiler SourceCompiler
 }
-
-// contextValuesFor flattens the render context into the field values a source may
-// read, which is every field the cache-key rules allow. Narrowing to a surface
-// happens later, when the source's own context block is rendered.
 
 // contextValuesFor flattens the render context into the field values a source may
 // read, which is every field the cache-key rules allow. Narrowing to a surface
@@ -591,10 +543,6 @@ func contextValuesFor(ctx process.Context) map[string]interface{} {
 // sourceInputsFromContext reads what the Application controller pushed. It is the
 // bridge from the render context's protocol to explicit inputs, and the only
 // place that protocol is understood.
-
-// sourceInputsFromContext reads what the Application controller pushed. It is the
-// bridge from the render context's protocol to explicit inputs, and the only
-// place that protocol is understood.
 func sourceInputsFromContext(ctx process.Context) sourceInputs {
 	in := sourceInputs{
 		Bindings:  map[string]map[string]interface{}{},
@@ -619,12 +567,6 @@ func sourceInputsFromContext(ctx process.Context) sourceInputs {
 	}
 	return in
 }
-
-// newSourceResolver builds a resolver for one render.
-//
-// ctx is still required, for three things that are genuinely the render's: the
-// context values an expression may read, the Go context for I/O, and recording
-// what resolved so status can report it.
 
 // newSourceResolver builds a resolver for one render.
 //
@@ -977,11 +919,6 @@ func (r *sourceResolver) writeSourceCache(cacheKey, sourceType string, data map[
 // being served, if the backing store supports it. Failures are non-fatal: a
 // missed touch only risks the sweep collecting a still-used entry one cycle
 // early, which the next render re-creates.
-
-// touchSourceCache advances the last-accessed marker for a stale entry that is
-// being served, if the backing store supports it. Failures are non-fatal: a
-// missed touch only risks the sweep collecting a still-used entry one cycle
-// early, which the next render re-creates.
 func (r *sourceResolver) touchSourceCache(cacheKey string) {
 	if r.cacheStore == nil || cacheKey == "" {
 		return
@@ -994,12 +931,6 @@ func (r *sourceResolver) touchSourceCache(cacheKey string) {
 		klog.Warningf("touch source cache failed for %s: %v", cacheKey, err)
 	}
 }
-
-// sourceCacheTemplateName reproduces the ConfigTemplate name the SourceDefinition
-// controller derives from (sourceType, schema) so a cache entry can be stamped
-// with the template it was rendered against without a client round-trip. It must
-// stay in sync with buildSchemaTemplateName in the sourcedefinition controller.
-// Returns "" when there is no schema (no template is generated in that case).
 
 // sourceCacheTemplateName reproduces the ConfigTemplate name the SourceDefinition
 // controller derives from (sourceType, schema) so a cache entry can be stamped
@@ -1049,13 +980,6 @@ func sanitizeSourceName(name string) string {
 	}
 	return strings.Trim(b.String(), "-")
 }
-
-// applySourceCacheMetadata stamps identity and lifetime metadata onto a source
-// cache object so a context-free GC sweep can reason about it. It is strictly
-// additive: it never overwrites the config.oam.dev/type label, which callers
-// (e.g. the config-API store via ParseConfig) set to the ConfigTemplate name and
-// which the config factory relies on for its change-template guard. The
-// ttl/template/sourcedefinition markers are new.
 
 // applySourceCacheMetadata stamps identity and lifetime metadata onto a source
 // cache object so a context-free GC sweep can reason about it. It is strictly
@@ -1196,11 +1120,6 @@ func (r *sourceResolver) recordConsumedValue(sourceName, sourceType, path string
 	}
 	statuses[sourceName] = st
 }
-
-// formatExpiry renders a cache expiry, and renders nothing when there is not
-// one. A source whose definition sets no storageTTL has a zero time, and
-// formatting that put "0001-01-01T00:00:00Z" into status - a date, where the
-// honest answer is silence.
 
 // formatExpiry renders a cache expiry, and renders nothing when there is not
 // one. A source whose definition sets no storageTTL has a zero time, and

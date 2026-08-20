@@ -18,7 +18,6 @@ package sourcedefinition
 
 import (
 	"fmt"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"slices"
 	"strings"
 
@@ -29,6 +28,7 @@ import (
 
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // ValidateSourceStorage checks the `storage:` block of a SourceDefinition template.

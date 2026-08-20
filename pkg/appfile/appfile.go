@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"reflect"
 	"strings"
 
@@ -56,6 +55,7 @@ import (
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // constant error information

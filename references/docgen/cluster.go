@@ -19,7 +19,6 @@ package docgen
 import (
 	"context"
 	"fmt"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"slices"
 	"sort"
 	"strings"
@@ -44,6 +43,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
 	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/sourcedefinition"

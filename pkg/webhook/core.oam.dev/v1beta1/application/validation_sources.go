@@ -592,8 +592,6 @@ func (c *cueStruct) valueAt(path string) (cue.Value, bool) {
 	return v, true
 }
 
-// kindAt returns the declared CUE kind at path (e.g. StringKind, IntKind,
-// StructKind). Returns (BottomKind, false) if the path does not resolve.
 // listElementAt resolves one index of a list-valued schema to the type its
 // elements must satisfy.
 //
@@ -649,6 +647,8 @@ func listElementAtDepth(v cue.Value, idx, depth int) (cue.Value, bool) {
 	return cue.Value{}, false
 }
 
+// kindAt returns the declared CUE kind at path (e.g. StringKind, IntKind,
+// StructKind). Returns (BottomKind, false) if the path does not resolve.
 func (c *cueStruct) kindAt(path string) (cue.Kind, bool) {
 	v, ok := c.lookup(path)
 	if !ok || !v.Exists() {
