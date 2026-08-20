@@ -348,6 +348,75 @@ output: {
 			"a sibling component's resource must survive a prune")
 	})
 
+	// A list-valued parameter declared with a default - the ordinary way to write
+	// an optional list - was rejected at admission whenever an Application supplied
+	// more than the default:
+	//
+	//	"spec.sources[0].properties.paths[0]": property "paths.0" is not declared
+	//	in the parameter schema of SourceDefinition "list-param-source"
+	//
+	// Properties are flattened to dotted leaves before being checked, so the list
+	// arrives as paths.0 and paths.1, and neither resolved through the
+	// disjunction the default creates.
+	It("accepts a list-valued source parameter declared with a default", func() {
+		Expect(k8sClient.Create(ctx, &v1beta1.SourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "list-param-source", Namespace: namespaceName},
+			Spec: v1beta1.SourceDefinitionSpec{
+				Schematic: &oamcomm.Schematic{CUE: &oamcomm.CUE{Template: `
+import "strings"
+
+schema: {
+  joined: string
+}
+$internal: {
+  key: "list-param-source"
+  keyInputs: []
+}
+output: {
+  joined: strings.Join(parameter.paths, ",")
+}
+parameter: {
+  paths: [...string] | *["app.yaml"]
+}
+`}},
+			},
+		})).Should(Succeed())
+
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "list-param-app", Namespace: namespaceName},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: []v1beta1.ApplicationSource{{
+					Name: "cfg",
+					Type: "list-param-source",
+					// More entries than the default, which is what made this fail.
+					Properties: &runtime.RawExtension{Raw: []byte(`{"paths":["one.yaml","two.yaml"]}`)},
+				}},
+				Components: []oamcomm.ApplicationComponent{{
+					Name:       "web",
+					Type:       "webservice",
+					Properties: &runtime.RawExtension{Raw: []byte(`{"image":"nginx:1.25.0","env":[{"name":"PATHS","value":"$(source.cfg.joined)"}]}`)},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, app)).Should(Succeed(),
+			"a list parameter with a default must be admitted, not rejected as undeclared")
+
+		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
+		Eventually(func() (string, error) {
+			deploy := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespaceName, Name: "web"}, deploy); err != nil {
+				return "", err
+			}
+			for _, e := range deploy.Spec.Template.Spec.Containers[0].Env {
+				if e.Name == "PATHS" {
+					return e.Value, nil
+				}
+			}
+			return "", fmt.Errorf("PATHS env not set yet")
+		}, 90*time.Second, time.Second).Should(Equal("one.yaml,two.yaml"),
+			"both list entries must reach the template, not just the default")
+	})
+
 	It("creates source cache using storage key policy", func() {
 		sourceDef := &v1beta1.SourceDefinition{
 			ObjectMeta: metav1.ObjectMeta{

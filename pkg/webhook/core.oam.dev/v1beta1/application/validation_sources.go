@@ -554,16 +554,8 @@ func (c *cueStruct) lookup(path string) (cue.Value, bool) {
 			return cur, false
 		}
 		if idx, err := strconv.Atoi(seg); err == nil {
-			next := cur.LookupPath(cue.MakePath(cue.Index(idx)))
-			if !next.Exists() {
-				// An open list - [...string] - has no concrete element at any
-				// index, only an element type. Without this a source property
-				// like items: ["a","b"] is flattened to items.0 / items.1 and
-				// then reported as undeclared, which is how a perfectly valid
-				// list-valued property was being rejected at admission.
-				next = cur.LookupPath(cue.MakePath(cue.AnyIndex))
-			}
-			if !next.Exists() {
+			next, ok := listElementAt(cur, idx)
+			if !ok {
 				return next, false
 			}
 			cur = next
@@ -602,6 +594,61 @@ func (c *cueStruct) valueAt(path string) (cue.Value, bool) {
 
 // kindAt returns the declared CUE kind at path (e.g. StringKind, IntKind,
 // StructKind). Returns (BottomKind, false) if the path does not resolve.
+// listElementAt resolves one index of a list-valued schema to the type its
+// elements must satisfy.
+//
+// Properties are flattened to dotted leaves before being checked, so a property
+// paths: ["a","b"] arrives here as paths.0 and paths.1 and each index has to
+// resolve to something. Three shapes have to work, and only the first is
+// straightforward:
+//
+//	[string, string]              a concrete element per index
+//	[...string]                   no concrete element, only an element type
+//	[...string] | *["app.yaml"]   a disjunction, where neither of the above
+//	                              resolves at all
+//
+// The third is the ordinary way to declare an optional list, and it was
+// rejecting every Application that supplied more than the default: admission
+// reported paths.0 as "not declared in the parameter schema". Taking the default
+// is not the fix either - the default is often shorter than what a caller
+// passes, so paths.1 would still be refused.
+//
+// So the disjunction is decomposed with Expr and each branch tried. Note the
+// branch can be semantically Equal to the value it came from while behaving
+// differently: indexing the disjunction resolves against its default, indexing
+// the branch against the whole list. That is why this recurses on a depth bound
+// rather than on "is this branch different", which skips the only branch there
+// is.
+//
+// An index outside every branch is still refused, which is what keeps a closed
+// list closed.
+func listElementAt(v cue.Value, idx int) (cue.Value, bool) {
+	return listElementAtDepth(v, idx, 4)
+}
+
+func listElementAtDepth(v cue.Value, idx, depth int) (cue.Value, bool) {
+	if elem := v.LookupPath(cue.MakePath(cue.Index(idx))); elem.Exists() {
+		return elem, true
+	}
+	// An open list has no concrete element at any index, only an element type.
+	if elem := v.LookupPath(cue.MakePath(cue.AnyIndex)); elem.Exists() {
+		return elem, true
+	}
+	if depth <= 0 {
+		return cue.Value{}, false
+	}
+	// A disjunction hides the list behind an operator, so neither lookup above
+	// reaches it.
+	if _, branches := v.Expr(); len(branches) > 0 {
+		for _, branch := range branches {
+			if elem, ok := listElementAtDepth(branch, idx, depth-1); ok {
+				return elem, true
+			}
+		}
+	}
+	return cue.Value{}, false
+}
+
 func (c *cueStruct) kindAt(path string) (cue.Kind, bool) {
 	v, ok := c.lookup(path)
 	if !ok || !v.Exists() {
