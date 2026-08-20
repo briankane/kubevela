@@ -35,7 +35,41 @@ matches on the recorded path, and to the `Reads` attribution.
 Test first: a component reading `$(source.x)` whole, assert a resolved-hash is
 stamped and that changing the source re-dispatches.
 
-## 2. Chained source properties are mutated in place on a caller-owned map (medium, CONFIRMED)
+## 2. A trait's render discards the component's source statuses (HIGH, CONFIRMED by test)
+
+`pkg/sources/source_resolver.go:97`
+
+Found while planning the fix for the item below, and it is both simpler and
+worse than that one. No chaining is involved, and no mutation.
+
+Each `ResolveSourceExpressions` call builds a fresh resolver with an empty
+statuses map, and pushes it with `ctx.PushData`, which **replaces**. Nothing
+seeds the new resolver from what is already on the context. A component and all
+its traits render against one `process.Context` (`appfile.go:665-678`), so:
+
+    component reads $(source.a.v)  ->  statuses [a]
+    trait     reads $(source.b.v)  ->  statuses [b]      <- a is gone
+
+Reproduced directly against the real entry point: after the component's pass the
+map holds `[a]`, after the trait's pass it holds `[b]`.
+
+`dispatcher.go:356` reads that final map, and `resolvedSourceHashes` only stamps
+a hash for what it finds. So **any component with a trait that reads a different
+source silently loses auto-update for its own sources**, and loses its consumer
+attribution in `status.sources[]`.
+
+The condition is narrow enough to explain why the demo never caught it: the push
+is guarded by `if len(res.Statuses) > 0`, so a trait that reads no sources at all
+leaves the component's map intact. It bites only when component and trait both
+read sources, and then it drops whichever the component read.
+
+Fix: merge rather than replace. Seed the resolver from the statuses already on
+the context, or merge at the push. Merging also makes item 3 below harmless,
+which is the argument for doing it first.
+
+Test first: the reproduction above, asserting both bindings survive.
+
+## 3. Chained source properties are mutated in place on a caller-owned map (medium, CONFIRMED)
 
 `pkg/sources/source_resolver.go:598`, `resolveSourceNode` at `:115`
 
@@ -71,7 +105,7 @@ harmless rather than just this instance.
 Test first: a component with a trait, both reading a chained source, asserting
 the chained source survives in the final statuses.
 
-## 3. `asNotFound` discards the underlying error (low)
+## 4. `asNotFound` discards the underlying error (low)
 
 `pkg/addon/notfound.go:45`
 
@@ -82,7 +116,7 @@ becomes indistinguishable from "file not found" in logs, and
 `pkg/addon` does that today, so this is a diagnostics loss rather than a break.
 Wrapping both costs nothing. Mine, from the registry soft-fail commit.
 
-## 4. Doc comments orphaned by the package moves (low)
+## 5. Doc comments orphaned by the package moves (low)
 
 The `sourceexpr` -> `propexpr` and `pkg/cue/definition` -> `pkg/sources` renames
 separated several comments from the functions they document. `pkg/cue/render` is
@@ -108,7 +142,7 @@ public docs:
 - `source_resolver.go:212` and `:496` each have their doc comment duplicated
   verbatim immediately above themselves.
 
-## 5. Import grouping (low)
+## 6. Import grouping (low)
 
 `github.com/oam-dev/kubevela/pkg/sources` was added to the first (stdlib) import
 block in eight files: `application/apply.go`, `application/generator.go`,
