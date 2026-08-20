@@ -95,7 +95,8 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	}
 	res, err := engine.Resolve(ctx.GetCtx(), normalized)
 	if len(res.Statuses) > 0 {
-		ctx.PushData(SourceResolutionStatusKey, res.Statuses)
+		prior, _ := ctx.GetData(SourceResolutionStatusKey).(map[string]SourceResolutionStatus)
+		ctx.PushData(SourceResolutionStatusKey, mergeStatuses(prior, res.Statuses))
 	}
 	if err != nil {
 		return nil, err
@@ -388,6 +389,91 @@ type SourceResolutionStatus struct {
 	// only, never hashed.
 	Reads          []SourceRead
 	SensitivePaths []string
+}
+
+// mergeStatuses folds one render pass's statuses into what earlier passes on the
+// same context recorded.
+//
+// A component and every one of its traits render against a single
+// process.Context, one pass each, and each pass builds its status map from
+// scratch. PushData replaces, so without this the last pass to resolve anything
+// was the only one whose bindings survived: a component reading source "a"
+// followed by a trait reading source "b" ended with "b" alone.
+//
+// That is invisible in the rendered output, because the values substitute
+// correctly either way. It shows up one layer down, where
+// resolvedSourceHashes stamps a resolved-hash only for the bindings present in
+// the final map - so the component's own sources quietly stopped triggering
+// auto-update, and lost their attribution in status.sources[].
+//
+// Later wins on resolution state, because it re-resolved and is the more recent
+// answer. Consumption accumulates instead, since each pass records a different
+// reader taking a different property, and those are all true at once.
+func mergeStatuses(prior, next map[string]SourceResolutionStatus) map[string]SourceResolutionStatus {
+	if len(prior) == 0 {
+		return next
+	}
+	out := make(map[string]SourceResolutionStatus, len(prior)+len(next))
+	for name, st := range prior {
+		out[name] = st
+	}
+	for name, cur := range next {
+		before, seen := out[name]
+		if !seen {
+			out[name] = cur
+			continue
+		}
+		out[name] = mergeStatus(before, cur)
+	}
+	return out
+}
+
+// mergeStatus combines two records of one binding: the newer resolution, and
+// every read either pass made.
+func mergeStatus(before, cur SourceResolutionStatus) SourceResolutionStatus {
+	merged := cur
+
+	// Consumption is cumulative. The newer value wins a conflict - both passes
+	// read the same resolution, so they agree, and where they do not the later
+	// one is the one the render actually used.
+	if len(before.ConsumedFields) > 0 {
+		fields := make(map[string]interface{}, len(before.ConsumedFields)+len(cur.ConsumedFields))
+		for k, v := range before.ConsumedFields {
+			fields[k] = v
+		}
+		for k, v := range cur.ConsumedFields {
+			fields[k] = v
+		}
+		merged.ConsumedFields = fields
+	}
+
+	// Reads carry the reader and the property, so two passes contribute
+	// different entries and both belong. Deduped on that identity rather than
+	// appended blindly, so a binding re-resolved by the same reader does not
+	// accumulate a duplicate.
+	if len(before.Reads) > 0 {
+		// An explicit key rather than SourceRead itself: SourceRead carries a
+		// Value of type interface{}, and using it as a map key would panic the
+		// moment a source resolved to a map or a list.
+		type readKey struct{ attr, property, readerKind, readerName string }
+		seen := make(map[readKey]bool, len(before.Reads)+len(cur.Reads))
+		reads := make([]SourceRead, 0, len(before.Reads)+len(cur.Reads))
+		for _, r := range append(append([]SourceRead{}, before.Reads...), cur.Reads...) {
+			key := readKey{r.SourceAttr, r.Property, r.ReaderKind, r.ReaderName}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			reads = append(reads, r)
+		}
+		merged.Reads = reads
+	}
+
+	// A pass that resolved from cache carries no sensitive paths of its own.
+	if len(merged.SensitivePaths) == 0 {
+		merged.SensitivePaths = before.SensitivePaths
+	}
+	return merged
 }
 
 // SourceCompiler evaluates a source's CUE template. Satisfied by
