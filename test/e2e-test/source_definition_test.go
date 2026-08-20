@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -346,6 +347,162 @@ output: {
 		// ...and pruning stayed inside the component that changed.
 		Consistently(cmExists("cm-bystander"), 10*time.Second, 2*time.Second).Should(BeTrue(),
 			"a sibling component's resource must survive a prune")
+	})
+
+	// A component's own source kept auto-updating when one of its traits read a
+	// different source.
+	//
+	// A component and every one of its traits render against a single
+	// process.Context, one pass each, and each pass built its status map from
+	// scratch before pushing it. The push replaces, so the trait's pass discarded
+	// the component's record. Nothing looked wrong: the values still substituted,
+	// so the first render was correct. But resolvedSourceHashes stamps a
+	// resolved-hash only for the bindings it finds in that final map, so the
+	// component's own source lost its hash and stopped re-dispatching.
+	//
+	// The unit test pins the map. This pins what the map is for - a value moving
+	// in the cluster, and the workload following it - which is the only thing that
+	// proves the hash reached the dispatched object.
+	It("keeps a component auto-updating when its trait reads a different source", func() {
+		compInput := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "trait-case-comp-input", Namespace: namespaceName},
+			Data:       map[string]string{"value": "first"},
+		}
+		Expect(k8sClient.Create(ctx, compInput)).Should(Succeed())
+
+		traitInput := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: "trait-case-trait-input", Namespace: namespaceName},
+			Data:       map[string]string{"value": "trait-value"},
+		}
+		Expect(k8sClient.Create(ctx, traitInput)).Should(Succeed())
+
+		// One definition, two bindings of it. The binding name is in the cache
+		// key, so they resolve independently.
+		Expect(k8sClient.Create(ctx, &v1beta1.SourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "trait-case-source", Namespace: namespaceName},
+			Spec: v1beta1.SourceDefinitionSpec{
+				Schematic: &oamcomm.Schematic{CUE: &oamcomm.CUE{Template: `
+import "vela/kube"
+
+schema: {
+  data: [string]: string
+}
+$internal: {
+  key: "trait-case-source-\(context.cluster)-\(context.namespace)"
+  keyInputs: ["cluster", "namespace"]
+}
+storage: storageTTL: "1s"
+parameter: {
+  name: string
+}
+_cm: kube.#Get & {
+  $params: {
+    cluster: context.cluster
+    resource: {
+      apiVersion: "v1"
+      kind:       "ConfigMap"
+      metadata: {
+        name:      parameter.name
+        namespace: context.namespace
+      }
+    }
+  }
+}
+output: data: _cm.$returns.data
+`}},
+			},
+		})).Should(Succeed())
+
+		Expect(k8sClient.Create(ctx, exprComponentDefinition(namespaceName, "trait-case-cm", `
+parameter: {value: string}
+output: {
+  apiVersion: "v1"
+  kind:       "ConfigMap"
+  metadata: name: "trait-case-result"
+  data: {value: parameter.value}
+}
+`))).Should(Succeed())
+
+		// The trait reads the OTHER source. That is the whole condition: without
+		// it the component's statuses were never overwritten.
+		Expect(k8sClient.Create(ctx, exprTraitDefinition(namespaceName, "trait-case-labeller", `
+parameter: {label: string}
+patch: metadata: labels: "trait-case/label": parameter.label
+`))).Should(Succeed())
+
+		autoUpdateOn := true
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "trait-case-app", Namespace: namespaceName},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: []v1beta1.ApplicationSource{
+					{
+						Name:       "forcomp",
+						Type:       "trait-case-source",
+						AutoUpdate: &autoUpdateOn,
+						Properties: &runtime.RawExtension{Raw: []byte(`{"name":"trait-case-comp-input"}`)},
+					},
+					{
+						Name:       "fortrait",
+						Type:       "trait-case-source",
+						AutoUpdate: &autoUpdateOn,
+						Properties: &runtime.RawExtension{Raw: []byte(`{"name":"trait-case-trait-input"}`)},
+					},
+				},
+				Components: []oamcomm.ApplicationComponent{{
+					Name: "app",
+					Type: "trait-case-cm",
+					Properties: &runtime.RawExtension{Raw: []byte(
+						`{"value":"$(has(source.forcomp.data.value) ? source.forcomp.data.value : \"absent\")"}`)},
+					Traits: []oamcomm.ApplicationTrait{{
+						Type: "trait-case-labeller",
+						Properties: &runtime.RawExtension{Raw: []byte(
+							`{"label":"$(has(source.fortrait.data.value) ? source.fortrait.data.value : \"absent\")"}`)},
+					}},
+				}},
+			},
+		}
+		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
+
+		renderedValue := func() string {
+			cm := &corev1.ConfigMap{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{
+				Namespace: namespaceName, Name: "trait-case-result"}, cm); err != nil {
+				return ""
+			}
+			return cm.Data["value"]
+		}
+		Eventually(renderedValue, 90*time.Second, time.Second).Should(Equal("first"))
+
+		// Both bindings must be reported. Losing one here is the bug in its
+		// visible form, before it reaches the hash.
+		Eventually(func() []string {
+			latest := &v1beta1.Application{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(app), latest); err != nil {
+				return nil
+			}
+			names := []string{}
+			for _, s := range latest.Status.Sources {
+				names = append(names, s.Name)
+			}
+			sort.Strings(names)
+			return names
+		}, 90*time.Second, time.Second).Should(Equal([]string{"forcomp", "fortrait"}),
+			"both bindings must appear in status.sources[]; the trait's pass must not drop the component's")
+
+		// Move the value the COMPONENT reads. The Application is untouched, so
+		// only the resolved-hash can drive a re-dispatch.
+		Eventually(func() error {
+			live := &corev1.ConfigMap{}
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(compInput), live); err != nil {
+				return err
+			}
+			live.Data["value"] = "second"
+			return k8sClient.Update(ctx, live)
+		}, 20*time.Second, time.Second).Should(Succeed())
+
+		Eventually(renderedValue, 180*time.Second, 2*time.Second).Should(Equal("second"),
+			"the component's own source must still drive auto-update when a trait reads another one")
 	})
 
 	// A list-valued parameter declared with a default - the ordinary way to write
