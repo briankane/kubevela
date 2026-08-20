@@ -168,6 +168,11 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 		Store:     e.opts.Store,
 		Compiler:  e.opts.Compiler,
 	})
+	// Overlap the round trips before walking. Behaviour-neutral: it only
+	// populates the memo the walk already consults, and anything it fails to
+	// resolve is resolved again, sequentially, by the walk itself.
+	r.prefetch(properties)
+
 	out, err := resolveSourceNode(properties, r, "")
 	if err != nil {
 		return SourceResult{Statuses: r.statuses}, err
