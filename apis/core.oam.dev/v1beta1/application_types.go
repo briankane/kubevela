@@ -47,9 +47,51 @@ type Workflow struct {
 	Steps []wfTypesv1alpha1.WorkflowStep       `json:"steps,omitempty"`
 }
 
+// ApplicationSource defines a source binding under spec.sources.
+type ApplicationSource struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Properties *runtime.RawExtension `json:"properties,omitempty"`
+	// StatusPolicy controls what source resolution details are exposed on Application status.
+	// +optional
+	StatusPolicy *ApplicationSourceStatusPolicy `json:"statusPolicy,omitempty"`
+	// AutoUpdate controls whether a change to this source's resolved value
+	// re-dispatches the components and traits that read it, without waiting for
+	// the workflow to run again.
+	//
+	// Unset defers to the EnableSourceAutoUpdate feature gate, so a platform can
+	// set the fleet-wide default and an Application can disagree per binding: a
+	// registry address worth picking up immediately and a feature flag that
+	// should wait for the next rollout can sit side by side.
+	//
+	// A publishVersion pin overrides this in both directions. An explicit pin is
+	// hard, so nothing re-dispatches until the pin is bumped.
+	// +optional
+	AutoUpdate *bool `json:"autoUpdate,omitempty"`
+}
+
+// ApplicationSourceStatusPolicy controls source status visibility.
+type ApplicationSourceStatusPolicy struct {
+	// ExposeResolvedFields controls whether resolved source fields are written to status.
+	// +optional
+	ExposeResolvedFields bool `json:"exposeResolvedFields,omitempty"`
+	// ExposeConsumedValues controls whether consumed source values are written to status.
+	// If false, consumed property paths may still be listed without values.
+	// +optional
+	ExposeConsumedValues bool `json:"exposeConsumedValues,omitempty"`
+	// MaskPaths redacts resolved field paths before writing to status.
+	// Paths are dot-delimited (e.g. "nested.token").
+	// +optional
+	MaskPaths []string `json:"maskPaths,omitempty"`
+}
+
 // ApplicationSpec is the spec of Application
 type ApplicationSpec struct {
 	Components []common.ApplicationComponent `json:"components"`
+
+	// Sources defines external sources that properties can read with $(source...).
+	Sources []ApplicationSource `json:"sources,omitempty"`
 
 	// Policies defines the global policies for all components in the app, e.g. security, metrics, gitops,
 	// multi-cluster placement rules, etc.

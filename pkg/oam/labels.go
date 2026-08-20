@@ -51,6 +51,9 @@ const (
 
 	// LabelComponentDefinitionName records the name of ComponentDefinition
 	LabelComponentDefinitionName = "componentdefinition.oam.dev/name"
+
+	// LabelSourceDefinitionName records the name of SourceDefinition
+	LabelSourceDefinitionName = "sourcedefinition.oam.dev/name"
 	// LabelTraitDefinitionName records the name of TraitDefinition
 	LabelTraitDefinitionName = "trait.oam.dev/name"
 	// LabelManageWorkloadTrait indicates if the trait will manage the lifecycle of the workload
@@ -165,6 +168,13 @@ const (
 	// When set to "true", policies can modify Application.Spec and trigger new revisions.
 	// This is orthogonal to AnnotationAutoUpdate which controls definition version updates.
 	AnnotationAutoRevision = "policy.oam.dev/auto-revision"
+
+	// AnnotationSourceResolvedHash records per-source hashes of the source
+	// values a component consumed at dispatch time (JSON map of source name ->
+	// hash). It is stamped on the dispatched workload so a later reconcile can
+	// detect that a source re-resolved to a different value (which the raw spec
+	// comparison cannot see) and re-dispatch.
+	AnnotationSourceResolvedHash = "source.oam.dev/resolved-hash"
 
 	// AnnotationSkipGlobalPolicies controls whether global (vela-system) policies are skipped for an Application.
 	// When set to "true", only explicitly declared spec.policies are evaluated.
