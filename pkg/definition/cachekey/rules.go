@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
@@ -114,7 +115,32 @@ func ruleFileNames() ([]string, error) {
 	return names, nil
 }
 
+// loadedRules memoises the parsed rule files.
+//
+// The rules live in an embedded FS, so a file's content cannot change while the
+// process runs and parsing it twice can only produce the same answer. It was
+// being parsed on every source resolution - a fresh cue.Context, a compile of
+// the rules file and a policy hash, all to answer a question with one possible
+// answer - which made it most of what a render spent on an already-cached
+// source.
+//
+// The returned *Rules is shared. Nothing mutates one: Hash and Version are
+// written only here, and keyed is unexported and read through Fields.
+var loadedRules sync.Map // name -> *Rules
+
 func loadRuleFile(name string) (*Rules, error) {
+	if hit, ok := loadedRules.Load(name); ok {
+		return hit.(*Rules), nil
+	}
+	rules, err := parseRuleFile(name)
+	if err != nil {
+		return nil, err
+	}
+	loadedRules.Store(name, rules)
+	return rules, nil
+}
+
+func parseRuleFile(name string) (*Rules, error) {
 	raw, err := rulesFS.ReadFile(name)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", name, err)

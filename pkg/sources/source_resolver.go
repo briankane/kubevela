@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cuelang.org/go/cue"
@@ -609,10 +610,8 @@ func newSourceResolver(goCtx context.Context, ctxValues map[string]interface{}, 
 	}
 }
 
-// extractUserErrors reads the authored `errs:` field ([]string) from a compiled
-// CUE value and returns its non-empty entries. A malformed `errs:` field is
-// logged and treated as empty so error reporting never masks the real result.
-
+// resolve returns a binding's value, resolving it if this render has not
+// already, and memoising the result for the rest of the render.
 func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, error) {
 	if v, ok := r.resolved[sourceName]; ok {
 		return v, nil
@@ -778,9 +777,16 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 	// resolved WITHOUT running provider functions. Resolving them here would
 	// perform the very I/O the cache exists to avoid - on every reconcile, before
 	// the cache is even consulted.
-	val, err := r.compiler.CompileStringWithOptions(r.goCtx, strings.Join([]string{
-		render.Template(sourceTemplate), paramFile, c,
-	}, "\n"), upstreamcuex.DisableResolveProviderFunctions{})
+	src := strings.Join([]string{render.Template(sourceTemplate), paramFile, c}, "\n")
+
+	// This source text is the policy's whole input, so the policy it produces can
+	// be kept against it. See policyCache for why that is worth doing.
+	if cached, ok := lookupCachedPolicy(src); ok {
+		return cached, nil
+	}
+
+	val, err := r.compiler.CompileStringWithOptions(r.goCtx, src,
+		upstreamcuex.DisableResolveProviderFunctions{})
 	if err != nil {
 		return policy, errors.WithMessagef(err, "evaluate storage block for source %q", sourceName)
 	}
@@ -835,6 +841,8 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 				sourceName, onStaleFailure, sourceCachePolicyUseStale, sourceCachePolicyFail)
 		}
 	}
+
+	storeCachedPolicy(src, policy)
 	return policy, nil
 }
 
@@ -866,7 +874,31 @@ func (r *sourceResolver) validateResolvedOutput(sourceType, sourceTemplate strin
 	return out.Validate(cue.Concrete(true))
 }
 
+// schemaExprCache memoises the extracted schema block.
+//
+// Extraction parses the template, and every resolver construction did it once
+// per SourceDefinition the Application uses - so an app with five source types
+// re-parsed five templates on every render of every component and every trait,
+// to recover text that is fixed for the life of the definition.
+//
+// A pure function of the template text, so the text is the whole key.
+var schemaExprCache sync.Map // template -> string
+
 func extractSourceSchemaExpr(template string) (string, error) {
+	if hit, ok := schemaExprCache.Load(template); ok {
+		return hit.(string), nil
+	}
+	expr, err := parseSourceSchemaExpr(template)
+	if err != nil {
+		// Not cached: a template that fails to parse is a condition worth
+		// reporting again rather than remembering.
+		return "", err
+	}
+	schemaExprCache.Store(template, expr)
+	return expr, nil
+}
+
+func parseSourceSchemaExpr(template string) (string, error) {
 	file, err := cueparser.ParseFile("-", template, cueparser.ParseComments)
 	if err != nil {
 		return "", err
