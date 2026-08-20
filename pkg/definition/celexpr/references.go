@@ -67,10 +67,11 @@ func (r Reference) String() string {
 // before the expression can be evaluated, and a value that might be substituted
 // must count as sensitive whether or not this particular render reaches it.
 func References(env *cel.Env, expr string) ([]Reference, error) {
-	ast, iss := env.Compile(expr)
-	if iss != nil && iss.Err() != nil {
-		return nil, iss.Err()
+	c, err := compiledFor(env, expr)
+	if err != nil {
+		return nil, err
 	}
+	ast := c.ast
 
 	seen := map[string]Reference{}
 	nav := celast.NavigateAST(ast.NativeRep())

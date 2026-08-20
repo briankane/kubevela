@@ -249,14 +249,11 @@ func OutputType(env *cel.Env, expr string) (*cel.Type, error) {
 
 // Eval compiles and runs an expression against real data.
 func Eval(env *cel.Env, expr string, in map[string]interface{}) (interface{}, error) {
-	ast, iss := env.Compile(expr)
-	if iss != nil && iss.Err() != nil {
-		return nil, iss.Err()
-	}
-	prg, err := env.Program(ast)
+	c, err := compiledFor(env, expr)
 	if err != nil {
-		return nil, fmt.Errorf("program: %w", err)
+		return nil, err
 	}
+	prg := c.prg
 	// Normalise here rather than in each caller. EvalTree and the render-side
 	// resolver in pkg/cue/definition both build their own input maps, and a fix
 	// applied to one of them silently missed the other - which is how arithmetic
@@ -416,11 +413,18 @@ func native(v ref.Val) interface{} {
 //
 // CEL selects a map key with `.`, so `source.cfg.host` reads the same here as
 // against a declared object - the expressions an author writes do not change.
+//
+// Built once and shared. It is immutable - nothing in this package extends it -
+// and constructing it costs ~20us, which the render path was paying on every
+// expression of every property of every component on every reconcile.
 func DynEnv() (*cel.Env, error) {
-	return cel.NewEnv(append([]cel.EnvOption{
-		cel.Variable("source", cel.MapType(cel.StringType, cel.DynType)),
-		cel.Variable("context", cel.MapType(cel.StringType, cel.DynType)),
-	}, libraries()...)...)
+	dynEnvOnce.Do(func() {
+		dynEnvVal, dynEnvErr = cel.NewEnv(append([]cel.EnvOption{
+			cel.Variable("source", cel.MapType(cel.StringType, cel.DynType)),
+			cel.Variable("context", cel.MapType(cel.StringType, cel.DynType)),
+		}, libraries()...)...)
+	})
+	return dynEnvVal, dynEnvErr
 }
 
 // EnvForContext builds a typed environment from source schemas given as CUE text

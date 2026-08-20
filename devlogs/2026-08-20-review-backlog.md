@@ -329,3 +329,65 @@ Bounded by distinct definitions per Application, so this is a real but modest
 cost - listed last because it is the least of these and the fix (a process-level
 cache keyed on definition name plus resourceVersion) carries invalidation risk
 that the others do not.
+
+---
+
+# P1 done: expression evaluation is ~64x cheaper
+
+Landed. `DynEnv` is memoised behind `sync.Once` and compilations are kept in a
+2048-entry LRU keyed on expression text, consumed by both `Eval` and
+`References`. Benchmarks live in `pkg/definition/celexpr/bench_test.go` as the
+regression guard.
+
+| Benchmark | Before | After |
+| --- | ---: | ---: |
+| One expression, end to end | 86,407 ns | 1,344 ns |
+| `References` (dependency ordering) | ~32,000 ns | 1,222 ns |
+| Six expressions, realistic properties | - | 7,687 ns |
+| Concurrent | - | 546 ns |
+| Every expression distinct (all misses) | 86,407 ns | 46,592 ns |
+
+64x, not the 132x the prototype projected: the prototype measured only the
+compile-and-eval core, while the real path also walks the tree, runs
+`propexpr.Parse`, and allocates the fresh maps the purity fix introduced. Even
+the pathological case where no expression repeats is ~2x better, because the
+environment is still shared.
+
+**The cache is keyed on expression text alone, which is only sound because
+entries are stored for exactly one environment.** `compiledFor` checks
+`env == shared` and compiles fresh for anything else. A typed environment from
+`EnvForContext` declares each binding's real shape, so the same text compiles
+differently there, and serving it a permissive-env program would silently
+disable the target-type check that stops a string reaching an int parameter.
+
+Worth recording how nearly that went wrong: the first version of the guard test
+passed with the identity check deliberately removed. It exercised `OutputType`,
+which does not go through the cache. Rewritten against `Eval` and `References`,
+which do, it fails on both when the check is removed.
+
+## Two things learned about running the e2e suite
+
+**The full suite needs more feature gates than `_scripts/e2e-setup.sh` passes.**
+A full run showed 11 failures; 10 were the hand-rolled controller command
+missing gates, not defects:
+
+| Specs | Gate needed |
+| --- | --- |
+| `definition_output_validation_test.go` (8) | `ValidateResourcesExist=true` |
+| `policy_transforms_test.go` global policy | `EnableGlobalPolicies=true` |
+| `requiredparam_validation_test.go` | `EnableCueValidation=true` |
+
+`policy_transforms_test.go` documents its own requirement in a package comment;
+the others do not. This is the same class of trap the script already warns about
+for `EnableApplicationScopedPolicies` - a missing gate fails as a timeout rather
+than as an error naming the cause.
+
+**One pre-existing failure remains, and it is not a gate.**
+`app_revision_clean_up_test.go:158` ("Test clean up appRevision") fails
+consistently, not flakily, and fails identically with and without the caching
+change - the failure sets were diffed and are byte-identical. It concerns
+ApplicationRevision GC limits and touches neither sources nor expressions.
+
+Not yet established whether the feature branch introduced it or whether it also
+fails on `upstream/master`. That is the next thing to find out about it, and it
+should be settled before the branch is proposed.
