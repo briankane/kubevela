@@ -116,23 +116,31 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 func resolveSourceNode(node interface{}, resolver *sourceResolver, path string) (interface{}, error) {
 	switch val := node.(type) {
 	case map[string]interface{}:
+		// A new map rather than assignment back into val. The binding properties
+		// this walks come straight off the process context with no copy, and a
+		// component and all its traits render against one context, so writing
+		// results back consumed the declared properties: the first pass replaced
+		// an expression with the literal it resolved to and every later pass saw
+		// a binding that read nothing.
+		out := make(map[string]interface{}, len(val))
 		for k, child := range val {
 			resolved, err := resolveSourceNode(child, resolver, joinPropertyPath(path, k))
 			if err != nil {
 				return nil, err
 			}
-			val[k] = resolved
+			out[k] = resolved
 		}
-		return val, nil
+		return out, nil
 	case []interface{}:
+		out := make([]interface{}, len(val))
 		for i, child := range val {
 			resolved, err := resolveSourceNode(child, resolver, fmt.Sprintf("%s[%d]", path, i))
 			if err != nil {
 				return nil, err
 			}
-			val[i] = resolved
+			out[i] = resolved
 		}
-		return val, nil
+		return out, nil
 	case string:
 		return evaluateSourceExpression(val, resolver, path)
 	default:

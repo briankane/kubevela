@@ -197,6 +197,11 @@ Measured, one expression, `$(source.cfg.host)`:
 | `prg.Eval` (the actual work) | **644** |
 | End to end, as written today | 83,253 |
 
+Confirmed after the purity fix landed: `EvalTree` over one expression now
+benchmarks at 85,189 ns/op. The 21,951 ns/op it reported before was the
+mutation bug flattering it, so the honest baseline is ~4x worse than the first
+measurement suggested.
+
 So **99.2% of the cost is rebuilding two things that never vary**. The
 environment is a constant, and the compiled program is a pure function of the
 expression text. This runs per expression, per property, per component, per
