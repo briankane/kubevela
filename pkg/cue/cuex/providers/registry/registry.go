@@ -27,6 +27,7 @@ package registry
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 
 	"github.com/kubevela/pkg/cue/cuex/providers"
@@ -34,6 +35,7 @@ import (
 	"github.com/kubevela/pkg/util/runtime"
 
 	di "github.com/oam-dev/kubevela/pkg/registry"
+	velaerrors "github.com/oam-dev/kubevela/pkg/utils/errors"
 )
 
 // FileReader reads one file out of a named registry.
@@ -62,9 +64,16 @@ type ReadFileVars struct {
 	Ref string `json:"ref,omitempty"`
 }
 
-// ReadFileResult is the file's contents.
+// ReadFileResult is the file's contents, and whether there was a file at all.
 type ReadFileResult struct {
 	Content string `json:"content"`
+	// Found reports whether the file exists. A missing file is an ordinary
+	// answer here rather than an error, matching the http provider's habit of
+	// handing back statusCode instead of failing on a 404: a source that reads
+	// an optional per-cluster override wants to fall back, not to fail.
+	//
+	// Content is always empty when Found is false. Nothing is invented.
+	Found bool `json:"found"`
 }
 
 // ReadFileParams is the params for a registry file read.
@@ -75,10 +84,16 @@ type ReadFileReturns providers.Returns[ReadFileResult]
 
 // ReadFile fetches one file from a named registry.
 //
-// Errors are returned rather than swallowed: a missing registry, a missing file
-// or an auth failure should fail the source's resolution loudly. A source that
-// silently resolved to an empty string would be cached, and the emptiness would
-// then look like data.
+// Absence and failure are told apart. A file the registry does not have comes
+// back as found: false with empty content and no error, so a template can
+// branch on it. Everything else - an unknown registry, a rejected credential, a
+// network that is down, no reader wired up at all - is an error, because
+// resolving those to an empty string would cache the emptiness and it would
+// afterwards look like data.
+//
+// The distinction rests on the reader wrapping errors.ErrFileNotFound; a reader
+// that does not is treated as failing, which is the safe direction to be wrong
+// in.
 func ReadFile(ctx context.Context, params *ReadFileParams) (*ReadFileReturns, error) {
 	in := params.Params
 	if in.Registry == "" {
@@ -97,7 +112,10 @@ func ReadFile(ctx context.Context, params *ReadFileParams) (*ReadFileReturns, er
 	}
 
 	content, err := reader.ReadFile(ctx, in.Registry, in.Path, in.Ref)
-	if err != nil {
+	switch {
+	case errors.Is(err, velaerrors.ErrFileNotFound):
+		return &ReadFileReturns{Returns: ReadFileResult{Found: false}}, nil
+	case err != nil:
 		at := ""
 		if in.Ref != "" {
 			at = fmt.Sprintf(" at %q", in.Ref)
@@ -105,7 +123,7 @@ func ReadFile(ctx context.Context, params *ReadFileParams) (*ReadFileReturns, er
 		return nil, fmt.Errorf("registry %q: reading %q%s: %w", in.Registry, in.Path, at, err)
 	}
 
-	return &ReadFileReturns{Returns: ReadFileResult{Content: content}}, nil
+	return &ReadFileReturns{Returns: ReadFileResult{Content: content, Found: true}}, nil
 }
 
 // ProviderName is the name a template references this provider by.
