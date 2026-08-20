@@ -25,29 +25,23 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
 
-// PruneComponentResources deletes the resources a component used to render and
-// no longer does.
+// PruneComponentResources deletes resources attributed to a component that its
+// current render no longer produces.
 //
-// Garbage collection is ResourceTracker-level: an individual resource stops
-// being desired only when its whole tracker becomes history, which happens when
-// a new ApplicationRevision is created. Every ordinary change to desired state
-// goes through a revision, which is what makes that sufficient. Source-driven
-// refresh does not - re-dispatching on an external value change without minting
-// a revision is the point of it - so a component that renders a different set
-// than it did last reconcile leaves the difference tracked and running forever.
+// Garbage collection is ResourceTracker-level: a resource stops being desired
+// only when its whole tracker becomes history, which happens when a new
+// ApplicationRevision is created. Source-driven refresh mints no revision, so
+// any shrink in a component's rendered set would otherwise stay tracked and
+// running - most visibly when a resource's name derives from source data, where
+// a rename dispatches a second object rather than updating the first.
 //
-// The obvious case is a resource whose name derives from source data: the
-// rename dispatches a second object rather than updating the first, and nothing
-// reaps the original. Any shrink in the rendered set leaks the same way.
+// Deliberately not folded into Dispatch. Multi-stage apply dispatches subsets of
+// a component's manifests across stages, so treating any dispatch as the
+// complete set would reap the stages that have not run yet.
 //
-// This is deliberately NOT folded into Dispatch. Multi-stage component apply
-// dispatches subsets of a component's manifests across stages, so treating any
-// dispatch as "this is now the complete set" would reap the stages that have
-// not run yet.
-//
-// keep must be the component's *complete* rendered set across every placement.
+// keep must be the component's complete rendered set across every placement.
 // Anything attributed to the component and absent from it is deleted, so a
-// caller that has only part of the picture must not call this at all - see the
+// caller holding only part of the picture must not call this - see the
 // all-or-nothing rule in refreshSourceDrivenComponents.
 func (h *resourceKeeper) PruneComponentResources(ctx context.Context, component string,
 	keep []*unstructured.Unstructured) ([]v1beta1.ManagedResource, error) {

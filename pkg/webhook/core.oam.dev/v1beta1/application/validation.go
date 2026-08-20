@@ -95,9 +95,9 @@ func (in *appRevBypassCacheClient) Get(ctx context.Context, key client.ObjectKey
 
 // ValidateComponentNames reports duplicated component names.
 //
-// It reads only the Application, so it belongs to the soundness phase rather than
-// behind appfile generation, where a name clash used to be reported only once
-// every expression in the Application already type-checked.
+// It reads only the Application, so it belongs to the soundness phase rather
+// than behind appfile generation, where it would be reported only once every
+// expression already type-checked.
 func (h *ValidatingHandler) ValidateComponentNames(_ context.Context, app *v1beta1.Application) field.ErrorList {
 	appParser := appfile.NewApplicationParser(&appRevBypassCacheClient{Client: h.Client})
 	if i, err := appParser.ValidateComponentNames(app); err != nil {
@@ -615,7 +615,7 @@ func traitConflictRuleMatches(rule string, target *v1beta1.TraitDefinition) bool
 // ValidateCreate validates the Application on creation.
 //
 // Validation runs in two phases, and the second is not attempted when the first
-// finds anything.
+// finds anything:
 //
 //	soundness   is the Application well-formed?  expressions compile, their types
 //	            fit the parameters they feed, sources are declared and ordered,
@@ -623,20 +623,16 @@ func traitConflictRuleMatches(rule string, target *v1beta1.TraitDefinition) bool
 //	rendering   does it actually render?  generate the appfile, evaluate every
 //	            template and trait, resolve every source for real
 //
-// The gate earns its place twice over. Rendering restates soundness failures in
-// the evaluator's words and from a coarser field path: a type error reported
-// precisely against spec.components[0].properties.tags reappeared as an opaque
-// failure against "schematic", so the same mistake was reported twice and the
-// second telling was the worse one.
-//
-// And rendering is not free of consequence. Resolving a source at admission
-// issues whatever HTTP, git or Kubernetes reads its definition performs, so an
-// Application already known to be invalid would still reach out to the world
-// before being refused.
+// The gate earns its place twice. Rendering restates soundness failures in the
+// evaluator's words and against a coarser field path, so the same mistake would
+// be reported twice and the second telling is the worse one. And rendering is
+// not free of consequence: resolving a source at admission issues whatever HTTP,
+// git or Kubernetes reads its definition performs, so an Application already
+// known to be invalid would still reach out to the world before being refused.
 //
 // The cost is that a soundness failure hides any rendering failure until it is
-// fixed. That is the usual compiler trade - fewer and more precise errors per
-// round - and it is the reason the phases are named in the errors they produce.
+// fixed - the usual compiler trade, fewer and more precise errors per round, and
+// the reason the phases are named in the errors they produce.
 func (h *ValidatingHandler) ValidateCreate(ctx context.Context, app *v1beta1.Application, req admission.Request) field.ErrorList {
 	if errs := h.validateSoundness(ctx, app, req); len(errs) > 0 {
 		return errs

@@ -108,11 +108,7 @@ func EvalTree(v interface{}, resolved map[string]map[string]interface{},
 func evalNode(env *cel.Env, v interface{}, in map[string]interface{}) (interface{}, error) {
 	switch t := v.(type) {
 	case map[string]interface{}:
-		// Built fresh rather than written back into. EvalTree is exported and
-		// takes a caller's tree; rewriting it in place made the input and the
-		// output the same object, so a caller that evaluated twice got a
-		// different answer the second time. It silently invalidated a benchmark
-		// written against this function, which is how it was noticed.
+		// Built fresh: EvalTree takes a caller's tree and must not consume it.
 		out := make(map[string]interface{}, len(t))
 		for k, child := range t {
 			resolved, err := evalNode(env, child, in)

@@ -882,13 +882,13 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 // honour.
 //
 // The context is PolicyContext, not ScopedPolicyContext: this pass runs while the
-// appfile is built, so it has no cluster and no policy revision metadata. Using
-// the wider schema declared five fields it could not supply - reading any of them
-// passed admission and then failed here as an undefined field.
+// appfile is built, so it has no cluster and no policy revision metadata. The
+// wider schema would declare fields it cannot supply, and a read of one would
+// pass admission and fail here as an undefined field.
 func (p *Parser) resolvePolicyExpressions(ctx context.Context, af *Appfile) error {
-	// Exactly what PolicyContext declares - the registry is what admission types
-	// these expressions against, so supplying less accepts a read here and fails
-	// it at render, which is the bug this pass previously had.
+	// Exactly what PolicyContext declares. The registry is what admission types
+	// these expressions against, so supplying less would accept a read here and
+	// fail it at render.
 	revisionNum, _ := util.ExtractRevisionNum(af.AppRevisionName, "-")
 	base := map[string]interface{}{
 		"appName":        af.Name,

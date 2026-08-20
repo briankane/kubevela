@@ -147,14 +147,8 @@ func (p *Parser) ValidateComponentParams(ctxData velaprocess.ContextData, wl *Co
 	// ---------------------------------------------------------------------
 	ctx := velaprocess.NewContext(ctxData)
 
-	// The component's identity, pushed exactly as the render path pushes it in
-	// baseGenerateComponent. A source may key on componentName or componentType
-	// - both are in the cache-key rules - and resolving without them failed with
-	// "$internal.key: undefined field: componentName", so a source that rendered
-	// perfectly well was refused at admission the moment strict CUE validation
-	// was switched on.
-	//
-	// The two contexts have to agree. Whatever the render supplies to a source,
+	// The component's identity, as baseGenerateComponent pushes it. A source may
+	// key on componentName or componentType, so whatever the render supplies here
 	// this must supply too, or admission and render disagree about the same
 	// Application.
 	ctx.PushData(velaprocess.ContextComponentName, wl.Name)
@@ -208,12 +202,10 @@ func (p *Parser) ValidateComponentParams(ctxData velaprocess.ContextData, wl *Co
 	// 2. Strict required‑field enforcement (feature‑gated)
 	// ---------------------------------------------------------------------
 	//
-	// resolvedParams, not wl.Params, for the same reason the snippet above is
-	// built from them. filterMissing flattens what was provided and matches it
-	// against the required leaves, so an unresolved `meta: "$(source.x.meta)"`
-	// flattens to the single key `meta` and never satisfies `meta.region` or
-	// `meta.zone`. A struct read from a source was reported as its own fields
-	// missing - refused at admission, having rendered perfectly well.
+	// resolvedParams, not wl.Params, for the same reason the snippet above uses
+	// them: filterMissing flattens what was provided, so an unresolved
+	// `meta: "$(source.x.meta)"` flattens to the single key `meta` and never
+	// satisfies the required `meta.region` and `meta.zone`.
 	if err := enforceRequiredParams(val, resolvedParams, app); err != nil {
 		return errors.WithMessagef(err, "component %q", wl.Name)
 	}

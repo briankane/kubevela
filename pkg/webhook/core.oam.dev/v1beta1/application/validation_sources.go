@@ -569,9 +569,8 @@ func (c *cueStruct) lookup(path string) (cue.Value, bool) {
 				continue
 			}
 			// An open map - headers?: [string]: string - declares no concrete
-			// field at any key, only a value type. Without this, passing any
-			// header at all was reported as "not declared in the parameter
-			// schema", which is the open-list bug wearing a different hat.
+			// field at any key, only a value type, so match the pattern
+			// constraint rather than looking for the key itself.
 			if pattern := cur.LookupPath(cue.MakePath(cue.AnyString)); pattern.Exists() {
 				cur = pattern
 				continue
@@ -596,31 +595,20 @@ func (c *cueStruct) valueAt(path string) (cue.Value, bool) {
 // listElementAt resolves one index of a list-valued schema to the type its
 // elements must satisfy.
 //
-// Properties are flattened to dotted leaves before being checked, so a property
-// paths: ["a","b"] arrives here as paths.0 and paths.1 and each index has to
-// resolve to something. Three shapes have to work, and only the first is
-// straightforward:
+// Properties are flattened to dotted leaves, so paths: ["a","b"] arrives as
+// paths.0 and paths.1 and each index must resolve. Three shapes have to work:
 //
 //	[string, string]              a concrete element per index
-//	[...string]                   no concrete element, only an element type
-//	[...string] | *["app.yaml"]   a disjunction, where neither of the above
-//	                              resolves at all
+//	[...string]                   an element type only
+//	[...string] | *["app.yaml"]   a disjunction, where neither resolves directly
 //
-// The third is the ordinary way to declare an optional list, and it was
-// rejecting every Application that supplied more than the default: admission
-// reported paths.0 as "not declared in the parameter schema". Taking the default
-// is not the fix either - the default is often shorter than what a caller
-// passes, so paths.1 would still be refused.
+// The disjunction is decomposed with Expr and each branch tried. A branch can be
+// semantically Equal to the value it came from while behaving differently -
+// indexing the disjunction resolves against its default, indexing the branch
+// against the whole list - so this recurses on a depth bound rather than on
+// whether the branch differs.
 //
-// So the disjunction is decomposed with Expr and each branch tried. Note the
-// branch can be semantically Equal to the value it came from while behaving
-// differently: indexing the disjunction resolves against its default, indexing
-// the branch against the whole list. That is why this recurses on a depth bound
-// rather than on "is this branch different", which skips the only branch there
-// is.
-//
-// An index outside every branch is still refused, which is what keeps a closed
-// list closed.
+// An index outside every branch is refused, which keeps a closed list closed.
 func listElementAt(v cue.Value, idx int) (cue.Value, bool) {
 	return listElementAtDepth(v, idx, 4)
 }
@@ -782,13 +770,10 @@ func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespac
 	}
 	// Only the `parameter:` block is wanted, so only that is compiled.
 	//
-	// Compiling the whole template needs every package it imports to be
-	// registered with the compiler in hand, and WorkloadCompiler carries the
-	// workload providers - not vela/multicluster or vela/builtin. So every
-	// workflow-step definition failed to compile and the check silently passed,
-	// which is why a type mismatch in a step surfaced as a Go unmarshal error
-	// instead. The same applied to any component definition importing a package
-	// this compiler does not hold.
+	// Compiling the whole template needs every package it imports registered with
+	// the compiler in hand, and WorkloadCompiler carries the workload providers
+	// but not vela/multicluster or vela/builtin. Reducing to the parameter block
+	// keeps the check independent of which providers happen to be loaded.
 	if param, ok := parameterBlockOnly(ctx, tmpl); ok {
 		return param, nil
 	}

@@ -21,13 +21,8 @@ import "errors"
 // ErrFileNotFound reports that a file store does not contain a file, as distinct
 // from being unreachable, misconfigured, or refusing the credentials.
 //
-// The difference matters to a caller: absence is often an ordinary outcome worth
-// branching on - a per-cluster override only some clusters carry - while a
-// failure is not something to paper over. Readers pass their client library's
-// errors through otherwise, so without a shared sentinel every caller would be
-// matching on message text, and each backend words it differently.
-//
-// It lives here rather than in pkg/addon because the producers (the addon
-// registry readers) and the consumer (the CUE registry provider) cannot import
-// each other; this package is a leaf both already depend on.
+// Absence is often an ordinary outcome worth branching on - a per-cluster
+// override only some clusters carry - while a failure is not. It lives here
+// because the addon registry readers and the CUE registry provider cannot import
+// each other.
 var ErrFileNotFound = errors.New("file not found")

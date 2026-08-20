@@ -152,16 +152,12 @@ func joinPropertyPath(prefix, key string) string {
 }
 
 // evaluateSourceExpression substitutes $(...) expressions in a property value.
+// A value with no delimiter comes back byte-identical.
 //
-// A value
-// with no delimiter comes back byte-identical, so nothing that works today
-// changes. What it adds is the ability to combine a resolved value with anything
-// else, which the directive cannot do - it yields a whole value or nothing.
-//
-// Resolving here rather than at admission matters for status: reading a source
-// through an expression must drive the same resolution and the same consumed-value
-// recording a directive would have done, or a binding used only by an expression would
-// show as unresolved.
+// Resolution happens here rather than at admission so that reading a source
+// through an expression drives the resolution and the consumed-value recording
+// that status reports. Otherwise a binding read only by an expression would show
+// as unresolved.
 func evaluateSourceExpression(raw string, resolver *sourceResolver, property string) (interface{}, error) {
 	parsed, err := propexpr.Parse(raw)
 	if err != nil {
@@ -392,20 +388,14 @@ type SourceResolutionStatus struct {
 // same context recorded.
 //
 // A component and every one of its traits render against a single
-// process.Context, one pass each, and each pass builds its status map from
-// scratch. PushData replaces, so without this the last pass to resolve anything
-// was the only one whose bindings survived: a component reading source "a"
-// followed by a trait reading source "b" ended with "b" alone.
+// process.Context, one pass each, and each builds its status map from scratch.
+// PushData replaces, so the merge is what keeps every pass's bindings - and with
+// them the resolved-hash that drives auto-update, which is stamped only for
+// bindings present in the final map.
 //
-// That is invisible in the rendered output, because the values substitute
-// correctly either way. It shows up one layer down, where
-// resolvedSourceHashes stamps a resolved-hash only for the bindings present in
-// the final map - so the component's own sources quietly stopped triggering
-// auto-update, and lost their attribution in status.sources[].
-//
-// Later wins on resolution state, because it re-resolved and is the more recent
-// answer. Consumption accumulates instead, since each pass records a different
-// reader taking a different property, and those are all true at once.
+// Later wins on resolution state, being the more recent answer. Consumption
+// accumulates instead: each pass records a different reader taking a different
+// property, and those are all true at once.
 func mergeStatuses(prior, next map[string]SourceResolutionStatus) map[string]SourceResolutionStatus {
 	if len(prior) == 0 {
 		return next

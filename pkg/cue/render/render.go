@@ -153,26 +153,14 @@ func Properties(props map[string]interface{}) (string, bool, error) {
 	return string(raw), truncated, nil
 }
 
-// contextLabels renders the identity's context values as labels, so entries can
+// ContextLabels renders the identity's context values as labels, so entries can
 // be selected on them.
 //
-// A value is emitted only when both halves are legal: the field name (with the
-// index folded in, for an indexed read) has to be a valid label key, and the
-// value a valid label value. Neither is guaranteed - an index like
-// "example.org/service-name" would put a second slash in the key, and a label
-// value may hold characters that are legal there and illegal here. Whatever is
-// skipped is still recorded whole in AnnotationSourceContext, so nothing is
-// lost; only selectability is.
-// contextLabels renders the identity's context values as labels, so entries can
-// be selected on them.
-//
-// A value is emitted only when both halves are legal: the field name (with the
-// index folded in, for an indexed read) has to be a valid label key, and the
-// value a valid label value. Neither is guaranteed - an index like
-// "example.org/service-name" would put a second slash in the key, and a label
-// value may hold characters that are legal there and illegal here. Whatever is
-// skipped is still recorded whole in AnnotationSourceContext, so nothing is
-// lost; only selectability is.
+// A value is emitted only when both halves are legal: the field name (with any
+// index folded in) must be a valid label key, and the value a valid label value.
+// Neither is guaranteed - an index like "example.org/service-name" would put a
+// second slash in the key. Whatever is skipped is still recorded whole in
+// AnnotationSourceContext, so only selectability is lost.
 func ContextLabels(ctx map[string]interface{}) map[string]string {
 	out := map[string]string{}
 	for field, value := range ctx {

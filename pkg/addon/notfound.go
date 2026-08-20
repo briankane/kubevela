@@ -27,16 +27,12 @@ import (
 	velaerrors "github.com/oam-dev/kubevela/pkg/utils/errors"
 )
 
-// asNotFound recognises a client library's "no such file" and rewrites it as
-// ErrFileNotFound, leaving every other error alone.
+// asNotFound rewrites a client library's "no such file" as ErrFileNotFound,
+// leaving every other error alone.
 //
-// Each backend reports absence in its own type, and the readers passed those
-// through unwrapped, so a caller could not tell a missing file from an
-// unreachable registry without matching on message text. Every error carries an
-// HTTP response somewhere; this reaches for it rather than for the wording.
-//
-// Errors that are not a 404 are returned unchanged, deliberately: a 403 is a
-// misconfigured token and papering over it as absence would turn a fixable
+// Each backend reports absence in its own type, so callers would otherwise match
+// on message text. Anything that is not a 404 passes through unchanged: a 403 is
+// a misconfigured token, and reporting it as absence would turn a fixable
 // problem into a silently empty result.
 func asNotFound(err error, path string) error {
 	if err == nil || errors.Is(err, ErrFileNotFound) {
@@ -52,7 +48,7 @@ func asNotFound(err error, path string) error {
 	return err
 }
 
-// statusOf digs the HTTP status out of whatever the backend returned, or 0.
+// statusOf returns the HTTP status the backend reported, or 0.
 func statusOf(err error) int {
 	var gh *github.ErrorResponse
 	if errors.As(err, &gh) && gh.Response != nil {
@@ -70,6 +66,5 @@ func statusOf(err error) int {
 	return 0
 }
 
-// ErrFileNotFound is re-exported so addon callers need not reach for the shared
-// package; it is the same value, so errors.Is matches either name.
+// ErrFileNotFound is the shared sentinel, re-exported for addon callers.
 var ErrFileNotFound = velaerrors.ErrFileNotFound

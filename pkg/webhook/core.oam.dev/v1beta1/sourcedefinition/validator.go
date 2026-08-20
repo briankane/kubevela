@@ -216,13 +216,12 @@ func ValidateConsumableFrom(template string) error {
 // it says it can be consumed.
 //
 // A source's context is its call site's, narrowed to what the cache-key rules
-// allow. So a template reading a field some surfaces do not have is not usable
-// from those surfaces - and one reading fields no single surface has is not
-// usable anywhere, which is worth saying when the definition is created rather
-// than when someone first binds it.
+// allow. A template reading a field some surfaces lack is not usable from those
+// surfaces, and one reading fields no single surface has is not usable anywhere.
+// Saying so when the definition is created beats saying it when someone first
+// binds the source.
 //
-// Inert while the rules permit only universally-available fields, which is why it
-// lands before the version that does not: the guard exists before the door opens.
+// Inert while the rules permit only universally-available fields.
 func ValidateSurfaceCompatibility(template string, consumable []string) error {
 	fields, err := cachekey.RequiredContext(template)
 	if err != nil {

@@ -30,9 +30,8 @@ import (
 // SourceEngineOptions describes one caller's world: which bindings exist, what
 // backs them, and what context they resolve against.
 //
-// Everything here was previously read off a process.Context that only the
-// Application controller knew how to populate. Stating it makes source
-// resolution usable by anything that can name its bindings and supply a surface.
+// Stated explicitly rather than read off a process.Context, so source resolution
+// is usable by anything that can name its bindings and supply a surface.
 type SourceEngineOptions struct {
 	// Surface names the call site, and decides which context fields a source may
 	// read. One of propexpr.SurfaceNames().

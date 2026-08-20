@@ -681,12 +681,10 @@ func (h *AppHandler) sourceStatusList() []common.ApplicationSourceStatus {
 // recordComponentSourceReads folds this component render's source resolution
 // into the Application-level report.
 //
-// There is deliberately no per-component copy. Services[].Sources used to carry
-// one, but everything in it - which binding, which attribute, which value - is
-// in AppStatus.Sources[].ConsumedBy alongside the property each value landed in
-// and where the component was placed, so the per-component list was strictly
-// less information stored twice. Nothing in the tree read it, and duplicated
-// status drifts and costs size for no gain.
+// There is deliberately no per-component copy. Which binding, which attribute
+// and which value all appear in AppStatus.Sources[].ConsumedBy, alongside the
+// property each value landed in and where the component was placed, so a second
+// list would be less information stored twice.
 func (h *AppHandler) recordComponentSourceReads(comp *appfile.Component, status *common.ApplicationComponentStatus) {
 	if len(h.app.Spec.Sources) == 0 || comp == nil || comp.Ctx == nil {
 		return

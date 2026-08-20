@@ -14,26 +14,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package celexpr is a spike: can CEL replace the hand-built expression language
-// in pkg/definition/propexpr?
+// Package celexpr evaluates the CEL expressions that appear inside `$( )` in an
+// Application's properties.
 //
-// The question is not whether CEL can evaluate - obviously it can - but whether
-// it can carry the three things propexpr actually needs:
+// CEL carries the three things property expressions need. It has a real type
+// checker, so an expression's result type is known before any value exists and
+// can be checked against the parameter it feeds. It is sandboxed by
+// construction - no I/O, no imports, bounded evaluation. And it exposes a
+// walkable AST, which is where dependency ordering and +sensitive tracking come
+// from.
 //
-//  1. A *static* result type, derived before any value exists, to check against
-//     the parameter the expression feeds. propexpr does this by materialising
-//     the schema into sentinel values and evaluating, because CUE will not compute
-//     on a non-concrete operand. CEL has a real type checker, so Compile() should
-//     give the answer directly via OutputType().
-//  2. A sandbox. propexpr walks the parsed AST and rejects anything whose result
-//     type could depend on a value. CEL is sandboxed by construction - no I/O, no
-//     imports, bounded evaluation - so the walk may become unnecessary.
-//  3. The reads an expression makes, for dependency ordering and +sensitive
-//     tracking. CEL exposes a walkable AST, so this should be recoverable.
-//
-// If those hold, the proprietary grammar goes away and conditionals become
-// available for free: CEL's ternary already requires both arms to unify, which is
-// the soundness rule we would have had to invent.
+// Conditionals come for free: CEL's ternary requires both arms to unify, which
+// is the soundness rule the expression language needs anyway.
 package celexpr
 
 import (
@@ -123,28 +115,17 @@ func Env(sources map[string]cue.Value, ctx map[string]*apiservercel.DeclType) (*
 	return env(sources, ctx)
 }
 
-// libraries is the function set every environment offers, declared once.
-//
-// The permissive environment and the typed one must agree. If they do not, an
-// expression is accepted by the grammar pass and refused by the type pass, or the
-// reverse - the same two-declarations-drift failure the context registry exists to
-// prevent, so this is the single declaration for both.
+// libraries is the function set every environment offers, declared once so the
+// permissive and typed environments cannot disagree about what compiles.
 //
 // Only pure, total libraries are enabled. Strings gives the text handling that
-// reshaping a value needs - split, join, replace, substring, trim, indexOf,
-// lowerAscii/upperAscii, reverse, format. Lists gives slice; sort, distinct and
-// flatten arrived in a later cel-go than the v0.20.1 Kubernetes pins here, so they
-// are not available and bumping a transitively pinned dependency is not worth it
-// for them.
+// reshaping a value needs; Lists gives slice. Neither performs I/O nor reaches
+// outside its arguments, so the environment still declares exactly `source` and
+// `context` and an undeclared identifier still cannot compile.
 //
-// Neither library performs I/O, allocates unboundedly, nor reaches anything
-// outside its arguments, so the sandbox argument is unchanged: the environment
-// still declares exactly `source` and `context`, and an undeclared identifier
-// still cannot compile.
-//
-// Deliberately absent: Encoders and Sets have no established use here, and Bindings
-// introduces `cel.bind`, which would let an expression name intermediate values and
-// grow into a small program. That is the boundary this feature keeps.
+// Deliberately absent: Encoders and Sets have no established use here, and
+// Bindings introduces `cel.bind`, which would let an expression name intermediate
+// values and grow into a small program.
 func libraries() []cel.EnvOption {
 	return []cel.EnvOption{
 		ext.Strings(),
@@ -254,10 +235,8 @@ func Eval(env *cel.Env, expr string, in map[string]interface{}) (interface{}, er
 		return nil, err
 	}
 	prg := c.prg
-	// Normalise here rather than in each caller. EvalTree and the render-side
-	// resolver in pkg/cue/definition both build their own input maps, and a fix
-	// applied to one of them silently missed the other - which is how arithmetic
-	// on an int kept failing at render after it had supposedly been fixed.
+	// Normalised here rather than in each caller: several build their own input
+	// maps, and a fix applied to one would miss the others.
 	out, _, err := prg.Eval(normaliseInput(in))
 	if err != nil {
 		return nil, err

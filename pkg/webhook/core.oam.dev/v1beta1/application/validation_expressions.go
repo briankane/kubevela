@@ -432,9 +432,8 @@ func celKind(t *cel.Type) cue.Kind {
 	case "dyn", "any":
 		return cue.TopKind
 	}
-	// A list is a list. Collapsing it into StructKind made every list-valued
-	// expression mismatch a list parameter, reported as "is object but expects
-	// list", which is the sort of error that reads like a bug in the source.
+	// CEL spells a list type as list(T); without this it would collapse into
+	// StructKind and mismatch every list-valued parameter.
 	if strings.HasPrefix(t.String(), "list(") {
 		return cue.ListKind
 	}

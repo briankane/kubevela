@@ -202,7 +202,7 @@ func formatCluster(cluster string) string {
 }
 
 // formatAutoUpdate distinguishes "off" from "not reported", which a bare bool
-// cannot: an Application reconciled before this field existed has neither.
+// cannot.
 func formatAutoUpdate(b *bool) string {
 	if b == nil {
 		return "-"

@@ -453,12 +453,11 @@ func (r *Reconciler) refreshSourceDrivenComponents(logCtx monitorContext.Context
 		rendered[comp.Name] = append(rendered[comp.Name], traits...)
 	}
 
-	// Reap what a component used to render and no longer does. Garbage collection
-	// cannot: it recycles whole ResourceTrackers, and a tracker is only retired
-	// when a new ApplicationRevision supersedes it. Refresh deliberately mints no
-	// revision, so a component whose rendered set shrank - most visibly when a
-	// source value feeds a resource name - would otherwise leave the difference
-	// running forever.
+	// Reap what a component no longer renders. Garbage collection cannot: it
+	// recycles whole ResourceTrackers, and a tracker is retired only when a new
+	// ApplicationRevision supersedes it. Refresh deliberately mints no revision,
+	// so a component whose rendered set shrank - most visibly when a source value
+	// feeds a resource name - would otherwise leave the difference running.
 	//
 	// All-or-nothing per component. A partial view of what a component renders
 	// would make a transient render error look like a deletion, so a component

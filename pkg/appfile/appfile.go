@@ -631,9 +631,7 @@ func PrepareProcessContext(comp *Component, ctxData velaprocess.ContextData) (pr
 		comp.Ctx = NewBasicContext(ctxData, comp.Params)
 	}
 	// Before EvalContext, not after: that call runs the component's template, and
-	// a source consumed there resolves during it. Pushing this in
-	// baseGenerateComponent - where componentType used to live - was too late for
-	// the component's own render, which is why it only ever reached traits.
+	// a source consumed there resolves during it.
 	comp.Ctx.PushData(velaprocess.ContextComponentName, comp.Name)
 	comp.Ctx.PushData(velaprocess.ContextComponentType, comp.Type)
 	if err := comp.EvalContext(comp.Ctx); err != nil {

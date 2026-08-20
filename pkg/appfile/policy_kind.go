@@ -23,9 +23,8 @@ import (
 )
 
 // Policies fall into three kinds, and property expressions behave differently in
-// each. The distinction was previously implicit - a switch in parsePolicies, a
-// scope lookup elsewhere - which is why all three shared one set of rules and got
-// the narrowest of them.
+// each. Naming the distinction keeps each kind's rules its own, rather than
+// applying the narrowest of the three to all of them.
 //
 //   - built-in: topology, override, garbage-collect and friends. Their properties
 //     are read straight off af.Policies by a provider; nothing renders them, so

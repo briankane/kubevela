@@ -22,39 +22,24 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
-// prefetchConcurrency bounds how many bindings resolve at once.
-//
-// Resolution is waiting on someone else's service, not on this process, so the
-// useful width is set by how many outstanding requests are reasonable rather
-// than by cores. Small enough not to look like a thundering herd to a registry
-// that several bindings happen to share.
+// prefetchConcurrency bounds how many bindings resolve at once. The wait is on
+// someone else's service, and several bindings may share a registry.
 const prefetchConcurrency = 8
 
-// prefetch resolves, concurrently, the bindings this render will need that do
-// not themselves read another binding.
+// prefetch resolves, concurrently, the bindings this render needs that do not
+// themselves read another binding.
 //
-// Resolution is otherwise strictly sequential: each binding is resolved on
-// demand as the walker reaches an expression that reads it, so an Application
-// reading three registries pays all three round trips end to end, at admission
-// and again at every render that misses the cache. Nothing about those three
-// reads depends on each other.
-//
-// Only bindings whose own properties contain no expression are prefetched.
-// Those are the leaves of the dependency graph, so they can be resolved in any
-// order, and they are also the ones that actually go out to the network - a
-// chained binding is usually assembling values that are already in hand. It
-// keeps the concurrent phase free of ordering concerns entirely, rather than
-// making the resolver safe to share.
+// Those are the leaves of the dependency graph, so they resolve in any order,
+// and they are the ones that go to the network - a chained binding assembles
+// values already in hand. Restricting it to them keeps the concurrent phase free
+// of ordering concerns rather than making the resolver safe to share.
 //
 // Each binding resolves in its own resolver, so nothing mutable is shared while
-// the goroutines run; results are merged afterwards. In particular this avoids
-// the resolver's readerKind/readerName, which name whoever is currently reading
-// and are a call-stack notion that concurrent resolution has no way to express.
+// the goroutines run; results merge afterwards.
 //
-// This is an optimisation and is never allowed to change an outcome. A binding
-// that fails here is left out, and the ordinary lazy path resolves it again and
-// reports the failure in its proper place with its proper context. The cost of
-// that is a repeated request on a path that was failing anyway.
+// A binding that fails here is left out, and the ordinary lazy path resolves it
+// again and reports the failure with its proper context. Prefetching must never
+// change an outcome.
 func (r *sourceResolver) prefetch(properties interface{}) {
 	names := r.independentBindings(properties)
 	if len(names) < 2 {
@@ -99,8 +84,7 @@ func (r *sourceResolver) prefetch(properties interface{}) {
 	}
 }
 
-// inputs reconstructs the resolver's inputs, so a sub-resolver reads exactly
-// what this one reads.
+// inputs reconstructs the resolver's inputs for a sub-resolver.
 func (r *sourceResolver) inputs() sourceInputs {
 	return sourceInputs{
 		Bindings:  r.sourceProps,
@@ -115,9 +99,8 @@ func (r *sourceResolver) inputs() sourceInputs {
 // independentBindings returns the bindings reachable from properties whose own
 // properties read nothing, in the order first encountered.
 //
-// The walk is transitive: a chained binding is not prefetched itself, but the
-// bindings it reads are reached through its properties and prefetched, which is
-// where the waiting actually happens.
+// The walk is transitive: a chained binding is excluded, but the bindings it
+// reads are reached through its properties, which is where the waiting is.
 func (r *sourceResolver) independentBindings(properties interface{}) []string {
 	seen := map[string]bool{}
 	var order []string
@@ -153,9 +136,6 @@ func (r *sourceResolver) independentBindings(properties interface{}) []string {
 
 					props, ok := r.sourceProps[name]
 					if ok && props != nil && propexpr.HasExpression(props) {
-						// Chained: it reads something else, so it is resolved on
-						// demand. Its own reads are followed, since those are the
-						// ones worth overlapping.
 						queue = append(queue, props)
 						continue
 					}

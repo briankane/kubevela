@@ -207,14 +207,11 @@ func (c ContextSchema) ReadableFields() []string {
 
 // readableFields memoises the enumeration below, keyed on the surface.
 //
-// Every schema is built by surfaceSchema from the registry, so a surface's
-// composed type is fixed for the life of the process and enumerating it can only
-// give one answer. It was being enumerated on every source resolution, and
-// cue.Value.Fields is not cheap - a CPU profile of one render put 40% of the
-// time in here, all of it re-deriving a constant.
+// Every schema comes from surfaceSchema, so a surface's composed type is fixed
+// for the life of the process and cue.Value.Fields need only walk it once.
 //
-// The returned slice is copied out, since a caller that sorts or appends to it
-// would otherwise reach into every later caller's answer.
+// The slice is copied out: a caller that sorts or appends must not reach into
+// every later caller's answer.
 var readableFields sync.Map // surface key -> []string
 
 func (c ContextSchema) readable() []string {

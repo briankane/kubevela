@@ -200,11 +200,9 @@ func PathIsOpen(ref Reference, schemas map[string]string) bool {
 			// map and never a key, so the segment resolves to the pattern's type -
 			// and if that is `_`, everything below it is open.
 			//
-			// Reporting false here made the read untypeable rather than
-			// assertable: TypeOf would not demand an assertion, so nothing
-			// materialised the path, and `outputs.settings.data.region & string`
-			// failed with "undefined field: data" while the same read with a
-			// default quietly typed as the default's type instead of the value's.
+			// Resolving to the pattern keeps the read assertable: TypeOf can then
+			// demand `& <type>` for anything below an open region, rather than
+			// leaving the path untypeable.
 			if pattern := cur.LookupPath(cue.MakePath(cue.AnyString)); pattern.Exists() {
 				cur = pattern
 				continue

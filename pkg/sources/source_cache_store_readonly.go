@@ -25,23 +25,16 @@ import (
 
 // readOnlySourceCacheStore reads through to a real store and discards writes.
 //
-// It exists for the admission dry-run. That render resolves sources for real -
-// it has to, to type-check the result against the consuming parameter - but it
-// is a validation, and a validation must not leave anything behind.
+// The admission dry-run resolves sources for real, because it has to type-check
+// the result against the consuming parameter, but a validation must leave
+// nothing behind. Writing from there would also produce entries labelled by
+// source type via the Secret store, where a reconcile writes them through the
+// Config API labelled with the ConfigTemplate name.
 //
-// Writing from there was not a tidiness problem, it produced wrong metadata. The
-// cache entry a real reconcile writes goes through the Config API store and is
-// labelled with the ConfigTemplate name; the entry admission writes goes through
-// the Secret store and is labelled with the source type. Whichever ran first
-// won, because ApplySourceCacheMetadata is deliberately additive - so once
-// admission started rendering these components, entries began appearing with the
-// label the config factory does not expect.
-//
-// Reads still go through. Not reading would make every admission do the source's
-// live I/O - a git fetch, an HTTP call - against a webhook timeout, and would
-// have validation resolve different data than the render that follows it. The
-// type check itself never depends on cached values: TypeOf builds sentinels from
-// the schema, so what the cache holds cannot change what admission concludes.
+// Reads still go through. Skipping them would make every admission repeat the
+// source's live I/O against a webhook timeout, and have validation see different
+// data than the render that follows. The type check never depends on cached
+// values: TypeOf builds sentinels from the schema.
 type readOnlySourceCacheStore struct {
 	delegate velaprocess.SourceCacheStore
 }
