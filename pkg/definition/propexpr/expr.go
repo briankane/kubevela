@@ -207,8 +207,14 @@ func HasExpression(v interface{}) bool {
 	found := false
 	//nolint:errcheck // the visitor only signals, it never fails
 	_ = Walk(v, "", func(_, raw string) error {
+		// A parse failure counts as an expression. Callers use this to decide
+		// whether to do expression work at all, and answering false for a typo
+		// means nothing looks at it: admission skips its checks and the render
+		// skips substitution, so `$(source.cfg.host` reaches the object as text.
+		// Reporting it here is what lets the parse error be raised where it can
+		// name the property it is in.
 		parsed, err := Parse(raw)
-		if err == nil && parsed.HasExpr() {
+		if err != nil || parsed.HasExpr() {
 			found = true
 			return errStopWalk
 		}
