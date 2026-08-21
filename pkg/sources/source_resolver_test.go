@@ -18,12 +18,13 @@ package sources
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"testing"
-	"time"
 
 	"cuelang.org/go/cue"
 	upstreamcuex "github.com/kubevela/pkg/cue/cuex"

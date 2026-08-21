@@ -19,10 +19,11 @@ package sources
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/oam-dev/kubevela/pkg/cue/render"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
