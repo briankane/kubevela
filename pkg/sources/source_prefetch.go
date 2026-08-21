@@ -19,6 +19,7 @@ package sources
 import (
 	"sync"
 
+	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
@@ -120,7 +121,7 @@ func (r *sourceResolver) independentBindings(properties interface{}) []string {
 				if !fragment.IsExpr() {
 					continue
 				}
-				refs, rerr := expressionReferences(fragment.Expr)
+				refs, rerr := celexpr.PropertyReferences(fragment.Expr)
 				if rerr != nil {
 					continue
 				}

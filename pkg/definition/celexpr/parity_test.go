@@ -157,7 +157,7 @@ func TestUndefendedReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	optional := func(r Reference) bool {
+	optional := func(r propexpr.Reference) bool {
 		p := strings.Join(r.Path, ".")
 		return p == "cfg.note" || strings.HasPrefix(p, "cfg.data.")
 	}
@@ -287,7 +287,7 @@ func TestGuardResilience(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	optional := func(r Reference) bool {
+	optional := func(r propexpr.Reference) bool {
 		p := strings.Join(r.Path, ".")
 		return p == "cfg.note" || p == "cfg.other"
 	}

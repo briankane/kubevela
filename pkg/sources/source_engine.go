@@ -196,7 +196,7 @@ func (e *SourceEngine) Reads(properties interface{}) ([]propexpr.Reference, erro
 			if !fragment.IsExpr() {
 				continue
 			}
-			refs, rerr := expressionReferences(fragment.Expr)
+			refs, rerr := celexpr.PropertyReferences(fragment.Expr)
 			if rerr != nil {
 				return rerr
 			}

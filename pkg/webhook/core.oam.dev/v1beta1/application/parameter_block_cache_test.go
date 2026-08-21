@@ -17,7 +17,6 @@ limitations under the License.
 package application
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -49,11 +48,10 @@ output: {
 // same cue.Value would be a data race - the caching equivalent of saving a few
 // microseconds by corrupting the evaluator.
 func TestParameterBlockCompilesFreshEachTime(t *testing.T) {
-	ctx := context.Background()
 
-	first, ok := parameterBlockOnly(ctx, paramCacheTemplate)
+	first, ok := parameterBlockOnly(paramCacheTemplate)
 	require.True(t, ok)
-	second, ok := parameterBlockOnly(ctx, paramCacheTemplate)
+	second, ok := parameterBlockOnly(paramCacheTemplate)
 	require.True(t, ok)
 
 	assert.NotSame(t, first, second, "each call must get its own compiled value")
@@ -109,20 +107,19 @@ output: {
 		_, ok := parameterBlockSource(noParams)
 		assert.False(t, ok, "a template with no parameter block must report so every time")
 	}
-	_, ok := parameterBlockOnly(context.Background(), noParams)
+	_, ok := parameterBlockOnly(noParams)
 	assert.False(t, ok)
 }
 
 // TestParameterBlockIsConcurrencySafe exercises the shape admission uses. Under
 // -race this is the real assertion.
 func TestParameterBlockIsConcurrencySafe(t *testing.T) {
-	ctx := context.Background()
 	var wg sync.WaitGroup
 	for i := 0; i < 24; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, ok := parameterBlockOnly(ctx, paramCacheTemplate)
+			c, ok := parameterBlockOnly(paramCacheTemplate)
 			if !ok {
 				t.Error("extraction failed under concurrency")
 				return

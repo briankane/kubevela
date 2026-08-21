@@ -470,13 +470,11 @@ func undefendedReads(raw string, schemas map[string]string) ([]propexpr.Referenc
 		if !f.IsExpr() {
 			continue
 		}
-		celRefs, rerr := celexpr.References(env, f.Expr)
+		found, rerr := celexpr.References(env, f.Expr)
 		if rerr != nil {
 			return nil, rerr
 		}
-		for _, r := range celRefs {
-			refs = append(refs, propexpr.Reference{Root: r.Root, Path: r.Path, Defaulted: r.Guarded})
-		}
+		refs = append(refs, found...)
 	}
 	return propexpr.UndefendedIn(refs, schemas)
 }

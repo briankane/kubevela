@@ -23,36 +23,21 @@ import (
 	"github.com/google/cel-go/cel"
 	celast "github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/common/operators"
+
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
-// Reference is one read an expression makes, mirroring propexpr.Reference so
-// the callers that depend on it do not have to change shape.
+// PropertyReferences returns every read an expression makes, against the shared
+// permissive environment.
 //
-// Three things in the controller run off these, and all three fail quietly if the
-// set under-approximates: which sources a component's render must resolve and in
-// what order, whether a chained binding forms a cycle, and which resolved values
-// are sensitive and must be redacted from status.
-type Reference struct {
-	// Root is "source" or "context".
-	Root string
-	// Path is the rest: for a source, [binding, field...]; for context, [field]
-	// or [field, index].
-	Path []string
-	// Guarded records that the read sits behind a has() test or the false arm of
-	// a ternary, so it survives the value being absent - the CEL equivalent of a
-	// defaulted read.
-	Guarded bool
-}
-
-// IsSource reports whether the reference reads a resolved source.
-func (r Reference) IsSource() bool { return r.Root == "source" }
-
-// String renders a reference the way an error message names it.
-func (r Reference) String() string {
-	if len(r.Path) == 0 {
-		return r.Root
+// The environment is the same for every caller resolving or scanning an
+// expression, so building one per call site only invites them to differ.
+func PropertyReferences(expr string) ([]propexpr.Reference, error) {
+	env, err := DynEnv()
+	if err != nil {
+		return nil, err
 	}
-	return r.Root + "." + strings.Join(r.Path, ".")
+	return References(env, expr)
 }
 
 // References returns every read an expression makes.
@@ -66,14 +51,14 @@ func (r Reference) String() string {
 // arm of a ternary is included too, deliberately: it still has to be resolved
 // before the expression can be evaluated, and a value that might be substituted
 // must count as sensitive whether or not this particular render reaches it.
-func References(env *cel.Env, expr string) ([]Reference, error) {
+func References(env *cel.Env, expr string) ([]propexpr.Reference, error) {
 	c, err := compiledFor(env, expr)
 	if err != nil {
 		return nil, err
 	}
 	ast := c.ast
 
-	seen := map[string]Reference{}
+	seen := map[string]propexpr.Reference{}
 	nav := celast.NavigateAST(ast.NativeRep())
 	for _, n := range celast.MatchDescendants(nav, func(e celast.NavigableExpr) bool {
 		// Only the outermost select of a chain: descending would also yield the
@@ -88,13 +73,13 @@ func References(env *cel.Env, expr string) ([]Reference, error) {
 		if !ok || (root != "source" && root != "context") {
 			continue
 		}
-		r := Reference{Root: root, Path: path, Guarded: guarded(n, root, path)}
-		if prev, dup := seen[r.String()]; !dup || (prev.Guarded && !r.Guarded) {
+		r := propexpr.Reference{Root: root, Path: path, Defaulted: guarded(n, root, path)}
+		if prev, dup := seen[r.String()]; !dup || (prev.Defaulted && !r.Defaulted) {
 			seen[r.String()] = r
 		}
 	}
 
-	out := make([]Reference, 0, len(seen))
+	out := make([]propexpr.Reference, 0, len(seen))
 	for _, r := range seen {
 		out = append(out, r)
 	}
@@ -254,8 +239,8 @@ func pathOf(e celast.Expr) (string, []string, bool) {
 // A chain yields its own prefixes as it is walked - `source.cfg.meta.region`
 // also matches at `source.cfg.meta` and `source.cfg`. Only the deepest read is
 // the one an author wrote, and it is the one the schema check must validate.
-func dropPrefixes(in []Reference) []Reference {
-	var out []Reference
+func dropPrefixes(in []propexpr.Reference) []propexpr.Reference {
+	var out []propexpr.Reference
 	for i, r := range in {
 		prefix := false
 		for j, other := range in {
@@ -287,14 +272,14 @@ func dropPrefixes(in []Reference) []Reference {
 //
 // optional reports whether a path may be absent: an optional schema field, or any
 // key of an open map. The caller supplies it because only the schema knows.
-func UndefendedReads(env *cel.Env, expr string, optional func(Reference) bool) ([]Reference, error) {
+func UndefendedReads(env *cel.Env, expr string, optional func(propexpr.Reference) bool) ([]propexpr.Reference, error) {
 	refs, err := References(env, expr)
 	if err != nil {
 		return nil, err
 	}
-	var out []Reference
+	var out []propexpr.Reference
 	for _, r := range refs {
-		if r.IsSource() && !r.Guarded && optional(r) {
+		if r.IsSource() && !r.Defaulted && optional(r) {
 			out = append(out, r)
 		}
 	}

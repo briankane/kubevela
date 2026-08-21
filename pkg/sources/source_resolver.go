@@ -172,7 +172,7 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 		if !fragment.IsExpr() {
 			continue
 		}
-		refs, rerr := expressionReferences(fragment.Expr)
+		refs, rerr := celexpr.PropertyReferences(fragment.Expr)
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -198,27 +198,6 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 	}
 
 	return celEvalProperty(raw, resolved, resolver.expressionContext())
-}
-
-// expressionReferences extracts the reads an expression makes, through whichever
-// engine is selected. Both must agree, or dependency ordering and +sensitive
-// redaction would differ between them.
-func expressionReferences(expr string) ([]propexpr.Reference, error) {
-	env, err := celexpr.DynEnv()
-	if err != nil {
-		return nil, err
-	}
-	celRefs, err := celexpr.References(env, expr)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]propexpr.Reference, 0, len(celRefs))
-	for _, r := range celRefs {
-		out = append(out, propexpr.Reference{
-			Root: r.Root, Path: r.Path, Defaulted: r.Guarded,
-		})
-	}
-	return out, nil
 }
 
 // celEvalProperty evaluates a whole property value with CEL, interpolation

@@ -516,26 +516,15 @@ func consumedValues(src v1beta1.ApplicationSource, rs sources.SourceResolutionSt
 	if len(rs.ConsumedFields) == 0 {
 		return nil
 	}
-	maskPaths := append([]string{}, rs.SensitivePaths...)
+	// RedactedFields rather than RedactValue directly: the status carries real
+	// values, and going through the status's own accessor is what stops a caller
+	// publishing one. The variadic is for the paths this policy masks beyond the
+	// definition's own.
+	var extra []string
 	if src.StatusPolicy != nil {
-		maskPaths = append(maskPaths, src.StatusPolicy.MaskPaths...)
+		extra = src.StatusPolicy.MaskPaths
 	}
-	maskSet := make(map[string]struct{}, len(maskPaths))
-	for _, p := range maskPaths {
-		if p != "" {
-			maskSet[p] = struct{}{}
-		}
-	}
-	paths := make([]string, 0, len(rs.ConsumedFields))
-	for p := range rs.ConsumedFields {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	props := make(map[string]interface{}, len(paths))
-	for _, p := range paths {
-		props[p] = sources.RedactValue(p, rs.ConsumedFields[p], maskSet)
-	}
-	raw, err := mapToRawExtension(props)
+	raw, err := mapToRawExtension(rs.RedactedFields(extra...))
 	if err != nil {
 		return nil
 	}

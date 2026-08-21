@@ -434,7 +434,7 @@ func collectSourceRefs(raw *runtime.RawExtension, basePath *field.Path, sourceIn
 			if !fragment.IsExpr() {
 				continue
 			}
-			reads, rerr := expressionRefs(fragment.Expr)
+			reads, rerr := celexpr.PropertyReferences(fragment.Expr)
 			if rerr != nil {
 				// Syntax errors are reported by validateExpressions with a
 				// better message; do not report them twice.
@@ -774,7 +774,7 @@ func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespac
 	// the compiler in hand, and WorkloadCompiler carries the workload providers
 	// but not vela/multicluster or vela/builtin. Reducing to the parameter block
 	// keeps the check independent of which providers happen to be loaded.
-	if param, ok := parameterBlockOnly(ctx, tmpl); ok {
+	if param, ok := parameterBlockOnly(tmpl); ok {
 		return param, nil
 	}
 
@@ -801,7 +801,7 @@ func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespac
 // file. Compiling it alone makes the type check independent of which providers
 // the compiler happens to hold, which is what stopped it running for workflow
 // steps at all.
-func parameterBlockOnly(ctx context.Context, tmpl string) (*cueStruct, bool) {
+func parameterBlockOnly(tmpl string) (*cueStruct, bool) {
 	src, ok := parameterBlockSource(tmpl)
 	if !ok {
 		return nil, false
@@ -1233,7 +1233,7 @@ func validateSourceContextReads(app *v1beta1.Application, effective map[string][
 				if !fragment.IsExpr() {
 					continue
 				}
-				reads, rerr := expressionRefs(fragment.Expr)
+				reads, rerr := celexpr.PropertyReferences(fragment.Expr)
 				if rerr != nil {
 					continue // reported by validateExpressions
 				}
@@ -1268,22 +1268,4 @@ func contextUnavailableMessage(field, surface, binding string) string {
 		msg += "; it is available in " + strings.Join(available, ", ")
 	}
 	return msg
-}
-
-// expressionRefs extracts reads through whichever engine is selected, so the
-// reference pass and the render agree about what an expression touches.
-func expressionRefs(expr string) ([]propexpr.Reference, error) {
-	env, err := celexpr.DynEnv()
-	if err != nil {
-		return nil, err
-	}
-	celRefs, err := celexpr.References(env, expr)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]propexpr.Reference, 0, len(celRefs))
-	for _, r := range celRefs {
-		out = append(out, propexpr.Reference{Root: r.Root, Path: r.Path, Defaulted: r.Guarded})
-	}
-	return out, nil
 }

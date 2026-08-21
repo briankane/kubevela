@@ -121,18 +121,38 @@ func identityContext(values map[string]interface{}, bindingName string, inputs [
 		}
 
 		if indexed {
-			nested, _ := out[field].(map[string]interface{})
-			if nested == nil {
+			nested, ok := out[field].(map[string]interface{})
+			if !ok {
+				// Either nothing yet, or a bare read of the same field got here
+				// first. Keep it under a reserved key rather than dropping it:
+				// this map decides the cache key, so losing a contribution would
+				// silently widen what an entry is shared by.
 				nested = map[string]interface{}{}
+				if prev, seen := out[field]; seen {
+					nested[wholeFieldKey] = prev
+				}
 				out[field] = nested
 			}
 			nested[index] = value
+			continue
+		}
+		if nested, ok := out[field].(map[string]interface{}); ok {
+			// An indexed read of the same field got here first.
+			nested[wholeFieldKey] = value
 			continue
 		}
 		out[field] = value
 	}
 	return out
 }
+
+// wholeFieldKey holds a bare read of a field that is also read by index.
+//
+// The rules make a field one or the other, so this is unreachable today. It
+// exists because the alternative is silent: whichever read arrived second would
+// replace the first, and the identity would stop distinguishing entries it
+// should.
+const wholeFieldKey = "\x00whole"
 
 // splitIndexed parses "appLabels[team]" into its field and index.
 func splitIndexed(input string) (field, index string, indexed bool) {

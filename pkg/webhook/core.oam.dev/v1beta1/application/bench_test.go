@@ -16,10 +16,7 @@ limitations under the License.
 
 package application
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 // Admission derives a definition's parameter contract once per distinct
 // definition per request. The reduction is cached; the compile cannot be,
@@ -58,10 +55,9 @@ output: {
 `
 
 func BenchmarkParameterBlockOnly(b *testing.B) {
-	ctx := context.Background()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, ok := parameterBlockOnly(ctx, benchDefinitionTemplate); !ok {
+		if _, ok := parameterBlockOnly(benchDefinitionTemplate); !ok {
 			b.Fatal("did not extract")
 		}
 	}

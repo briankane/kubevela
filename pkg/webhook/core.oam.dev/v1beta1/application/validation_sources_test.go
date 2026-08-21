@@ -836,7 +836,6 @@ func TestSourceSchemaLookupShapes(t *testing.T) {
 // type check silently passed. A mismatch in a step surfaced as a Go unmarshal
 // error naming a struct field instead.
 func TestParameterBlockOnly(t *testing.T) {
-	ctx := context.Background()
 
 	t.Run("extracted without the imports the body needs", func(t *testing.T) {
 		// Shaped like the deploy step: imports this compiler does not hold.
@@ -853,7 +852,7 @@ parameter: {
 	parallelism: *5 | int
 }
 `
-		param, ok := parameterBlockOnly(ctx, tmpl)
+		param, ok := parameterBlockOnly(tmpl)
 		if !ok {
 			t.Fatal("the parameter block should compile on its own")
 		}
@@ -873,7 +872,7 @@ import "vela/kube"
 output: kube.#Apply & {$params: {}}
 parameter: #Args
 `
-		param, ok := parameterBlockOnly(ctx, tmpl)
+		param, ok := parameterBlockOnly(tmpl)
 		if !ok {
 			t.Fatal("a parameter aliased to a local definition should resolve")
 		}
@@ -883,7 +882,7 @@ parameter: #Args
 	})
 
 	t.Run("no parameter block reports not-found rather than guessing", func(t *testing.T) {
-		if _, ok := parameterBlockOnly(ctx, `output: {a: 1}`); ok {
+		if _, ok := parameterBlockOnly(`output: {a: 1}`); ok {
 			t.Fatal("a template with no parameter block must not report one")
 		}
 	})
