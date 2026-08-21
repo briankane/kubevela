@@ -291,8 +291,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	}
 	if r.resolving[sourceName] {
 		err := fmt.Errorf("circular source dependency detected at %q", sourceName)
-		r.setSourceStatus(sourceName, "", "Failed", err.Error(), "", "", nil)
-		return nil, err
+		return r.fail(sourceName, "", "", err, "")
 	}
 	r.resolving[sourceName] = true
 	defer delete(r.resolving, sourceName)
@@ -300,14 +299,12 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	sourceType, ok := r.sourceTypes[sourceName]
 	if !ok || sourceType == "" {
 		err := fmt.Errorf("source %q not found", sourceName)
-		r.setSourceStatus(sourceName, "", "Failed", err.Error(), "", "", nil)
-		return nil, err
+		return r.fail(sourceName, "", "", err, "")
 	}
 	sourceTemplate, ok := r.sourceTemplates[sourceType]
 	if !ok || sourceTemplate == "" {
 		err := fmt.Errorf("source definition %q for source %q is missing cue template", sourceType, sourceName)
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), "", "", nil)
-		return nil, err
+		return r.fail(sourceName, sourceType, "", err, "")
 	}
 	resolvedProps := map[string]interface{}{}
 	paramFile := velaprocess.ParameterFieldName + ": {}"
@@ -340,8 +337,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	}
 	cachePolicy, err := r.resolveCachePolicy(sourceName, sourceType, sourceTemplate, resolvedProps)
 	if err != nil {
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), "", "", nil)
-		return nil, err
+		return r.fail(sourceName, sourceType, "", err, "")
 	}
 	// storage.key is the readable prefix; uniqueness comes from the hash below,
 	// which covers the definition's template, the binding's properties, and
@@ -353,8 +349,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	}
 	cachePolicy.Key, err = cacheIdentity(cachePolicy.Key, identity)
 	if err != nil {
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), "", "", nil)
-		return nil, err
+		return r.fail(sourceName, sourceType, "", err, "")
 	}
 	cached, stale, found, cacheExpiresAt, err := r.readSourceCache(cachePolicy.Key, cachePolicy.TTL)
 	if err != nil {
@@ -366,57 +361,49 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 			return cached, nil
 		}
 	}
+	// What a failed refresh below may fall back on.
+	fallback := staleFallback{
+		name: sourceName, sourceType: sourceType, policy: cachePolicy,
+		cached: cached, found: found, stale: stale, expiresAt: cacheExpiresAt,
+	}
+
 	// A source is compiled against the context the cache-key rules make readable,
 	// not the component's - so it cannot depend on anything the key ignores.
 	c, err := sourceContext(r.ctxValues, sourceName, r.surface)
 	if err != nil {
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
-		return nil, err
+		return r.fail(sourceName, sourceType, cachePolicy.Key, err, "")
 	}
 	val, err := r.compiler.CompileString(r.goCtx, strings.Join([]string{
 		render.Template(sourceTemplate), paramFile, c,
 	}, "\n"))
 	if err != nil {
-		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
-			r.touchSourceCache(cachePolicy.Key)
-			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
-			return cached, nil
+		if v, ok := r.serveStale(fallback, "refresh failed; serving stale cached value"); ok {
+			return v, nil
 		}
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
-		return nil, errors.WithMessagef(err, "compile source definition %s", sourceType)
+		return r.fail(sourceName, sourceType, cachePolicy.Key, err,
+			fmt.Sprintf("compile source definition %s", sourceType))
 	}
 	if userErrs := render.UserErrors(val, "source definition", sourceType); len(userErrs) > 0 {
 		errMsg := strings.Join(userErrs, "; ")
-		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
-			r.touchSourceCache(cachePolicy.Key)
-			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh reported errors; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
-			return cached, nil
+		if v, ok := r.serveStale(fallback, "refresh reported errors; serving stale cached value"); ok {
+			return v, nil
 		}
-		r.setSourceStatus(sourceName, sourceType, "Failed", errMsg, cachePolicy.Key, "", nil)
-		return nil, fmt.Errorf("source definition %s reported errors: %s", sourceType, errMsg)
+		return r.fail(sourceName, sourceType, cachePolicy.Key, fmt.Errorf("source definition %s reported errors: %s", sourceType, errMsg), "")
 	}
 	output := map[string]interface{}{}
 	if err := val.LookupPath(value.FieldPath(velaprocess.OutputFieldName)).Decode(&output); err != nil {
-		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
-			r.touchSourceCache(cachePolicy.Key)
-			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
-			return cached, nil
+		if v, ok := r.serveStale(fallback, "refresh failed; serving stale cached value"); ok {
+			return v, nil
 		}
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
-		return nil, errors.WithMessagef(err, "decode output for source definition %s", sourceType)
+		return r.fail(sourceName, sourceType, cachePolicy.Key, err,
+			fmt.Sprintf("decode output for source definition %s", sourceType))
 	}
 	if err := r.validateResolvedOutput(sourceType, sourceTemplate, output); err != nil {
-		if found && stale && cachePolicy.OnStaleFailure == sourceCachePolicyUseStale {
-			r.touchSourceCache(cachePolicy.Key)
-			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, "Resolved", "refresh failed; serving stale cached value", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
-			return cached, nil
+		if v, ok := r.serveStale(fallback, "refresh failed; serving stale cached value"); ok {
+			return v, nil
 		}
-		r.setSourceStatus(sourceName, sourceType, "Failed", err.Error(), cachePolicy.Key, "", nil)
-		return nil, errors.WithMessagef(err, "validate output against schema for source definition %s", sourceType)
+		return r.fail(sourceName, sourceType, cachePolicy.Key, err,
+			fmt.Sprintf("validate output against schema for source definition %s", sourceType))
 	}
 	r.resolved[sourceName] = output
 	expiresAt := time.Now().Add(cachePolicy.TTL).Format(time.RFC3339)

@@ -16,6 +16,12 @@ limitations under the License.
 
 package sources
 
+import (
+	"time"
+
+	"github.com/pkg/errors"
+)
+
 // SourceRead is one value taken from a source: what was read, where it went,
 // and who read it.
 type SourceRead struct {
@@ -178,4 +184,49 @@ func mergeStatus(before, cur SourceResolutionStatus) SourceResolutionStatus {
 		merged.SensitivePaths = before.SensitivePaths
 	}
 	return merged
+}
+
+// staleFallback is what a refresh needs in order to decide, when it cannot
+// complete, whether a previously stored value may stand in for the answer.
+type staleFallback struct {
+	name       string
+	sourceType string
+	policy     sourceCachePolicy
+	cached     map[string]interface{}
+	found      bool
+	stale      bool
+	expiresAt  time.Time
+}
+
+// serveStale returns the stored value when a refresh has failed and the
+// definition asked for that, reporting it as resolved with the reason it is not
+// fresh. The second return says whether it applied.
+//
+// Written once because every refresh failure has to make the same decision, and
+// each is also a place where forgetting to record status would leave a binding
+// looking unresolved while its value was in use.
+func (r *sourceResolver) serveStale(f staleFallback, reason string) (map[string]interface{}, bool) {
+	if !f.found || !f.stale || f.policy.OnStaleFailure != sourceCachePolicyUseStale {
+		return nil, false
+	}
+	r.touchSourceCache(f.policy.Key)
+	r.resolved[f.name] = f.cached
+	r.setSourceStatus(f.name, f.sourceType, "Resolved", reason,
+		f.policy.Key, formatExpiry(f.expiresAt), f.cached)
+	return f.cached, true
+}
+
+// fail records a binding as failed and returns the error to hand back, so a
+// resolution cannot report one without the other.
+//
+// The status carries the cause on its own and the returned error carries the
+// context around it. A reader of status.sources[] is already looking at the
+// binding that failed, so naming it again there says nothing; a caller further
+// up has lost that, so the error says which step it was.
+func (r *sourceResolver) fail(name, sourceType, cacheKey string, err error, context string) (map[string]interface{}, error) {
+	r.setSourceStatus(name, sourceType, "Failed", err.Error(), cacheKey, "", nil)
+	if context == "" {
+		return nil, err
+	}
+	return nil, errors.WithMessage(err, context)
 }
