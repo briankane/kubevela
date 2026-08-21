@@ -100,13 +100,13 @@ func (h *ValidatingHandler) loadSourceParameter(ctx context.Context, appNamespac
 // loadTargetParameter returns a validator over the parameter: block of a
 // ComponentDefinition (kind "component") or TraitDefinition (kind "trait"),
 // used to type-check expression-fed values against the consuming parameter.
-// This is best-effort: any failure (definition not found, template does not
-// compile statically, no parameter block) yields (nil, nil) so validation
-// fails open rather than blocking a legitimate apply.
-func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespace, kind, defName string) (*cueStruct, error) {
+// Best-effort by design: any failure - definition not found, template that does
+// not compile statically, no parameter block - yields nil so validation fails
+// open rather than blocking a legitimate apply. There is no error to return.
+func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespace, kind, defName string) *cueStruct {
 	tmpl, ok := h.getDefinitionTemplate(ctx, appNamespace, kind, defName)
 	if !ok || strings.TrimSpace(tmpl) == "" {
-		return nil, nil
+		return nil
 	}
 	// Only the `parameter:` block is wanted, so only that is compiled.
 	//
@@ -115,7 +115,7 @@ func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespac
 	// but not vela/multicluster or vela/builtin. Reducing to the parameter block
 	// keeps the check independent of which providers happen to be loaded.
 	if param, ok := parameterBlockOnly(tmpl); ok {
-		return param, nil
+		return param
 	}
 
 	// Fall back to compiling the whole template: a `parameter` that references
@@ -124,13 +124,13 @@ func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespac
 		ctx, tmpl+velacue.BaseTemplate, upstreamcuex.DisableResolveProviderFunctions{})
 	if err != nil || val.Err() != nil {
 		klog.V(4).Infof("skip target parameter type check for %s %q: template did not compile statically", kind, defName)
-		return nil, nil
+		return nil
 	}
 	param := val.LookupPath(cue.ParsePath("parameter"))
 	if !param.Exists() {
-		return nil, nil
+		return nil
 	}
-	return &cueStruct{root: param}, nil
+	return &cueStruct{root: param}
 }
 
 // parameterBlockOnly extracts a template's `parameter:` declaration and compiles

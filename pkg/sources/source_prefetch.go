@@ -115,6 +115,7 @@ func (r *sourceResolver) independentBindings(properties interface{}) []string {
 		_ = propexpr.Walk(node, "", func(_, raw string) error {
 			parsed, err := propexpr.Parse(raw)
 			if err != nil || !parsed.HasExpr() {
+				//nolint:nilerr // prefetching must not change an outcome; the lazy path reports this
 				return nil
 			}
 			for _, fragment := range parsed.Fragments {

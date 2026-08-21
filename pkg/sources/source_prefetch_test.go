@@ -161,7 +161,7 @@ func TestPrefetchIsBehaviourNeutral(t *testing.T) {
 	// The same work with the prefetch bypassed.
 	fresh := prefetchContext(t, 3)
 	r := newSourceResolver(fresh.GetCtx(), contextValuesFor(fresh), SurfaceComponent, sourceInputsFromContext(fresh))
-	sequential, err := resolveSourceNode(props, r, "")
+	sequential, err := resolveSourceNode(props, r)
 	require.NoError(t, err)
 
 	assert.Equal(t, sequential, withPrefetch,

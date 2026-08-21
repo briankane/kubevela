@@ -331,7 +331,7 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 
 		// The same optional-feeds-required rule the directive follows.
 		if undefended := h.undefendedExpressionReads(ctx, annotations, appNamespace, raw, sourceNameToType, schemaValidators); len(undefended) > 0 {
-			if required, _ := param.requiredAt(lf.path); required {
+			if param.requiredAt(lf.path) {
 				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 					fmt.Sprintf("%s may be absent and feeds required parameter %q of SourceDefinition %q; guard it with has(%s) ? %s : <fallback>",
 						undefended[0], lf.path, sourceType, undefended[0], undefended[0])))

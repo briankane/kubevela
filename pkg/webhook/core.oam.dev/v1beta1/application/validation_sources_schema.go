@@ -115,28 +115,27 @@ func (c *cueStruct) kindAt(path string) (cue.Kind, bool) {
 }
 
 // requiredAt reports whether path names a field that the struct declares AND
-// requires (i.e. present and not optional). Returns (required, declared).
-// A field with a default is not required (it has a fallback value).
-func (c *cueStruct) requiredAt(path string) (required bool, declared bool) {
+// requires: present, not optional, and with no default to fall back on.
+func (c *cueStruct) requiredAt(path string) bool {
 	segs := strings.Split(path, ".")
 	if len(segs) == 0 || segs[len(segs)-1] == "" {
-		return false, false
+		return false
 	}
 	leaf := segs[len(segs)-1]
 	if _, err := strconv.Atoi(leaf); err == nil {
-		return false, false // array index: not a named required field
+		return false // array index: not a named required field
 	}
 	parent := c.root
 	if len(segs) > 1 {
 		p, ok := c.lookup(strings.Join(segs[:len(segs)-1], "."))
 		if !ok {
-			return false, false
+			return false
 		}
 		parent = p
 	}
 	iter, err := parent.Fields(cue.Optional(true), cue.Definitions(false))
 	if err != nil {
-		return false, false
+		return false
 	}
 	for iter.Next() {
 		sel := iter.Selector()
@@ -144,18 +143,19 @@ func (c *cueStruct) requiredAt(path string) (required bool, declared bool) {
 			continue
 		}
 		if iter.IsOptional() {
-			return false, true
+			return false
 		}
 		if _, hasDefault := iter.Value().Default(); hasDefault {
-			return false, true // defaulted -> not required
+			return false // defaulted -> not required
 		}
-		return true, true
+		return true
 	}
-	return false, false
+	return false
 }
 
 // kindName renders a CUE kind for user-facing error messages.
 func kindName(k cue.Kind) string {
+	//nolint:exhaustive // the kinds a user can write; anything else falls through to the default below
 	switch k {
 	case cue.StringKind:
 		return "string"

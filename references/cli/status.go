@@ -164,7 +164,7 @@ func NewAppStatusCommand(c common.Args, order string, ioStreams cmdutil.IOStream
 			if showSources, err := cmd.Flags().GetBool("sources"); showSources && err == nil {
 				component, _ := cmd.Flags().GetString("component")
 				cluster, _ := cmd.Flags().GetString("cluster")
-				return printAppSources(ctx, newClient, namespace, appName, Filter{
+				return printAppSources(newClient, namespace, appName, Filter{
 					Component: component,
 					Cluster:   cluster,
 				}, outputFormat, cmd.OutOrStdout())

@@ -71,7 +71,10 @@ func collectSensitivePaths(st *ast.StructLit, prefix []string, out *[]string) {
 		if name == "" {
 			continue
 		}
-		path := append(prefix, name)
+		// A fresh slice each time: append into prefix would share its backing
+		// array with every sibling, and one retained path would then change
+		// under another.
+		path := append(append([]string{}, prefix...), name)
 		if hasSensitiveMarker(field) {
 			*out = append(*out, strings.Join(path, "."))
 		}

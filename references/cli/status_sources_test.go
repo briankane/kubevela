@@ -18,7 +18,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -111,7 +110,7 @@ func TestPrintAppSourcesMachineReadable(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
 
 	var buf bytes.Buffer
-	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{}, "json", &buf))
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "json", &buf))
 	var got sourcesOutput
 	r.NoError(json.Unmarshal(buf.Bytes(), &got))
 	r.Equal("checkout", got.Name)
@@ -121,7 +120,7 @@ func TestPrintAppSourcesMachineReadable(t *testing.T) {
 	r.Len(got.Sources[0].ConsumedBy, 2)
 
 	buf.Reset()
-	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{}, "yaml", &buf))
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "yaml", &buf))
 	r.Contains(buf.String(), "sourceAttr: data.image")
 	r.NotContains(buf.String(), "+---", "yaml output must not carry table decoration")
 }
@@ -133,7 +132,7 @@ func TestPrintAppSourcesFiltersMachineReadableToo(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
 
 	var buf bytes.Buffer
-	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout",
+	r.NoError(printAppSources(cli, "prod", "checkout",
 		Filter{Cluster: "eu-west"}, "json", &buf))
 	var got sourcesOutput
 	r.NoError(json.Unmarshal(buf.Bytes(), &got))
@@ -146,7 +145,7 @@ func TestPrintAppSourcesJSONPath(t *testing.T) {
 	r := require.New(t)
 	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
 	var buf bytes.Buffer
-	r.NoError(printAppSources(context.Background(), cli, "prod", "checkout", Filter{},
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{},
 		"jsonpath={.sources[0].phase}", &buf))
 	r.Equal("Resolved", buf.String())
 }

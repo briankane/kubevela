@@ -528,6 +528,7 @@ func scalarsAgree(src, dst *cel.Type) bool {
 
 // failsOpen reports the types this check refuses to judge.
 func failsOpen(t *cel.Type) bool {
+	//nolint:exhaustive // an allowlist of the kinds too loose to judge, not a mapping of every kind
 	switch t.Kind() {
 	case types.DynKind, types.AnyKind, types.StructKind, types.OpaqueKind, types.TypeParamKind:
 		return true

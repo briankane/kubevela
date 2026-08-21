@@ -111,6 +111,7 @@ func optionalPath(v cue.Value, path []string) (bool, error) {
 			// question, and such a read needs no default.
 			index, err := strconv.Atoi(segment)
 			if err != nil {
+				//nolint:nilerr // a non-numeric segment is not an index, not a failure
 				return false, nil
 			}
 			if pinned := cur.LookupPath(cue.MakePath(cue.Index(index))); pinned.Exists() {

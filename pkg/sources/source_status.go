@@ -237,6 +237,8 @@ func (r *sourceResolver) serveStale(f staleFallback, reason string) (map[string]
 // context around it. A reader of status.sources[] is already looking at the
 // binding that failed, so naming it again there says nothing; a caller further
 // up has lost that, so the error says which step it was.
+//
+//nolint:unparam // the nil map is the values half of every caller's (values, error) return, so a failure stays one statement
 func (r *sourceResolver) fail(name, sourceType, cacheKey string, err error, context string) (map[string]interface{}, error) {
 	r.setSourceStatus(name, sourceType, PhaseFailed, err.Error(), cacheKey, "")
 	if context == "" {

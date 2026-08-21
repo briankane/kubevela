@@ -173,7 +173,7 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 	// resolve is resolved again, sequentially, by the walk itself.
 	r.prefetch(properties)
 
-	out, err := resolveSourceNode(properties, r, "")
+	out, err := resolveSourceNode(properties, r)
 	if err != nil {
 		return SourceResult{Statuses: r.statuses}, err
 	}
@@ -250,6 +250,7 @@ func (e *SourceEngine) Check(properties interface{}) []CheckError {
 		parsed, perr := propexpr.Parse(raw)
 		if perr != nil {
 			out = append(out, CheckError{Property: path, Expr: raw, Err: perr})
+			//nolint:nilerr // collected, not raised: the walk reports every bad expression, not the first
 			return nil
 		}
 		if !parsed.HasExpr() {

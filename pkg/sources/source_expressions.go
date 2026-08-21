@@ -24,12 +24,12 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
-// resolveSourceNode walks a properties blob, carrying the path it is at so a
-// recorded read can say which property received the value. Without it status can
-// report what was read but not where it went, which is the half that matters
+// resolveSourceNode walks a properties blob, tracking the path it is at so a
+// recorded read can say which property received the value. Without that, status
+// can report what was read but not where it went, which is the half that matters
 // once a property is assembled from more than one source.
-func resolveSourceNode(node interface{}, resolver *sourceResolver, path string) (interface{}, error) {
-	return propexpr.Map(node, path, func(at, raw string) (interface{}, error) {
+func resolveSourceNode(node interface{}, resolver *sourceResolver) (interface{}, error) {
+	return propexpr.Map(node, "", func(at, raw string) (interface{}, error) {
 		return evaluateSourceExpression(raw, resolver, at)
 	})
 }

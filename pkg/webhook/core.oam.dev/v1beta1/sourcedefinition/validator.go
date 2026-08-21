@@ -225,6 +225,7 @@ func ValidateSurfaceCompatibility(template string, consumable []string) error {
 	if err != nil {
 		// The template's context reads are validated by the cache-key check,
 		// which reports this better than repeating it here would.
+		//nolint:nilerr // reported elsewhere, deliberately not twice
 		return nil
 	}
 	if len(fields) == 0 {
@@ -246,10 +247,10 @@ func ValidateSurfaceCompatibility(template string, consumable []string) error {
 	// sentence per surface, and name where it would work if anywhere does.
 	reason := cachekey.CheckSurface(fields, declared[0])
 	if elsewhere := cachekey.SurfacesSupporting(fields, sources.ConsumableSurfaces); len(elsewhere) > 0 {
-		return fmt.Errorf("this source %v, where it declares it may be consumed; it is available in %s",
+		return fmt.Errorf("this source %w, where it declares it may be consumed; it is available in %s",
 			reason, strings.Join(pluralise(elsewhere), ", "))
 	}
-	return fmt.Errorf("this source %v, and is available in no surface that resolves sources", reason)
+	return fmt.Errorf("this source %w, and is available in no surface that resolves sources", reason)
 }
 
 // SurfaceAllowed reports whether a source declaring the given surfaces may be

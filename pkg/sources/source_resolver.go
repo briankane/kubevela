@@ -315,7 +315,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		// the component made them directly.
 		prevKind, prevName := r.readerKind, r.readerName
 		r.readerKind, r.readerName = "source", sourceName
-		resolvedPropsNode, err := resolveSourceNode(props, r, "")
+		resolvedPropsNode, err := resolveSourceNode(props, r)
 		r.readerKind, r.readerName = prevKind, prevName
 		if err != nil {
 			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "")

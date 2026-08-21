@@ -51,7 +51,7 @@ func TestResolveSourceNode(t *testing.T) {
 	resolver := newSourceResolver(context.Background(), map[string]interface{}{}, SurfaceComponent, sourceInputs{})
 	resolver.resolved = sources
 	resolver.sourceTypes = map[string]string{"cluster-info": "cluster"}
-	got, err := resolveSourceNode(in, resolver, "")
+	got, err := resolveSourceNode(in, resolver)
 	require.NoError(t, err)
 	out, ok := got.(map[string]interface{})
 	require.True(t, ok)

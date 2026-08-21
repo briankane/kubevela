@@ -17,7 +17,6 @@ limitations under the License.
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,7 +38,9 @@ import (
 // second answers "who used it and what did they get", which is genuinely per
 // reader and per placement, and is the part that is unreadable as raw YAML once
 // there is more than one cluster.
-func printAppSources(ctx context.Context, cli client.Client, namespace, appName string,
+// No context parameter: the read goes through loadRemoteApplication, which does
+// not take one.
+func printAppSources(cli client.Client, namespace, appName string,
 	filter Filter, outputFormat string, out io.Writer) error {
 	app, err := loadRemoteApplication(cli, namespace, appName)
 	if err != nil {

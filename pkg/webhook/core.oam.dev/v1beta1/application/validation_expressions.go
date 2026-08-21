@@ -130,7 +130,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 		if pv, ok := targetParams[key]; ok {
 			return pv
 		}
-		pv, _ := h.loadTargetParameter(ctx, app.Namespace, kind, defType)
+		pv := h.loadTargetParameter(ctx, app.Namespace, kind, defType)
 		targetParams[key] = pv
 		return pv
 	}
@@ -138,7 +138,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 	schemasFor := h.sourceSchemaTexts(ctx, app.GetAnnotations(), app.Namespace, sourceNameToType, schemaValidators)
 
 	check := func(leaves []inputLeaf, param *cueStruct, targetDesc string,
-		ctxSchema propexpr.ContextSchema, roots ...string) {
+		ctxSchema propexpr.ContextSchema) {
 		for _, lf := range leaves {
 			raw, ok := lf.literal.(string)
 			if !ok || lf.path == "" {
@@ -155,7 +155,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 				continue
 			}
 
-			srcKind, srcType, err := expressionValueType(raw, schemasFor, ctxSchema, roots...)
+			srcKind, srcType, err := expressionValueType(raw, schemasFor, ctxSchema)
 			if err != nil {
 				errs = append(errs, field.Invalid(lf.fieldPath, raw, err.Error()))
 				continue
@@ -191,7 +191,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 			if uerr != nil || len(undefended) == 0 {
 				continue
 			}
-			if required, _ := param.requiredAt(lf.path); required {
+			if param.requiredAt(lf.path) {
 				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 					fmt.Sprintf("%s may be absent and feeds required %s; %s",
 						undefended[0], targetDesc, defaultHint(undefended[0].String()))))
@@ -199,13 +199,11 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 		}
 	}
 
-	both := []string{propexpr.SourceIdent, propexpr.ContextIdent}
-	contextOnly := []string{propexpr.ContextIdent}
 	for i, comp := range app.Spec.Components {
 		if comp.Properties != nil && len(comp.Properties.Raw) > 0 {
 			base := field.NewPath("spec", "components").Index(i).Child("properties")
 			check(flattenLeafPaths(comp.Properties.Raw, base), loadTarget("component", comp.Type),
-				fmt.Sprintf("component %q parameter", comp.Type), propexpr.ComponentContext, both...)
+				fmt.Sprintf("component %q parameter", comp.Type), propexpr.ComponentContext)
 		}
 		for j, tr := range comp.Traits {
 			if tr.Properties == nil || len(tr.Properties.Raw) == 0 {
@@ -213,7 +211,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 			}
 			base := field.NewPath("spec", "components").Index(i).Child("traits").Index(j).Child("properties")
 			check(flattenLeafPaths(tr.Properties.Raw, base), loadTarget("trait", tr.Type),
-				fmt.Sprintf("trait %q parameter", tr.Type), propexpr.TraitContext, both...)
+				fmt.Sprintf("trait %q parameter", tr.Type), propexpr.TraitContext)
 		}
 	}
 
@@ -231,13 +229,11 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 		// built-in policy is consumed off the appfile, a rendered one goes through
 		// the engine and sees a render's context.
 		scoped := h.policyIsAppScoped(ctx, app, policy.Type)
-		roots := contextOnly
-		if sources.SurfaceReadsSource(appfile.PolicySurface(policy.Type, scoped)) {
-			roots = both
-		}
+		// Whether this policy may read a source at all is settled by the
+		// reference pass; this one only types what it read.
 		check(flattenLeafPaths(policy.Properties.Raw, base), loadTarget("policy", policy.Type),
 			fmt.Sprintf("policy %q parameter", policy.Type),
-			appfile.PolicyContextSchema(policy.Type, scoped), roots...)
+			appfile.PolicyContextSchema(policy.Type, scoped))
 	}
 
 	if app.Spec.Workflow != nil {
@@ -247,7 +243,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 				check(flattenLeafPaths(step.Properties.Raw, p.Child("properties")),
 					loadTarget("workflowstep", step.Type),
 					fmt.Sprintf("workflow step %q parameter", step.Type),
-					propexpr.WorkflowStepContext, both...)
+					propexpr.WorkflowStepContext)
 			}
 			for j, sub := range step.SubSteps {
 				if sub.Properties == nil || len(sub.Properties.Raw) == 0 {
@@ -256,7 +252,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 				check(flattenLeafPaths(sub.Properties.Raw, p.Child("subSteps").Index(j).Child("properties")),
 					loadTarget("workflowstep", sub.Type),
 					fmt.Sprintf("workflow step %q parameter", sub.Type),
-					propexpr.WorkflowStepContext, both...)
+					propexpr.WorkflowStepContext)
 			}
 		}
 	}
@@ -300,7 +296,7 @@ func (h *ValidatingHandler) sourceSchemaTexts(ctx context.Context, annotations m
 func (h *ValidatingHandler) expressionKind(ctx context.Context, annotations map[string]string, appNamespace, raw string,
 	sourceNameToType map[string]string, schemaValidators map[string]*sourceSchemaValidator) (cue.Kind, *cel.Type, error) {
 	return expressionValueType(raw, h.sourceSchemaTexts(ctx, annotations, appNamespace, sourceNameToType, schemaValidators),
-		propexpr.ComponentContext, propexpr.SourceIdent, propexpr.ContextIdent)
+		propexpr.ComponentContext)
 }
 
 // undefendedExpressionReads returns the reads in a property value that could be
@@ -370,8 +366,11 @@ func validateExpressionTree(v interface{}, roots ...string) error {
 // types, which a CUE kind cannot express - see celexpr.ElementsCompatible. It is
 // nil whenever there is nothing precise to say: no expression, an interpolated
 // string, or a compile failure.
+// The readable roots are not a parameter: EnvForContext declares source and
+// context and nothing else, so the sandbox is the environment rather than a list
+// passed alongside it.
 func expressionValueType(raw string, schemas map[string]string,
-	ctxSchema propexpr.ContextSchema, roots ...string) (cue.Kind, *cel.Type, error) {
+	ctxSchema propexpr.ContextSchema) (cue.Kind, *cel.Type, error) {
 	parsed, err := propexpr.Parse(raw)
 	if err != nil || !parsed.HasExpr() {
 		return cue.BottomKind, nil, err
@@ -398,6 +397,7 @@ func expressionValueType(raw string, schemas map[string]string,
 			if cerr != nil {
 				return cue.BottomKind, nil, cerr
 			}
+			//nolint:exhaustive // only the kinds with no string form are refused; the rest interpolate
 			switch celKind(ft) {
 			case cue.StructKind, cue.ListKind:
 				return cue.BottomKind, nil, fmt.Errorf(

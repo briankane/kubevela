@@ -171,39 +171,17 @@ func (h *AppHandler) generateDispatcher(appRev *v1beta1.ApplicationRevision, pre
 				propertiesChanged = componentPropertiesChanged(comp, comparisonRev)
 			}
 
-			// Source values are resolved at render time and are invisible to the
-			// raw spec comparison above, which still sees only the unresolved
-			// expression. Detect a re-resolved value by comparing per-source
-			// hashes against those stamped on the live workload, and re-dispatch
-			// when a binding that opted in changed.
-			//
-			// No publishVersion check here, deliberately. The pin suppresses the
-			// out-of-band refresh, not this: the workflow only reaches here
-			// because the pin was bumped, and a bump that did not pick up current
-			// source values would be a pin that freezes the wrong thing.
-			//
-			// A component whose workload a trait manages is excluded, and cannot
-			// auto-update: the baseline hash is stamped on the dispatched
-			// workload, and there is not one. Without the exclusion every source
-			// would compare against an absent baseline, read as changed, and
-			// re-dispatch on every reconcile.
 			resolvedHashes, consumesSource := resolvedSourceHashes(comp)
-			sourceValuesChanged := false
-			canTrackSources := !skipWorkload && options.Workload != nil
-			if consumesSource && len(autoUpdating) > 0 && !canTrackSources {
-				klog.V(2).InfoS("source auto-update is unavailable for this component",
-					"component", comp.Name, "cluster", clusterName,
-					"reason", "its workload is managed by a trait, so there is nowhere to record the source baseline")
-			}
-			if isHealth && err == nil && consumesSource && len(autoUpdating) > 0 && canTrackSources {
-				live := liveResolvedSourceHashes(ctx, h.Client, clusterName, options.Workload)
-				for _, name := range changedSources(resolvedHashes, live) {
-					if _, ok := autoUpdating[name]; ok {
-						sourceValuesChanged = true
-						break
-					}
-				}
-			}
+			sourceValuesChanged := h.autoUpdatingSourceChanged(ctx, sourceRefreshInputs{
+				component: comp.Name,
+				cluster:   clusterName,
+				workload:  options.Workload,
+				hashes:    resolvedHashes,
+				updating:  autoUpdating,
+				consumes:  consumesSource,
+				trackable: !skipWorkload && options.Workload != nil,
+				settled:   isHealth && err == nil,
+			})
 
 			// Dispatch if: unhealthy, health error, properties changed, source
 			// values changed, or auto-update enabled
@@ -364,6 +342,56 @@ func componentPropertiesChanged(comp *appfile.Component, appRev *v1beta1.Applica
 // Complete() before dispatch); the raw spec comparison in
 // componentPropertiesChanged cannot see them because comp.Params still holds the
 // an unresolved expression.
+// sourceRefreshInputs is what deciding a source-driven re-dispatch needs.
+type sourceRefreshInputs struct {
+	component string
+	cluster   string
+	workload  *unstructured.Unstructured
+	hashes    map[string]string
+	updating  map[string]struct{}
+	consumes  bool
+	// trackable is false when a trait manages the workload, so there is nowhere
+	// to stamp a baseline.
+	trackable bool
+	// settled is false while the component is unhealthy or its health check
+	// errored, when it is being dispatched for another reason anyway.
+	settled bool
+}
+
+// autoUpdatingSourceChanged reports whether a binding this component opted into
+// auto-updating has re-resolved since the live workload was stamped.
+//
+// Source values are substituted at render time and are invisible to the raw spec
+// comparison the caller does, which still sees only the unresolved expression.
+// Comparing per-source hashes against those on the live workload is what makes a
+// re-resolved value visible at all.
+//
+// No publishVersion check here, deliberately. The pin suppresses the out-of-band
+// refresh, not this: the workflow only reaches here because the pin was bumped,
+// and a bump that did not pick up current source values would be a pin that
+// freezes the wrong thing.
+func (h *AppHandler) autoUpdatingSourceChanged(ctx context.Context, in sourceRefreshInputs) bool {
+	if !in.consumes || len(in.updating) == 0 {
+		return false
+	}
+	if !in.trackable {
+		klog.V(2).InfoS("source auto-update is unavailable for this component",
+			"component", in.component, "cluster", in.cluster,
+			"reason", "its workload is managed by a trait, so there is nowhere to record the source baseline")
+		return false
+	}
+	if !in.settled {
+		return false
+	}
+	live := liveResolvedSourceHashes(ctx, h.Client, in.cluster, in.workload)
+	for _, name := range changedSources(in.hashes, live) {
+		if _, ok := in.updating[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func resolvedSourceHashes(comp *appfile.Component) (map[string]string, bool) {
 	if comp == nil || comp.Ctx == nil {
 		return nil, false

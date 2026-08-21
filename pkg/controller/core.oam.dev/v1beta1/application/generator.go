@@ -608,6 +608,8 @@ func resolveWorkflowStepSources(af *appfile.Appfile, steps []wfTypesv1alpha1.Wor
 		}
 		var decoded interface{}
 		if err := json.Unmarshal(raw.Raw, &decoded); err != nil {
+			// Malformed properties are reported by the step's own parsing.
+			//nolint:nilerr // reported elsewhere, deliberately not twice
 			return nil
 		}
 		if !propexpr.HasExpression(decoded) {

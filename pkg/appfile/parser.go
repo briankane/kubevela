@@ -518,6 +518,7 @@ func (p *Parser) parseSources(ctx context.Context, af *Appfile) error {
 	return nil
 }
 
+//nolint:unparam // matches the other parse* stages, which the caller invokes uniformly
 func (p *Parser) parseSourcesFromRevision(af *Appfile) error {
 	if af.AppRevision == nil || af.AppRevision.Spec.SourceDefinitions == nil {
 		return nil
@@ -827,6 +828,7 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 		var decoded interface{}
 		if err := json.Unmarshal(raw.Raw, &decoded); err != nil {
 			// Malformed properties are reported by the consumer's own parsing.
+			//nolint:nilerr // reported elsewhere, deliberately not twice
 			return nil
 		}
 		if !propexpr.HasExpression(decoded) {

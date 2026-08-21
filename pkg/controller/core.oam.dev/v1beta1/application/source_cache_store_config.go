@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/oam-dev/kubevela/pkg/sources"
@@ -75,7 +76,7 @@ func sourceTemplateRefsByType(ctx context.Context, cli client.Client, af *appfil
 func (s *configAPISourceCacheStore) Read(ctx context.Context, cacheKey string, ttl time.Duration) (map[string]interface{}, bool, bool, time.Time, error) {
 	cfg, err := s.factory.GetConfig(ctx, sourceCacheNamespace, cacheKey, false)
 	if err != nil {
-		if err == config.ErrConfigNotFound {
+		if errors.Is(err, config.ErrConfigNotFound) {
 			return nil, false, false, time.Time{}, nil
 		}
 		return nil, false, false, time.Time{}, err
