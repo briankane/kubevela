@@ -58,13 +58,12 @@ type SourceRead struct {
 // SourceResolutionStatus is what one binding's resolution produced, for the
 // caller to report.
 type SourceResolutionStatus struct {
-	Name           string
-	Type           string
-	Phase          string
-	Message        string
-	Config         string
-	ExpiresAt      string
-	ResolvedFields map[string]interface{}
+	Name      string
+	Type      string
+	Phase     string
+	Message   string
+	Config    string
+	ExpiresAt string
 	// ConsumedFields is field -> value, and is what the auto-update hash is
 	// computed over. Deliberately left as a map: json.Marshal sorts map keys, so
 	// the hash is stable, and moving it to an ordered list would risk every
@@ -77,7 +76,7 @@ type SourceResolutionStatus struct {
 	SensitivePaths []string
 }
 
-func (r *sourceResolver) setSourceStatus(sourceName, sourceType, phase, message, config, expiresAt string, resolved map[string]interface{}) {
+func (r *sourceResolver) setSourceStatus(sourceName, sourceType, phase, message, config, expiresAt string) {
 	statuses := r.statuses
 	current := statuses[sourceName]
 	consumed := current.ConsumedFields
@@ -91,7 +90,6 @@ func (r *sourceResolver) setSourceStatus(sourceName, sourceType, phase, message,
 		Message:        message,
 		Config:         config,
 		ExpiresAt:      expiresAt,
-		ResolvedFields: resolved,
 		ConsumedFields: consumed,
 		SensitivePaths: append([]string{}, r.sensitivePaths[sourceType]...),
 	}
@@ -228,7 +226,7 @@ func (r *sourceResolver) serveStale(f staleFallback, reason string) (map[string]
 	r.touchSourceCache(f.policy.Key)
 	r.resolved[f.name] = f.cached
 	r.setSourceStatus(f.name, f.sourceType, PhaseResolved, reason,
-		f.policy.Key, formatExpiry(f.expiresAt), f.cached)
+		f.policy.Key, formatExpiry(f.expiresAt))
 	return f.cached, true
 }
 
@@ -240,7 +238,7 @@ func (r *sourceResolver) serveStale(f staleFallback, reason string) (map[string]
 // binding that failed, so naming it again there says nothing; a caller further
 // up has lost that, so the error says which step it was.
 func (r *sourceResolver) fail(name, sourceType, cacheKey string, err error, context string) (map[string]interface{}, error) {
-	r.setSourceStatus(name, sourceType, PhaseFailed, err.Error(), cacheKey, "", nil)
+	r.setSourceStatus(name, sourceType, PhaseFailed, err.Error(), cacheKey, "")
 	if context == "" {
 		return nil, err
 	}

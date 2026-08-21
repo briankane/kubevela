@@ -178,11 +178,11 @@ type ApplicationComponentStatus struct {
 	Healthy            bool        `json:"healthy"`
 	// WorkloadHealthy indicates the workload health without considering trait health.
 	// +optional
-	WorkloadHealthy bool                      `json:"workloadHealthy,omitempty"`
-	Details         map[string]string         `json:"details,omitempty"`
-	Message         string                    `json:"message,omitempty"`
-	Traits          []ApplicationTraitStatus  `json:"traits,omitempty"`
-	Scopes          []corev1.ObjectReference  `json:"scopes,omitempty"`
+	WorkloadHealthy bool                     `json:"workloadHealthy,omitempty"`
+	Details         map[string]string        `json:"details,omitempty"`
+	Message         string                   `json:"message,omitempty"`
+	Traits          []ApplicationTraitStatus `json:"traits,omitempty"`
+	Scopes          []corev1.ObjectReference `json:"scopes,omitempty"`
 }
 
 // Equal check if two ApplicationComponentStatus are equal
@@ -239,8 +239,6 @@ type ApplicationSourceStatus struct {
 	// before it ever sees them.
 	// +optional
 	ConsumedBy []SourceConsumer `json:"consumedBy,omitempty"`
-	// +optional
-	ResolvedFields *runtime.RawExtension `json:"resolvedFields,omitempty"`
 }
 
 // SourceConsumer records one reader of a source and the values it received.
@@ -325,7 +323,6 @@ type SourceValue struct {
 	// +optional
 	Value *runtime.RawExtension `json:"value,omitempty"`
 }
-
 
 // Revision has name and revision number
 type Revision struct {

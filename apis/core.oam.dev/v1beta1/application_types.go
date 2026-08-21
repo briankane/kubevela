@@ -73,15 +73,14 @@ type ApplicationSource struct {
 
 // ApplicationSourceStatusPolicy controls source status visibility.
 type ApplicationSourceStatusPolicy struct {
-	// ExposeResolvedFields controls whether resolved source fields are written to status.
-	// +optional
-	ExposeResolvedFields bool `json:"exposeResolvedFields,omitempty"`
-	// ExposeConsumedValues controls whether consumed source values are written to status.
-	// If false, consumed property paths may still be listed without values.
+	// ExposeConsumedValues controls whether the values a reader took from this
+	// source are written to status. When false the properties that read it are
+	// still listed, without their values.
 	// +optional
 	ExposeConsumedValues bool `json:"exposeConsumedValues,omitempty"`
-	// MaskPaths redacts resolved field paths before writing to status.
-	// Paths are dot-delimited (e.g. "nested.token").
+	// MaskPaths redacts source attributes before they are written to status, in
+	// addition to those the definition marks +sensitive. Paths are dot-delimited,
+	// for example "nested.token".
 	// +optional
 	MaskPaths []string `json:"maskPaths,omitempty"`
 }

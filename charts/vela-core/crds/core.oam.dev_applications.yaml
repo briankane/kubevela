@@ -1,8 +1,8 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    cert-manager.io/inject-ca-from: vela-system/kubevela-vela-core-root-cert
     controller-gen.kubebuilder.io/version: v0.16.5
   name: applications.core.oam.dev
 spec:
@@ -189,17 +189,15 @@ spec:
                       properties:
                         exposeConsumedValues:
                           description: |-
-                            ExposeConsumedValues controls whether consumed source values are written to status.
-                            If false, consumed property paths may still be listed without values.
-                          type: boolean
-                        exposeResolvedFields:
-                          description: ExposeResolvedFields controls whether resolved
-                            source fields are written to status.
+                            ExposeConsumedValues controls whether the values a reader took from this
+                            source are written to status. When false the properties that read it are
+                            still listed, without their values.
                           type: boolean
                         maskPaths:
                           description: |-
-                            MaskPaths redacts resolved field paths before writing to status.
-                            Paths are dot-delimited (e.g. "nested.token").
+                            MaskPaths redacts source attributes before they are written to status, in
+                            addition to those the definition marks +sensitive. Paths are dot-delimited,
+                            for example "nested.token".
                           items:
                             type: string
                           type: array
@@ -886,9 +884,6 @@ spec:
                             type: string
                         type: object
                       type: array
-                    resolvedFields:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
                     type:
                       description: |-
                         Type is the SourceDefinition that resolved it, carrying the pinned revision

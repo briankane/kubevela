@@ -318,19 +318,19 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		resolvedPropsNode, err := resolveSourceNode(props, r, "")
 		r.readerKind, r.readerName = prevKind, prevName
 		if err != nil {
-			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "", nil)
+			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "")
 			return nil, errors.WithMessagef(err, "resolve source properties for %s", sourceName)
 		}
 		rp, ok := resolvedPropsNode.(map[string]interface{})
 		if !ok {
 			err := fmt.Errorf("resolved source properties for %s are invalid", sourceName)
-			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "", nil)
+			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "")
 			return nil, err
 		}
 		resolvedProps = rp
 		raw, err := json.Marshal(rp)
 		if err != nil {
-			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "", nil)
+			r.setSourceStatus(sourceName, sourceType, PhaseFailed, err.Error(), "", "")
 			return nil, errors.WithMessagef(err, "marshal properties for source %s", sourceName)
 		}
 		paramFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(raw))
@@ -357,7 +357,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	} else if found {
 		if !stale {
 			r.resolved[sourceName] = cached
-			r.setSourceStatus(sourceName, sourceType, PhaseResolved, "", cachePolicy.Key, formatExpiry(cacheExpiresAt), cached)
+			r.setSourceStatus(sourceName, sourceType, PhaseResolved, "", cachePolicy.Key, formatExpiry(cacheExpiresAt))
 			return cached, nil
 		}
 	}
@@ -411,6 +411,6 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 		cachePolicy.KeyInputs, identity); err != nil {
 		klog.Warningf("write source cache failed for %s: %v", sourceName, err)
 	}
-	r.setSourceStatus(sourceName, sourceType, PhaseResolved, "", cachePolicy.Key, expiresAt, output)
+	r.setSourceStatus(sourceName, sourceType, PhaseResolved, "", cachePolicy.Key, expiresAt)
 	return output, nil
 }
