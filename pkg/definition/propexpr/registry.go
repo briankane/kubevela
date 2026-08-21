@@ -224,22 +224,6 @@ func surfaceSchema(surface string) ContextSchema {
 	}
 }
 
-// elsewhere lists the surfaces that do offer a field, so a read refused here can
-// say where it would work. Derived, rather than prose kept true by hand.
-func elsewhere(field, exceptKey string) []string {
-	var out []string
-	for name, v := range registry.surfaces {
-		if name == exceptKey {
-			continue
-		}
-		if v.LookupPath(cue.MakePath(cue.Str(field))).Exists() {
-			out = append(out, registry.plurals[name])
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // knownField reports whether the registry accounts for a field at all - offered
 // by some surface, or explicitly excluded from every one.
 //

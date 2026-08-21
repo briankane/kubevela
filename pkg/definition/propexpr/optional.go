@@ -153,16 +153,3 @@ func fieldByName(v cue.Value, name string) (optional bool, value cue.Value, foun
 	}
 	return false, cue.Value{}, false, nil
 }
-
-// listElementFor resolves one index segment against a list schema, preferring a
-// position the schema pins over the general element type.
-func listElementFor(list cue.Value, segment string) (cue.Value, bool) {
-	index, err := strconv.Atoi(segment)
-	if err != nil {
-		return cue.Value{}, false
-	}
-	if pinned := list.LookupPath(cue.MakePath(cue.Index(index))); pinned.Exists() {
-		return pinned, true
-	}
-	return listElement(list)
-}

@@ -18,10 +18,6 @@ package sources
 
 import (
 	"slices"
-	"sort"
-	"strings"
-
-	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // Surfaces an Application can carry a property expression on.
@@ -102,21 +98,4 @@ func consumableSurfaces() []string {
 // is silently accepted as a value. Both enforcement points reject it instead.
 func SurfaceReadsSource(surface string) bool {
 	return slices.Contains(sourceReadingSurfaces, surface)
-}
-
-// readableSurfacesPhrase names the source-reading surfaces in the plural, as
-// prose: "components, traits and workflow steps".
-func readableSurfacesPhrase() string {
-	names := make([]string, 0, len(ConsumableSurfaces))
-	for _, surface := range ConsumableSurfaces {
-		names = append(names, propexpr.SurfacePlural(surface))
-	}
-	sort.Strings(names)
-	switch len(names) {
-	case 0:
-		return "no surface"
-	case 1:
-		return names[0]
-	}
-	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }

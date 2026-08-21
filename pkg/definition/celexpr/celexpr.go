@@ -183,28 +183,6 @@ func ValidBindingName(name string) error {
 		name, name, suggestion)
 }
 
-// collectTypes gathers every named object type reachable from a DeclType.
-//
-// Only object types are registered. Registering a primitive - int, string - is a
-// conflict, because CEL already knows them; the checker only needs telling about
-// the structs a field selection can resolve against.
-func collectTypes(t *apiservercel.DeclType) []*apiservercel.DeclType {
-	if t == nil {
-		return nil
-	}
-	var out []*apiservercel.DeclType
-	if len(t.Fields) > 0 {
-		out = append(out, t)
-		for _, f := range t.Fields {
-			out = append(out, collectTypes(f.Type)...)
-		}
-	}
-	if t.ElemType != nil && t.ElemType != t {
-		out = append(out, collectTypes(t.ElemType)...)
-	}
-	return out
-}
-
 // OutputType compiles an expression and reports the type it produces.
 //
 // This is the whole point of the spike. propexpr needs sentinel values and an

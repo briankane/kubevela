@@ -29,15 +29,12 @@ import (
 type fakeSourceCacheStore struct {
 	reads     int
 	writes    int
-	touches   int
 	data      map[string]interface{}
 	stale     bool
 	found     bool
 	expires   time.Time
 	writeErr  error
 	lastMeta  velaprocess.SourceCacheWriteMeta
-	touchErr  error
-	supportsT bool
 }
 
 func (f *fakeSourceCacheStore) Read(_ context.Context, _ string, _ time.Duration) (map[string]interface{}, bool, bool, time.Time, error) {

@@ -121,22 +121,21 @@ func (c ContextSchema) Offers(field string) bool {
 	return ok
 }
 
-// readable lists the fields this surface exposes, for an error message.
+// FieldValue returns the declared CUE type of a readable context field.
+//
+// Exported so another type system can be driven from the same registry: celexpr
+// needs each surface's fields as CEL DeclTypes, and deriving them from this
+// rather than restating them is the whole point of the registry.
+func (c ContextSchema) FieldValue(name string) (cue.Value, bool) {
+	return c.field(name)
+}
+
 // ReadableFields lists the context fields this surface offers, sorted.
 //
 // Exported so a render path can assert it actually supplies what its surface
 // declares. Declaring a field the render omits - or supplies as a permanent
 // empty string - type-checks at admission and means nothing at render, which is
 // the failure this registry exists to make impossible.
-// FieldValue returns the declared CUE type of a readable context field.
-//
-// Exported so another type system can be driven from the same registry: the
-// celexpr spike needs each surface's fields as CEL DeclTypes, and deriving them
-// from this rather than restating them is the whole point of the registry.
-func (c ContextSchema) FieldValue(name string) (cue.Value, bool) {
-	return c.field(name)
-}
-
 func (c ContextSchema) ReadableFields() []string {
 	return c.readable()
 }

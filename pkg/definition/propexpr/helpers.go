@@ -31,22 +31,6 @@ import (
 // and the expression have to share one.
 func newContext() *cue.Context { return cuecontext.New() }
 
-// listElement returns the type a list's elements have, and whether the schema
-// declares one at all.
-//
-// `[...T]` puts T behind AnyIndex; `[A, B]` pins each position. The first
-// element stands for the list in the second case, which is enough to type an
-// indexed read and is what extendListsFor repeats when a read needs more.
-func listElement(v cue.Value) (cue.Value, bool) {
-	if pattern := v.LookupPath(cue.MakePath(cue.AnyIndex)); pattern.Exists() {
-		return pattern, true
-	}
-	if first := v.LookupPath(cue.MakePath(cue.Index(0))); first.Exists() {
-		return first, true
-	}
-	return cue.Value{}, false
-}
-
 // isIndexSegment reports a segment that came from a list index. selectorPath
 // records those as decimal text, and nothing else in a path is all digits: a
 // struct field cannot start with one.

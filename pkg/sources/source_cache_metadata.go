@@ -31,7 +31,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/cue/render"
 )
 
-// applySourceCacheMetadata stamps identity and lifetime metadata onto a source
+// ApplySourceCacheMetadata stamps identity and lifetime metadata onto a source
 // cache object so a context-free GC sweep can reason about it. It is strictly
 // additive: it never overwrites the config.oam.dev/type label, which callers
 // (e.g. the config-API store via ParseConfig) set to the ConfigTemplate name and
@@ -145,7 +145,7 @@ func sanitizeSourceName(name string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// shouldTouchSourceCache throttles last-accessed updates: it returns true only
+// ShouldTouchSourceCache throttles last-accessed updates: it returns true only
 // when no marker exists yet or the existing one is older than half the entry's
 // TTL, so a hot stale entry is not rewritten on every reconcile. The TTL is read
 // from the entry's own annotation, defaulting to sourceCacheTTL.

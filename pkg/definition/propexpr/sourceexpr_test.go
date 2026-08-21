@@ -28,11 +28,6 @@ import (
 	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
-var demoSchemas = map[string]string{
-	"my-source": `{region: string, count: int, ratio: float, enabled: bool}`,
-	"other":     `{name: string}`,
-}
-
 func TestParse(t *testing.T) {
 	cases := []struct {
 		name      string

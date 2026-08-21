@@ -23,7 +23,6 @@ import (
 
 	wfprocess "github.com/kubevela/workflow/pkg/cue/process"
 
-	"github.com/oam-dev/kubevela/pkg/cue/process"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 )
 
@@ -56,12 +55,12 @@ output: {host: "example.com"}
 
 func benchContext(tb testing.TB) (wfprocess.Context, sourceInputs) {
 	tb.Helper()
-	pCtx := process.NewContext(process.ContextData{
+	pCtx := velaprocess.NewContext(velaprocess.ContextData{
 		Namespace: "default", CompName: "web", AppName: "app",
 	})
-	pCtx.PushData(process.ContextAppSources, map[string]map[string]interface{}{"cfg": {"name": "some-cm"}})
-	pCtx.PushData(process.ContextAppSourceTypes, map[string]string{"cfg": "bench"})
-	pCtx.PushData(process.ContextAppSourceTemplates, map[string]string{"bench": benchTemplate})
+	pCtx.PushData(velaprocess.ContextAppSources, map[string]map[string]interface{}{"cfg": {"name": "some-cm"}})
+	pCtx.PushData(velaprocess.ContextAppSourceTypes, map[string]string{"cfg": "bench"})
+	pCtx.PushData(velaprocess.ContextAppSourceTemplates, map[string]string{"bench": benchTemplate})
 	in := sourceInputsFromContext(pCtx)
 	in.Store = alwaysHit{data: map[string]interface{}{"host": "example.com"}}
 	return pCtx, in

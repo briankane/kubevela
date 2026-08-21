@@ -40,7 +40,6 @@ const contextIdent = "context"
 const InternalField = "$internal"
 
 const (
-	storageField = "storage"
 	// KeyField is the generated cache key, inside InternalField.
 	KeyField = "key"
 )

@@ -180,17 +180,6 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 	return SourceResult{Properties: out, Statuses: r.statuses}, nil
 }
 
-func joinPath(path []string) string {
-	out := ""
-	for i, p := range path {
-		if i > 0 {
-			out += "."
-		}
-		out += p
-	}
-	return out
-}
-
 // CheckError is one expression that will not compile, and where it was found.
 type CheckError struct {
 	// Property is the path within the properties blob, e.g. "env[0].value".

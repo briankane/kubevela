@@ -38,7 +38,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
-// resolveSourceExpressions substitutes $(...) expressions in a properties blob.
+// ResolveSourceExpressions substitutes $(...) expressions in a properties blob.
 //
 // surface names the call site, which decides both what a source may read from
 // context and - once the compatibility check lands - whether it may be consumed
