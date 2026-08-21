@@ -105,13 +105,13 @@ template: {
 	// legitimate state to observe rather than an error - a consumer waiting for it
 	// to come up needs to be able to see it not up. A missing Application, by
 	// contrast, fails in kube.#Get, which is right.
-	_status:   *_app.$returns.status | {}
+	_status: *_app.$returns.status | {}
 	_services: *_status.services | []
 
 	// Normalise each placement: an absent or empty cluster field means the hub.
 	_placed: [for s in _services {
-		name:      s.name
-		cluster:   [if (*s.cluster | "") != "" {*s.cluster | ""}, "local"][0]
+		name: s.name
+		cluster: [if (*s.cluster | "") != "" {*s.cluster | ""}, "local"][0]
 		healthy:   s.healthy
 		message:   *s.message | ""
 		namespace: *s.namespace | ""
@@ -126,7 +126,7 @@ template: {
 		name:      parameter.name
 		namespace: _ns
 		phase:     *_status.status | "unknown"
-		healthy:   len(_services) > 0 && len([for s in _services if !s.healthy {s}]) == 0
+		healthy: len(_services) > 0 && len([for s in _services if !s.healthy {s}]) == 0
 		if _status.latestRevision != _|_ {
 			revision: _status.latestRevision.name
 		}

@@ -102,7 +102,7 @@ template: {
 	// An absent or empty cluster field means the hub.
 	_placed: [for s in _services {
 		cluster: [if (*s.cluster | "") != "" {*s.cluster | ""}, "local"][0]
-		svc:     s
+		svc: s
 	}]
 
 	_named: [for p in _placed if p.svc.name == parameter.component {p}]
@@ -136,9 +136,9 @@ template: {
 		healthy:         *_svc.healthy | false
 		workloadHealthy: *_svc.workloadHealthy | false
 		message:         *_svc.message | ""
-		details:         *_svc.details | {}
-		cluster:         _cluster
-		namespace:       *_svc.namespace | _ns
+		details: *_svc.details | {}
+		cluster:   _cluster
+		namespace: *_svc.namespace | _ns
 		traits: {
 			for t in (*_svc.traits | []) {
 				"\(t.type)": {

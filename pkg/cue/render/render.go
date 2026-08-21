@@ -33,8 +33,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/kubevela/workflow/pkg/cue/model/value"
-	apitypes "github.com/oam-dev/kubevela/apis/types"
 	"k8s.io/klog/v2"
+
+	apitypes "github.com/oam-dev/kubevela/apis/types"
 )
 
 // ErrsFieldName is the field a template writes authored errors to.

@@ -78,7 +78,7 @@ template: {
 			if _labels["namespace.oam.dev/env"] != _|_ {true},
 			false,
 		][0]
-		labels:      _labels
+		labels: _labels
 		annotations: *_ns.$returns.metadata.annotations | {}
 	}
 }

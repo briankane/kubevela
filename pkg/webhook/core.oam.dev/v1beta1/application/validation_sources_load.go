@@ -12,13 +12,14 @@ import (
 	cueformat "cuelang.org/go/cue/format"
 	cueparser "cuelang.org/go/cue/parser"
 	upstreamcuex "github.com/kubevela/pkg/cue/cuex"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/klog/v2"
+
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	velacue "github.com/oam-dev/kubevela/pkg/cue"
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/sourcedefinition"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/klog/v2"
 )
 
 // loadConsumableFrom returns the surfaces a SourceDefinition may be consumed

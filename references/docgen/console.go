@@ -19,8 +19,9 @@ package docgen
 import (
 	"context"
 	"fmt"
-	"github.com/fatih/color"
 	"os"
+
+	"github.com/fatih/color"
 
 	"github.com/olekukonko/tablewriter"
 

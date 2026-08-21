@@ -20,9 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"strings"
 	"testing"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/crossplane/crossplane-runtime/pkg/fieldpath"

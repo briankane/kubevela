@@ -27,14 +27,14 @@ import (
 )
 
 type fakeSourceCacheStore struct {
-	reads     int
-	writes    int
-	data      map[string]interface{}
-	stale     bool
-	found     bool
-	expires   time.Time
-	writeErr  error
-	lastMeta  velaprocess.SourceCacheWriteMeta
+	reads    int
+	writes   int
+	data     map[string]interface{}
+	stale    bool
+	found    bool
+	expires  time.Time
+	writeErr error
+	lastMeta velaprocess.SourceCacheWriteMeta
 }
 
 func (f *fakeSourceCacheStore) Read(_ context.Context, _ string, _ time.Duration) (map[string]interface{}, bool, bool, time.Time, error) {

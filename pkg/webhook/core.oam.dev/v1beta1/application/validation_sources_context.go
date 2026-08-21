@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/validation/field"
+
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 // requiredContext returns the context fields a SourceDefinition's template reads,

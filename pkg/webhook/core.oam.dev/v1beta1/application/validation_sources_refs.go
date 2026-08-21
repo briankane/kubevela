@@ -6,10 +6,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
-	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 type sourceReference struct {

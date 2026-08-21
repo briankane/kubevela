@@ -22,7 +22,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/oam-dev/kubevela/pkg/utils"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,6 +29,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/oam-dev/kubevela/pkg/utils"
 
 	"github.com/crossplane/crossplane-runtime/pkg/test"
 	"github.com/google/go-github/v32/github"

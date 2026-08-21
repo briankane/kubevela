@@ -25,10 +25,11 @@ import (
 	upstreamcuex "github.com/kubevela/pkg/cue/cuex"
 
 	"github.com/kubevela/workflow/pkg/cue/model/value"
+	"github.com/pkg/errors"
+
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/pkg/errors"
 )
 
 type sourceCachePolicy struct {

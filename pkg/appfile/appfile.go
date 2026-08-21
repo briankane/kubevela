@@ -22,9 +22,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 	"reflect"
 	"strings"
+
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 
 	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
 
