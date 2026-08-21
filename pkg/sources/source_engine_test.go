@@ -21,7 +21,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
@@ -100,28 +99,6 @@ func TestSourceEngineAcceptsPartialContext(t *testing.T) {
 	opts.Context = map[string]interface{}{}
 	_, err := NewSourceEngine(opts)
 	require.NoError(t, err)
-}
-
-// Reads answers "what does this depend on" without any I/O, which is what makes
-// it usable for ordering before anything has been fetched.
-func TestSourceEngineReads(t *testing.T) {
-	r := require.New(t)
-	engine, err := NewSourceEngine(demoEngineOptions())
-	r.NoError(err)
-
-	refs, err := engine.Reads(map[string]interface{}{
-		"a": "$(source.cfg.region)",
-		"b": "$(source.cfg.region)-$(context.appName)",
-		"c": "no expression here",
-	})
-	r.NoError(err)
-
-	var got []string
-	for _, ref := range refs {
-		got = append(got, ref.Root+"."+joinPath(ref.Path))
-	}
-	// Deduplicated: cfg.region is read twice and reported once.
-	assert.ElementsMatch(t, []string{"source.cfg.region", "context.appName"}, got)
 }
 
 // A caller that supplies templates and forgets the sensitive paths would get
@@ -243,19 +220,19 @@ func TestSourceEngineCheck(t *testing.T) {
 }
 
 // The typed environment is the point. The permissive one types every source read
-// as dyn, so a string feeding an int passes unnoticed; this is what Check and a
-// caller's target comparison both rely on.
-func TestSourceEngineTypeOf(t *testing.T) {
+// as dyn, so a string feeding an int passes unnoticed; Check is what relies on
+// the difference.
+func TestSourceEngineTypesAgainstTheDeclaredSchema(t *testing.T) {
 	r := require.New(t)
 	engine, err := NewSourceEngine(demoEngineOptions())
 	r.NoError(err)
 
-	typ, err := engine.TypeOf("source.cfg.region")
-	r.NoError(err)
-	r.Equal("string", typ.String())
+	r.Empty(engine.Check(map[string]interface{}{"ok": "$(source.cfg.region)"}),
+		"a declared path types cleanly")
 
-	_, err = engine.TypeOf("source.cfg.nosuchfield")
-	r.Error(err, "an undeclared path is a type error, not a dyn")
+	bad := engine.Check(map[string]interface{}{"no": "$(source.cfg.nosuchfield)"})
+	r.Len(bad, 1, "an undeclared path is a type error, not a dyn")
+	r.Equal("no", bad[0].Property)
 }
 
 // A caller with no admission step of its own opts in and gets the check without

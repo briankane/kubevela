@@ -30,8 +30,9 @@ import (
 // SourceEngineOptions describes one caller's world: which bindings exist, what
 // backs them, and what context they resolve against.
 //
-// Stated explicitly rather than read off a process.Context, so source resolution
-// is usable by anything that can name its bindings and supply a surface.
+// Stated explicitly rather than read off a process.Context. That is what keeps
+// resolution testable without a cluster and keeps the render context's protocol
+// in one place - ResolveSourceExpressions - rather than spread through here.
 type SourceEngineOptions struct {
 	// Surface names the call site, and decides which context fields a source may
 	// read. One of propexpr.SurfaceNames().
@@ -179,41 +180,6 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 	return SourceResult{Properties: out, Statuses: r.statuses}, nil
 }
 
-// Reads reports the bindings and context a properties blob reads, without
-// resolving anything.
-//
-// No I/O: this is a parse and a type-check, so it is safe to call on a value
-// that has not been admitted and cheap enough for dependency ordering.
-func (e *SourceEngine) Reads(properties interface{}) ([]propexpr.Reference, error) {
-	var out []propexpr.Reference
-	seen := map[string]struct{}{}
-	err := propexpr.Walk(properties, "", func(_, raw string) error {
-		parsed, err := propexpr.Parse(raw)
-		if err != nil || !parsed.HasExpr() {
-			return err
-		}
-		for _, fragment := range parsed.Fragments {
-			if !fragment.IsExpr() {
-				continue
-			}
-			refs, rerr := celexpr.PropertyReferences(fragment.Expr)
-			if rerr != nil {
-				return rerr
-			}
-			for _, ref := range refs {
-				key := ref.Root + "." + joinPath(ref.Path)
-				if _, dup := seen[key]; dup {
-					continue
-				}
-				seen[key] = struct{}{}
-				out = append(out, ref)
-			}
-		}
-		return nil
-	})
-	return out, err
-}
-
 func joinPath(path []string) string {
 	out := ""
 	for i, p := range path {
@@ -311,14 +277,4 @@ func (e *SourceEngine) Check(properties interface{}) []CheckError {
 		return nil
 	})
 	return out
-}
-
-// TypeOf returns the result type of a single expression, for a caller comparing
-// it against the parameter it feeds.
-func (e *SourceEngine) TypeOf(expr string) (*cel.Type, error) {
-	env, err := e.typedEnv()
-	if err != nil {
-		return nil, err
-	}
-	return celexpr.OutputType(env, expr)
 }
