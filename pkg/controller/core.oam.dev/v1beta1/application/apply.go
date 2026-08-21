@@ -630,10 +630,12 @@ func (h *AppHandler) sourceStatusList() []common.ApplicationSourceStatus {
 		wanted := sourceAutoUpdateEnabled(src, autoUpdateDefault)
 		effective := wanted && !pinned
 		entry.AutoUpdate = &effective
-		// A bool cannot say why it is false, so where the binding asked for
-		// auto-update and did not get it, the message carries the reason. Without
-		// this the three ways to end up false - gate off, opted out, pinned - are
-		// indistinguishable, which is exactly the diagnosis that is expensive.
+		// A bool cannot say why it is false, and one case is worth the words: the
+		// binding asked for auto-update and a pin took it away. The other two -
+		// the gate is off, or the author set autoUpdate: false - need no message.
+		// Being off by default is the normal state of every binding in every
+		// Application, so reporting it would put a sentence nobody needs on all
+		// of them, and an author who set false already knows.
 		if wanted && pinned && entry.Message == "" {
 			entry.Message = "autoUpdate suppressed: the Application is pinned by app.oam.dev/publishVersion"
 		}
