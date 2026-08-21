@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strings"
 
+	"k8s.io/klog/v2"
+
 	"github.com/oam-dev/kubevela/pkg/sources"
 
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
@@ -179,9 +181,21 @@ func (h *AppHandler) generateDispatcher(appRev *v1beta1.ApplicationRevision, pre
 			// out-of-band refresh, not this: the workflow only reaches here
 			// because the pin was bumped, and a bump that did not pick up current
 			// source values would be a pin that freezes the wrong thing.
+			//
+			// A component whose workload a trait manages is excluded, and cannot
+			// auto-update: the baseline hash is stamped on the dispatched
+			// workload, and there is not one. Without the exclusion every source
+			// would compare against an absent baseline, read as changed, and
+			// re-dispatch on every reconcile.
 			resolvedHashes, consumesSource := resolvedSourceHashes(comp)
 			sourceValuesChanged := false
-			if isHealth && err == nil && consumesSource && len(autoUpdating) > 0 && !skipWorkload && options.Workload != nil {
+			canTrackSources := !skipWorkload && options.Workload != nil
+			if consumesSource && len(autoUpdating) > 0 && !canTrackSources {
+				klog.V(2).InfoS("source auto-update is unavailable for this component",
+					"component", comp.Name, "cluster", clusterName,
+					"reason", "its workload is managed by a trait, so there is nowhere to record the source baseline")
+			}
+			if isHealth && err == nil && consumesSource && len(autoUpdating) > 0 && canTrackSources {
 				live := liveResolvedSourceHashes(ctx, h.Client, clusterName, options.Workload)
 				for _, name := range changedSources(resolvedHashes, live) {
 					if _, ok := autoUpdating[name]; ok {

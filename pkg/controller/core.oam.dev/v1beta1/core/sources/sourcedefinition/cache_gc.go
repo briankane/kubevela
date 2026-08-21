@@ -115,10 +115,13 @@ func (r *Reconciler) sweepCacheSecrets(ctx context.Context, now time.Time, res *
 		if shouldCollectCacheSecret(s.Annotations, now) {
 			if err := r.Delete(ctx, s); err != nil && !apierrors.IsNotFound(err) {
 				klog.ErrorS(err, "failed to delete stale source cache secret", "name", s.Name)
+				// It is still here, so it still references its template. Falling
+				// through to record that keeps the template from being collected
+				// out from under a secret that survived.
+			} else {
+				res.ConfigsDeleted++
 				continue
 			}
-			res.ConfigsDeleted++
-			continue
 		}
 		if tmpl := s.Annotations[apitypes.AnnotationConfigTemplate]; tmpl != "" {
 			referenced[tmpl] = struct{}{}
