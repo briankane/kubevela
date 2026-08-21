@@ -127,29 +127,6 @@ func findTopLevelStruct(f *ast.File, name string) *ast.StructLit {
 	return nil
 }
 
-// RedactedFields is what this resolution consumed, with anything the definition
-// marks +sensitive blanked.
-//
-// A method rather than a note in the docs: ConsumedFields holds real values
-// because the render needs them, and a caller reporting them directly would
-// publish a credential. Making the safe form the easy one is the only version of
-// this that survives a caller who has not read the comment.
-//
-// extra adds paths beyond the definition's own, for a caller that masks more.
-func (s SourceResolutionStatus) RedactedFields(extra ...string) map[string]interface{} {
-	masks := map[string]struct{}{}
-	for _, p := range append(append([]string{}, s.SensitivePaths...), extra...) {
-		if p != "" {
-			masks[p] = struct{}{}
-		}
-	}
-	out := make(map[string]interface{}, len(s.ConsumedFields))
-	for path, v := range s.ConsumedFields {
-		out[path] = RedactValue(path, v, masks)
-	}
-	return out
-}
-
 // RedactValue blanks anything marked sensitive inside a read value.
 //
 // MaskedPath alone is not enough. It answers "is this path at or below a mark",

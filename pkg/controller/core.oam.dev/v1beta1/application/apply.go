@@ -506,31 +506,6 @@ func sourceMaskSet(src v1beta1.ApplicationSource, rs sources.SourceResolutionSta
 	return maskSet
 }
 
-// consumedValues renders what one reader took from a source, with sensitive and
-// masked paths redacted. Nil when the binding's statusPolicy withholds values or
-// nothing was consumed.
-func consumedValues(src v1beta1.ApplicationSource, rs sources.SourceResolutionStatus) *runtime.RawExtension {
-	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues && !src.StatusPolicy.ExposeResolvedFields {
-		return nil
-	}
-	if len(rs.ConsumedFields) == 0 {
-		return nil
-	}
-	// RedactedFields rather than RedactValue directly: the status carries real
-	// values, and going through the status's own accessor is what stops a caller
-	// publishing one. The variadic is for the paths this policy masks beyond the
-	// definition's own.
-	var extra []string
-	if src.StatusPolicy != nil {
-		extra = src.StatusPolicy.MaskPaths
-	}
-	raw, err := mapToRawExtension(rs.RedactedFields(extra...))
-	if err != nil {
-		return nil
-	}
-	return raw
-}
-
 // recordSourceResolution folds one render's source resolution into the
 // Application-level view, and notes who read what.
 //
@@ -909,12 +884,12 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 	return nil
 }
 
-// Phases reported on AppStatus.Sources.
+// Phases reported on AppStatus.Sources, from the package that writes them.
 const (
-	sourcePhaseResolved = "Resolved"
-	sourcePhaseStale    = "Stale"
-	sourcePhaseFailed   = "Failed"
-	sourcePhaseUnused   = "Unused"
+	sourcePhaseResolved = sources.PhaseResolved
+	sourcePhaseStale    = sources.PhaseStale
+	sourcePhaseFailed   = sources.PhaseFailed
+	sourcePhaseUnused   = sources.PhaseUnused
 )
 
 // Definition kinds reported on SourceConsumer.

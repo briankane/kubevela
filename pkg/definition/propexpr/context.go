@@ -17,9 +17,7 @@ limitations under the License.
 package propexpr
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 	"sync"
 
 	"cuelang.org/go/cue"
@@ -117,72 +115,10 @@ func (c ContextSchema) field(name string) (cue.Value, bool) {
 	return v, v.Exists()
 }
 
-// pathIsOpen reports whether a context read descends into a field the registry
-// leaves unshaped.
-//
-// `custom: _` is the case this exists for: an Application-scoped policy chooses
-// its shape, so nothing below it can be typed and the read has to say what it
-// expects. Mirrors PathIsOpen on the source side.
-func (c ContextSchema) pathIsOpen(path []string) bool {
-	if len(path) < 2 {
-		// The field itself, not a read through it. A whole `_` value types as
-		// whatever it holds and needs no assertion.
-		return false
-	}
-	cur, ok := c.field(path[0])
-	if !ok {
-		return false
-	}
-	for _, segment := range path[1:] {
-		if cur.IncompleteKind() == cue.TopKind {
-			return true
-		}
-		next := cur.LookupPath(cue.MakePath(cue.Str(segment)))
-		if !next.Exists() {
-			return false
-		}
-		cur = next
-	}
-	return cur.IncompleteKind() == cue.TopKind
-}
-
 // Offers reports whether this surface makes a context field readable.
 func (c ContextSchema) Offers(field string) bool {
 	_, ok := c.field(field)
 	return ok
-}
-
-// isIndexed reports a field that is an open map - appLabels and friends - which
-// must be read with a key.
-func (c ContextSchema) isIndexed(name string) bool {
-	v, ok := c.field(name)
-	if !ok {
-		return false
-	}
-	return v.LookupPath(cue.MakePath(cue.AnyString)).Exists()
-}
-
-// contextValues selects the real values for the referenced fields, for render.
-//
-// A referenced key that is absent is left absent rather than defaulted. CUE then
-// reports an undefined field - unless the read carries a default, which is the
-// supported way to survive it.
-func contextValues(refs []Reference, values map[string]interface{}, schema ContextSchema) (map[string]interface{}, error) {
-	out := map[string]interface{}{}
-
-	for _, ref := range refs {
-		if ref.IsSource() {
-			continue
-		}
-		field := ref.Path[0]
-		if _, ok := schema.field(field); !ok {
-			return nil, fmt.Errorf("context.%s is not readable in %s properties", field, schema.Surface)
-		}
-		if value, ok := values[field]; ok {
-			out[field] = value
-		}
-	}
-	return out, nil
 }
 
 // readable lists the fields this surface exposes, for an error message.
@@ -237,18 +173,4 @@ func (c ContextSchema) readable() []string {
 		return append([]string(nil), out...)
 	}
 	return out
-}
-
-// why appends the recorded reason for an excluded field, so the author is told
-// that it exists and why they cannot have it rather than that it is unknown.
-func (c ContextSchema) why(field string) string {
-	if reason, ok := c.excluded[field]; ok {
-		return " (" + reason + ")"
-	}
-	// Available somewhere, just not here. Saying where beats saying nothing, and
-	// beats prose that has to be kept true by hand.
-	if others := elsewhere(field, c.key); len(others) > 0 {
-		return " (available in " + strings.Join(others, ", ") + ")"
-	}
-	return ""
 }

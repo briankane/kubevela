@@ -45,20 +45,6 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
-// DeclTypeFor converts a source's `schema:` block into a CEL type.
-//
-// This is the load-bearing step. A SourceDefinition declares its output contract
-// in CUE; CEL needs a type declaration to check against. Kubernetes solves the
-// same problem for CRD validation rules by going OpenAPI -> DeclType; this walks
-// the CUE value directly, which skips a lossy hop through OpenAPI.
-//
-// Anything unrecognised becomes DynType rather than an error: an honest "I do not
-// know this shape" that CEL will still evaluate, at the cost of static checking
-// for that subtree. That mirrors how propexpr treats an open region.
-func DeclTypeFor(v cue.Value) *apiservercel.DeclType {
-	return declTypeNamed(v, "vela.schema")
-}
-
 // declTypeNamed is DeclTypeFor with an explicit type name.
 //
 // The name has to be unique per binding. Every source schema is compiled the same

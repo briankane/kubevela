@@ -17,7 +17,6 @@ limitations under the License.
 package sources
 
 import (
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -103,19 +102,6 @@ func consumableSurfaces() []string {
 // is silently accepted as a value. Both enforcement points reject it instead.
 func SurfaceReadsSource(surface string) bool {
 	return slices.Contains(sourceReadingSurfaces, surface)
-}
-
-// UnsupportedSurfaceMessage is the single wording used wherever reading a source
-// on a surface that cannot resolve one is rejected, so admission and the parser
-// report the same thing.
-//
-// Where a source *can* be read is derived rather than written out: the sentence
-// listed "component and trait rendering only" long after workflow steps could do
-// it, because a hand-written list of the supported surfaces is one more thing to
-// remember when the supported set changes.
-func UnsupportedSurfaceMessage(surface string) string {
-	return fmt.Sprintf("%s cannot read \"source\"; sources resolve in %s",
-		propexpr.SurfacePlural(surface), readableSurfacesPhrase())
 }
 
 // readableSurfacesPhrase names the source-reading surfaces in the plural, as

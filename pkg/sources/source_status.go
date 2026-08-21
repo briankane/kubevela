@@ -22,6 +22,22 @@ import (
 	"github.com/pkg/errors"
 )
 
+// The phases a binding is reported in. Declared here because this package
+// writes them; a consumer comparing against its own copy of the string would
+// stop matching the moment one side was edited.
+const (
+	// PhaseResolved means a value is in hand, whether freshly fetched or served
+	// from the store.
+	PhaseResolved = "Resolved"
+	// PhaseFailed means the binding has no value and the message says why.
+	PhaseFailed = "Failed"
+	// PhaseStale is reported by the Application controller for a value served
+	// past its TTL, which this package reports as resolved with a reason.
+	PhaseStale = "Stale"
+	// PhaseUnused means the binding was declared and nothing read it.
+	PhaseUnused = "Unused"
+)
+
 // SourceRead is one value taken from a source: what was read, where it went,
 // and who read it.
 type SourceRead struct {
@@ -211,7 +227,7 @@ func (r *sourceResolver) serveStale(f staleFallback, reason string) (map[string]
 	}
 	r.touchSourceCache(f.policy.Key)
 	r.resolved[f.name] = f.cached
-	r.setSourceStatus(f.name, f.sourceType, "Resolved", reason,
+	r.setSourceStatus(f.name, f.sourceType, PhaseResolved, reason,
 		f.policy.Key, formatExpiry(f.expiresAt), f.cached)
 	return f.cached, true
 }
@@ -224,7 +240,7 @@ func (r *sourceResolver) serveStale(f staleFallback, reason string) (map[string]
 // binding that failed, so naming it again there says nothing; a caller further
 // up has lost that, so the error says which step it was.
 func (r *sourceResolver) fail(name, sourceType, cacheKey string, err error, context string) (map[string]interface{}, error) {
-	r.setSourceStatus(name, sourceType, "Failed", err.Error(), cacheKey, "", nil)
+	r.setSourceStatus(name, sourceType, PhaseFailed, err.Error(), cacheKey, "", nil)
 	if context == "" {
 		return nil, err
 	}

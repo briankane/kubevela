@@ -154,66 +154,6 @@ func fieldByName(v cue.Value, name string) (optional bool, value cue.Value, foun
 	return false, cue.Value{}, false, nil
 }
 
-// PathIsOpen reports whether a source read descends into a `_` field.
-//
-// A schema may declare a field without declaring its shape - `content: _` is how
-// a generic source says "whatever this file happens to be". Nothing can be typed
-// through that, so the honest answer is "unknown" rather than a guess: TypeOf
-// returns BottomKind, and kindsCompatible already treats unknown on either side
-// as "do not block".
-func PathIsOpen(ref Reference, schemas map[string]string) bool {
-	if !ref.IsSource() || len(ref.Path) < 2 {
-		return false
-	}
-	schema, ok := schemas[ref.Path[0]]
-	if !ok {
-		return false
-	}
-	v := newContext().CompileString(schema)
-	if v.Err() != nil {
-		return false
-	}
-
-	cur := v
-	for _, segment := range ref.Path[1:] {
-		if cur.IncompleteKind() == cue.TopKind {
-			// Already inside an open region; everything below it is open too.
-			return true
-		}
-		if cur.IncompleteKind() == cue.ListKind {
-			// An index descends to the element type, which is where the question
-			// of openness is actually answered: `[..._]` is open at every index,
-			// `[...{kind: string}]` is not.
-			elem, ok := listElementFor(cur, segment)
-			if !ok {
-				return false
-			}
-			cur = elem
-			continue
-		}
-		_, next, found, err := fieldByName(cur, segment)
-		if err != nil {
-			return false
-		}
-		if !found {
-			// A key read out of an open map. `outputs: [string]: _` declares the
-			// map and never a key, so the segment resolves to the pattern's type -
-			// and if that is `_`, everything below it is open.
-			//
-			// Resolving to the pattern keeps the read assertable: TypeOf can then
-			// demand `& <type>` for anything below an open region, rather than
-			// leaving the path untypeable.
-			if pattern := cur.LookupPath(cue.MakePath(cue.AnyString)); pattern.Exists() {
-				cur = pattern
-				continue
-			}
-			return false
-		}
-		cur = next
-	}
-	return cur.IncompleteKind() == cue.TopKind
-}
-
 // listElementFor resolves one index segment against a list schema, preferring a
 // position the schema pins over the general element type.
 func listElementFor(list cue.Value, segment string) (cue.Value, bool) {

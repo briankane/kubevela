@@ -2,8 +2,9 @@ package application
 
 import (
 	"context"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"time"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"

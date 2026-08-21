@@ -17,8 +17,9 @@ limitations under the License.
 package application
 
 import (
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"testing"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

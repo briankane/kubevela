@@ -102,9 +102,14 @@ output: {user: "admin", password: "hunter2"}
 	st := statusesOn(t, pCtx)["cfg"]
 	require.NotEmpty(t, st.ConsumedFields)
 
-	redacted := st.RedactedFields()
-	whole, ok := redacted[""].(map[string]interface{})
-	require.True(t, ok, "the whole read should redact as a map, got %T", redacted[""])
+	// Redacted the way the controller does it: per read, against the paths the
+	// definition declared sensitive.
+	masks := map[string]struct{}{}
+	for _, p := range st.SensitivePaths {
+		masks[p] = struct{}{}
+	}
+	whole, ok := RedactValue("", st.ConsumedFields[""], masks).(map[string]interface{})
+	require.True(t, ok, "the whole read should redact as a map")
 
 	assert.Equal(t, "admin", whole["user"])
 	assert.Equal(t, "***", whole["password"],

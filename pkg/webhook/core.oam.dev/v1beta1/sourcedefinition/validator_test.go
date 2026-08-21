@@ -17,9 +17,10 @@ limitations under the License.
 package sourcedefinition
 
 import (
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"strings"
 	"testing"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 func TestValidateSourceStorage(t *testing.T) {

@@ -23,55 +23,6 @@ func (v *sourceSchemaValidator) HasPath(path string) bool {
 	return ok && cur.Exists()
 }
 
-// KindAt returns the declared CUE kind of the schema output field at path.
-func (v *sourceSchemaValidator) KindAt(path string) (cue.Kind, bool) {
-	cur, ok := v.lookup(path)
-	if !ok || !cur.Exists() {
-		return cue.BottomKind, false
-	}
-	return cur.IncompleteKind(), true
-}
-
-// IsOptionalPath reports whether the final segment of path is declared optional
-// (e.g. `field?:`) in the schema. Returns false if the path does not resolve or
-// the final segment is an array index. LookupPath strips the optional marker
-// from the returned value, so optionality is detected by iterating the parent
-// struct's fields and matching the leaf label.
-func (v *sourceSchemaValidator) IsOptionalPath(path string) bool {
-	segs := strings.Split(path, ".")
-	if len(segs) == 0 {
-		return false
-	}
-	parentPath := strings.Join(segs[:len(segs)-1], ".")
-	leaf := segs[len(segs)-1]
-	if leaf == "" {
-		return false
-	}
-	if _, err := strconv.Atoi(leaf); err == nil {
-		// array element: optionality is not a meaningful concept here
-		return false
-	}
-	parent := v.schema
-	if parentPath != "" {
-		p, ok := v.lookup(parentPath)
-		if !ok {
-			return false
-		}
-		parent = p
-	}
-	iter, err := parent.Fields(cue.Optional(true), cue.Definitions(false))
-	if err != nil {
-		return false
-	}
-	for iter.Next() {
-		sel := iter.Selector()
-		if sel.IsString() && sel.Unquoted() == leaf {
-			return iter.IsOptional()
-		}
-	}
-	return false
-}
-
 // lookup walks the dotted path through the schema value and returns the reached
 // value plus whether every segment resolved. Optional fields (field?:) are not
 // returned by LookupPath, so a failed struct lookup falls back to iterating the

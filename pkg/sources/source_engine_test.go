@@ -135,12 +135,16 @@ output: {region: "eu-west", token: "s3cret"}
 	r.Contains(paths, "token")
 	r.NotContains(paths, "region")
 
-	// ...and the safe accessor is the one a caller reports from. ConsumedFields
-	// deliberately holds real values because the render needs them.
-	redacted := res.Statuses["cfg"].RedactedFields()
-	r.Equal("eu-west", redacted["region"])
-	r.Equal("***", redacted["token"])
-	r.Equal("s3cret", res.Statuses["cfg"].ConsumedFields["token"])
+	// ...and a reporter redacts against them. ConsumedFields deliberately holds
+	// real values, because the render needs them.
+	masks := map[string]struct{}{}
+	for _, p := range paths {
+		masks[p] = struct{}{}
+	}
+	consumed := res.Statuses["cfg"].ConsumedFields
+	r.Equal("eu-west", RedactValue("region", consumed["region"], masks))
+	r.Equal("***", RedactValue("token", consumed["token"], masks))
+	r.Equal("s3cret", consumed["token"], "the status still holds the real value")
 }
 
 // A caller may add a path the template does not declare, without restating the

@@ -18,11 +18,12 @@ package application
 
 import (
 	"context"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 
 	"github.com/oam-dev/kubevela/pkg/oam/testutil"
 

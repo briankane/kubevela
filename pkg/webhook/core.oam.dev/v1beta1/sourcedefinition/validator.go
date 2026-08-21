@@ -206,12 +206,6 @@ func ParseConsumableFrom(template string) ([]string, error) {
 	}
 }
 
-// ValidateConsumableFrom checks that a declared consumableFrom is well-formed.
-func ValidateConsumableFrom(template string) error {
-	_, err := ParseConsumableFrom(template)
-	return err
-}
-
 // ValidateSurfaceCompatibility rejects a definition that can never resolve where
 // it says it can be consumed.
 //

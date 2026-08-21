@@ -21,9 +21,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/oam-dev/kubevela/pkg/sources"
 	"sort"
 	"strings"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 	"github.com/pkg/errors"
