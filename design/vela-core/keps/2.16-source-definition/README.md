@@ -85,6 +85,32 @@ Both are identified by the `config.oam.dev/catalog: velacore-config` label, not 
 
 > **KEP-2.18** proposes graduating ConfigTemplate and Config from labelled ConfigMaps/Secrets into first-class CRDs (or Aggregated API resources), giving them proper status subresources, server-side validation, and watch semantics. This KEP is delivered against the existing v1 backing store and is transparent to that migration; the `SourceDefinition` caching layer will work unchanged once KEP-2.18 lands, with no schema or key format changes required.
 
+## Built-in SourceDefinitions
+
+Eight ship with the chart, generated into `charts/vela-core/templates/defwithtemplate/`
+from `vela-templates/definitions/internal/source/`. Most Applications never need to
+author one.
+
+| Type | Reads |
+|---|---|
+| `configmap-source` | A ConfigMap's `data`, optionally from another cluster. Values are strings, as Kubernetes stores them. |
+| `git-file` | A file from a registry configured in this cluster, optionally at a branch or tag. YAML and JSON are parsed; anything else comes back as a string. |
+| `http-get` | A URL. The response is parsed when Content-Type says JSON or YAML; a non-2xx fails the source rather than becoming its value. |
+| `vela-config` | A KubeVela Config: its properties, the ConfigTemplate it satisfies, and references to what that template produced. Output values are never returned, only their references, and a Config marked sensitive is refused. |
+| `vela-app` | The status of another Application - phase, health, workflow state, and per-component status broken down by the cluster each is placed in. Status only; never its spec. |
+| `vela-component` | The status of one placement of one component - health, message, details and traits keyed by type. Status only; never its spec. |
+| `vela-addon` | Whether an addon is installed and running, and the name and namespace of the Application it built. Chain into `vela-app` for the detail. |
+| `vela-env` | The environment an Application is deployed into - its name, namespace, whether the namespace is a managed env, and the labels and annotations a platform keeps there. The Application's own namespace only. |
+
+The four `vela-*` readers of KubeVela's own state exist because the alternative is a
+component reaching for the Kubernetes API itself, which needs credentials, gets no
+caching, and cannot be type-checked at admission.
+
+They return status, never spec. A spec is its author's intent and can carry properties
+they never meant to publish; a status is observable state the controller already writes
+for anyone with read access. Keeping to status makes these a health signal rather than
+a way to read somebody else's configuration.
+
 ## SourceDefinition Authoring Model
 
 Generated fields (`key`, `keyInputs`) are written by `vela def` into a `$internal:`
