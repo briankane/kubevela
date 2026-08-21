@@ -708,10 +708,24 @@ func kindName(k cue.Kind) string {
 }
 
 // kindsCompatible reports whether a value of kind src can satisfy a target of
-// kind dst. Compatibility is by kind intersection, which is permissive enough
-// to avoid false positives from value-level constraints (enums, bounds) while
-// still catching genuine mismatches such as string into int. int is accepted
-// where number is expected.
+// kind dst.
+//
+// Compatibility is by kind intersection, permissive enough to avoid false
+// positives from value-level constraints - enums, bounds - while still catching
+// a genuine mismatch such as string into int.
+//
+// Numbers are compatible in both directions, and the float-into-int direction is
+// deliberate rather than an oversight. CEL types arithmetic as double even when
+// every value involved is integral, so `$(source.cfg.port / 2)` is a double
+// feeding an int parameter, and refusing it would reject an expression that
+// resolves perfectly well. Whether the value really is integral is not knowable
+// here - this runs before anything is fetched - so the check that a fractional
+// value cannot reach an int parameter is CUE's, when the resolved value is
+// unified against the schema at render.
+//
+// An unknown kind on either side is accepted. This check exists to catch a
+// mismatch it can prove, and refusing what it cannot type would make an
+// unparseable definition look like a broken Application.
 func kindsCompatible(src, dst cue.Kind) bool {
 	if src == cue.BottomKind || dst == cue.BottomKind {
 		return true // unknown on either side: do not block
