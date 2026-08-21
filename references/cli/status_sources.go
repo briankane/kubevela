@@ -221,14 +221,13 @@ func formatValue(raw interface{}) string {
 	if err != nil {
 		return "-"
 	}
-	out := string(b)
 	// A scalar string reads better without the JSON quoting; a collection keeps
 	// its braces so it is obvious it is one.
 	var s string
 	if json.Unmarshal(b, &s) == nil {
 		return s
 	}
-	return out
+	return string(b)
 }
 
 func orDash(s string) string {

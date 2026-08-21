@@ -440,9 +440,9 @@ output: {v: context.componentName}
 // The generated $internal: block is where the cache key lives, and `vela def show`
 // reads it from there.
 //
-// It used to be authored in storage:, and when it moved the extractor was not
-// followed - so the key, the one field an operator needs to correlate a source
-// with its cache entry, silently stopped being printed. This pins it.
+// The extractor has to read it from there. Pointed anywhere else it prints
+// nothing at all, quietly costing an operator the one field that correlates a
+// source with its cache entry. This pins it.
 func TestInternalCacheFields(t *testing.T) {
 	fields := internalCacheFields(`
 $internal: {

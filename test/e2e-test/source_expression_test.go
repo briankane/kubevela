@@ -909,10 +909,10 @@ output: labels: "policy-owner": parameter.owner
 		})
 
 		It("reports the type error alone, without also attempting the render", func() {
-			// Validation is two-phase: soundness gates rendering. Before the gate
-			// a type error was reported twice - once precisely, once as an opaque
-			// evaluator failure against "schematic" - and the render resolved
-			// every source for real on an Application already known to be bad.
+			// Validation is two-phase: soundness gates rendering. Without the gate
+			// a type error is told twice, once precisely and once as an opaque
+			// evaluator failure against "schematic", and the render resolves every
+			// source for real on an Application already known to be bad.
 			app := &v1beta1.Application{
 				ObjectMeta: metav1.ObjectMeta{Name: "expr-gated", Namespace: namespaceName},
 				Spec: v1beta1.ApplicationSpec{
@@ -965,9 +965,9 @@ output: labels: "policy-owner": parameter.owner
 		// component does, so it resolves sources, and the spec above proves it.
 		//
 		// The scoped definition is created here rather than relied on from another
-		// spec. It used to be incidental - every policy refused a source, so the
-		// type never had to resolve to anything. Now the type decides the answer,
-		// and a policy whose definition is missing is classified as rendered.
+		// spec, because the type decides the answer: a policy whose definition is
+		// missing is classified as rendered, which would let this table pass for
+		// the wrong reason.
 		DescribeTable("denies a policy that cannot resolve a source",
 			func(policyType, props string) {
 				app := &v1beta1.Application{

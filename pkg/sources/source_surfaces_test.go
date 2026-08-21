@@ -22,9 +22,9 @@ import (
 )
 
 // ConsumableSurfaces is derived from sourceReadingSurfaces rather than maintained
-// beside it, because maintaining both drifted: a surface was enabled for
-// resolution while consumableFrom still refused to let a definition name it, so
-// a definition could not declare a capability the controller had.
+// beside it, because two hand-kept lists drift: a surface enabled for resolution
+// while consumableFrom still refuses to let a definition name it leaves the
+// definition unable to declare a capability the controller has.
 //
 // This pins the relationship rather than the contents, so adding a surface takes
 // one edit and cannot reintroduce the gap.

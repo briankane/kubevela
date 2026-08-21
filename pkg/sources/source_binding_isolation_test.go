@@ -61,12 +61,12 @@ output: {v: parameter.input}
 // TestResolvingDoesNotRewriteTheBindings pins that a render reads the binding
 // properties rather than consuming them.
 //
-// The properties map comes straight off the process context with no copy, and
-// the walker used to assign its results back into it. A component and all its
-// traits render against one context, so the first pass replaced the chained
-// binding's `$(source.upstream.v)` with the literal it resolved to, and every
-// later pass saw a binding that no longer read anything - the chain became
-// invisible after the first render that touched it.
+// The properties map comes straight off the process context with no copy, so a
+// walker assigning its results back into it would consume the bindings. A
+// component and all its traits render against one context: the first pass would
+// replace the chained binding's `$(source.upstream.v)` with the literal it
+// resolved to, and every later pass would see a binding that reads nothing, the
+// chain invisible after the first render that touched it.
 func TestResolvingDoesNotRewriteTheBindings(t *testing.T) {
 	pCtx, bindings := chainedContext(t)
 

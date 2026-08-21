@@ -138,6 +138,10 @@ func validateKeyExpr(expr ast.Expr) error {
 			}
 		}
 	}
+	// Any other expression - a call, a binary op, a bare reference - is accepted
+	// here on purpose. Its key exists only once the template runs, so there is
+	// nothing to check yet; resolveCachePolicy validates the computed key at
+	// render, which is the first moment it is knowable.
 	return nil
 }
 

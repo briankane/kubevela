@@ -25,16 +25,15 @@ import (
 
 // TestEvalTreeLeavesItsInputAlone pins that evaluating is a read.
 //
-// EvalTree is exported and takes the caller's tree. It used to write results
-// back into that tree, so the input and the output were the same object and
-// evaluating twice gave a different answer the second time - the expressions
-// had already been replaced by their values.
+// EvalTree is exported and takes the caller's tree. Writing results back into it
+// would make the input and the output the same object, so evaluating twice would
+// answer differently the second time, the expressions already replaced by their
+// values.
 //
-// The way this surfaced is worth keeping: it silently invalidated a benchmark
-// written against EvalTree. Every iteration after the first measured a tree with
-// no expressions left in it, so the numbers came out four times better than the
-// truth. A function that quietly consumes its argument corrupts whatever
-// measures it.
+// That failure is quiet in the worst way: it corrupts any benchmark written
+// against EvalTree, because every iteration after the first measures a tree with
+// no expressions left in it. A function that consumes its argument corrupts
+// whatever measures it.
 func TestEvalTreeLeavesItsInputAlone(t *testing.T) {
 	values := map[string]map[string]interface{}{"cfg": {"host": "example.com", "port": float64(8080)}}
 

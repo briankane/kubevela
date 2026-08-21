@@ -235,10 +235,10 @@ func TestScopedPolicyContextIsASubset(t *testing.T) {
 //
 // This is the whole point of declaring the registry in CUE. The membership tests
 // either side of this one check that every field is classified and every declared
-// field exists; unification adds the half that was missing - that a field's
-// declared *type* is the type the render actually holds. A field typed string
-// that is really an int used to pass every test, type cleanly at admission, and
-// fail at render.
+// field exists; unification adds the other half - that a field's declared *type*
+// is the type the render actually holds. Without it, a field typed string that is
+// really an int passes every test, types cleanly at admission, and fails at
+// render.
 //
 // CUE reports the conflict itself, naming the field and both types, so this needs
 // no per-kind mapping to keep in step.

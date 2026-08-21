@@ -94,8 +94,8 @@ func chain(e celast.NavigableExpr) (string, []string, bool) {
 
 // guarded reports whether this specific read is defended against absence.
 //
-// Three things have to hold, and an earlier version of this checked only the
-// last, which made it wrong in the unsafe direction:
+// Three things have to hold. Checking only the last is wrong in the unsafe
+// direction:
 //
 //  1. The guard must test *this* path. `has(source.cfg.other) ? source.cfg.note
 //     : "x"` defends nothing about note, and reading it still fails at render.

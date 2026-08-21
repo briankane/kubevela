@@ -276,9 +276,9 @@ func TestNativeValues(t *testing.T) {
 
 // The guard detection, probed adversarially.
 //
-// It walks the AST, so formatting cannot fool it - but an earlier version checked
-// only "is this read inside a ternary arm", which was wrong in the unsafe
-// direction twice over. These are the cases that caught it.
+// It walks the AST, so formatting cannot fool it. Asking only "is this read
+// inside a ternary arm" is wrong in the unsafe direction twice over, and these
+// are the cases that say so.
 func TestGuardResilience(t *testing.T) {
 	cc := cuecontext.New()
 	v := cc.CompileString(`s: {host: string, note?: string, other?: string}`).
