@@ -31,6 +31,7 @@ package celexpr
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -41,6 +42,8 @@ import (
 	"github.com/google/cel-go/common/types/traits"
 	"github.com/google/cel-go/ext"
 	apiservercel "k8s.io/apiserver/pkg/cel"
+
+	"k8s.io/utils/lru"
 
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
@@ -404,6 +407,60 @@ func DynEnv() (*cel.Env, error) {
 // error about the definition, and the definition's own validation reports the
 // real cause.
 func EnvForContext(schemaText map[string]string, ctxSchema propexpr.ContextSchema) (*cel.Env, error) {
+	if key, ok := typedEnvKey(schemaText, ctxSchema); ok {
+		if hit, found := typedEnvCache.Get(key); found {
+			if cached, ok := hit.(*cel.Env); ok {
+				return cached, nil
+			}
+		}
+		built, err := buildEnvForContext(schemaText, ctxSchema)
+		if err != nil {
+			return nil, err
+		}
+		typedEnvCache.Add(key, built)
+		return built, nil
+	}
+	return buildEnvForContext(schemaText, ctxSchema)
+}
+
+// typedEnvCacheSize bounds the distinct (surface, schema set) combinations kept.
+const typedEnvCacheSize = 256
+
+// typedEnvCache holds typed environments, which admission builds once per
+// expression and which cost ~100us each to construct.
+//
+// A cel.Env is immutable and safe to share - nothing here extends one - and its
+// contents are decided entirely by the schemas and the surface. lru.Cache locks
+// internally.
+var typedEnvCache = lru.New(typedEnvCacheSize)
+
+// typedEnvKey renders the inputs as a key, and reports whether they can be one.
+//
+// Sorted, and with each schema's text included: two Applications naming the same
+// bindings against different definitions must not share an environment, since
+// that is exactly the mix-up a typed check exists to catch.
+func typedEnvKey(schemaText map[string]string, ctxSchema propexpr.ContextSchema) (string, bool) {
+	if ctxSchema.Surface == "" {
+		return "", false
+	}
+	names := make([]string, 0, len(schemaText))
+	for name := range schemaText {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	b.WriteString(ctxSchema.Surface)
+	for _, name := range names {
+		b.WriteByte(0)
+		b.WriteString(name)
+		b.WriteByte(0)
+		b.WriteString(schemaText[name])
+	}
+	return b.String(), true
+}
+
+func buildEnvForContext(schemaText map[string]string, ctxSchema propexpr.ContextSchema) (*cel.Env, error) {
 	cc := cuecontext.New()
 	sources := map[string]cue.Value{}
 	for name, text := range schemaText {
