@@ -399,3 +399,37 @@ func TestSourceStatusListKeepsReadersPerPlacement(t *testing.T) {
 	out := h.sourceStatusList()
 	r.Len(out[0].ConsumedBy, 2, "a component placed in two clusters read it twice, in two places")
 }
+
+// Asking for one field to be masked must not hide every other field.
+//
+// statusPolicy is a struct of independent knobs, so setting maskPaths says
+// nothing about whether values are published - the two are separate requests,
+// and the narrower one is the one being made here.
+func TestMaskingOnePathKeepsTheRestVisible(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{
+		Name: "creds", Type: "dbcreds",
+		StatusPolicy: &v1beta1.ApplicationSourceStatusPolicy{MaskPaths: []string{"password"}},
+	})
+
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default",
+		map[string]sources.SourceResolutionStatus{
+			"creds": {
+				Name: "creds", Phase: sourcePhaseResolved,
+				ConsumedFields: map[string]interface{}{"host": "db.internal"},
+				Reads: []sources.SourceRead{
+					{SourceAttr: "host", Property: "settings", Value: "db.internal"},
+					{SourceAttr: "password", Property: "secret", Value: "hunter2"},
+				},
+			},
+		})
+
+	values := h.sourceStatusList()[0].ConsumedBy[0].Values
+	r.Len(values, 2, "masking one path must not drop the reads")
+	joined := ""
+	for _, v := range values {
+		joined += string(v.Value.Raw)
+	}
+	r.Contains(joined, "db.internal", "an unmasked value stays visible")
+	r.NotContains(joined, "hunter2", "the masked one does not")
+}

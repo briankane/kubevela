@@ -30,6 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	oamcomm "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
@@ -138,7 +139,7 @@ parameter: {
 							Raw: []byte(`{"image":"nginx:1.25.0"}`),
 						},
 						StatusPolicy: &v1beta1.ApplicationSourceStatusPolicy{
-							ExposeConsumedValues: true,
+							ExposeConsumedValues: ptr.To(true),
 						},
 					},
 				},

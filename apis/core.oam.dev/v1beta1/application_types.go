@@ -76,8 +76,12 @@ type ApplicationSourceStatusPolicy struct {
 	// ExposeConsumedValues controls whether the values a reader took from this
 	// source are written to status. When false the properties that read it are
 	// still listed, without their values.
+	//
+	// Unset means expose, so the knobs in this struct stay independent: asking
+	// for one path to be masked is a narrower request than asking for silence,
+	// and must not be read as the wider one.
 	// +optional
-	ExposeConsumedValues bool `json:"exposeConsumedValues,omitempty"`
+	ExposeConsumedValues *bool `json:"exposeConsumedValues,omitempty"`
 	// MaskPaths redacts source attributes before they are written to status, in
 	// addition to those the definition marks +sensitive. Paths are dot-delimited,
 	// for example "nested.token".

@@ -463,7 +463,8 @@ collectNext:
 // that made them, so a component's entry must not claim them.
 func consumerValues(src v1beta1.ApplicationSource, rs sources.SourceResolutionStatus,
 	readerKind, readerName string) []common.SourceValue {
-	if src.StatusPolicy != nil && !src.StatusPolicy.ExposeConsumedValues {
+	if src.StatusPolicy != nil && src.StatusPolicy.ExposeConsumedValues != nil &&
+		!*src.StatusPolicy.ExposeConsumedValues {
 		return nil
 	}
 	maskSet := sourceMaskSet(src, rs)
