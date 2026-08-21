@@ -112,7 +112,7 @@ func (r *sourceResolver) independentBindings(properties interface{}) []string {
 		queue = queue[1:]
 
 		//nolint:errcheck // a malformed expression is the lazy path's to report
-		_ = walkStrings(node, func(raw string) error {
+		_ = propexpr.Walk(node, "", func(_, raw string) error {
 			parsed, err := propexpr.Parse(raw)
 			if err != nil || !parsed.HasExpr() {
 				return nil

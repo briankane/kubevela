@@ -49,37 +49,28 @@ func ValidateTree(v interface{}, roots ...string) error {
 }
 
 func validateNode(env *cel.Env, v interface{}, roots []string) error {
-	switch t := v.(type) {
-	case map[string]interface{}:
-		for _, child := range t {
-			if err := validateNode(env, child, roots); err != nil {
-				return err
-			}
+	return propexpr.Walk(v, "", func(_, raw string) error {
+		return validateLeaf(env, raw, roots)
+	})
+}
+
+func validateLeaf(env *cel.Env, t string, roots []string) error {
+	parsed, err := propexpr.Parse(t)
+	if err != nil || !parsed.HasExpr() {
+		return err
+	}
+	for _, f := range parsed.Fragments {
+		if !f.IsExpr() {
+			continue
 		}
-	case []interface{}:
-		for _, child := range t {
-			if err := validateNode(env, child, roots); err != nil {
-				return err
-			}
+		refs, rerr := References(env, f.Expr)
+		if rerr != nil {
+			return rerr
 		}
-	case string:
-		parsed, err := propexpr.Parse(t)
-		if err != nil || !parsed.HasExpr() {
-			return err
-		}
-		for _, f := range parsed.Fragments {
-			if !f.IsExpr() {
-				continue
-			}
-			refs, rerr := References(env, f.Expr)
-			if rerr != nil {
-				return rerr
-			}
-			for _, r := range refs {
-				if !contains(roots, r.Root) {
-					return fmt.Errorf("%q cannot be read here; this surface permits %q",
-						r.Root, strings.Join(roots, `", "`))
-				}
+		for _, r := range refs {
+			if !contains(roots, r.Root) {
+				return fmt.Errorf("%q cannot be read here; this surface permits %q",
+					r.Root, strings.Join(roots, `", "`))
 			}
 		}
 	}
@@ -106,33 +97,9 @@ func EvalTree(v interface{}, resolved map[string]map[string]interface{},
 }
 
 func evalNode(env *cel.Env, v interface{}, in map[string]interface{}) (interface{}, error) {
-	switch t := v.(type) {
-	case map[string]interface{}:
-		// Built fresh: EvalTree takes a caller's tree and must not consume it.
-		out := make(map[string]interface{}, len(t))
-		for k, child := range t {
-			resolved, err := evalNode(env, child, in)
-			if err != nil {
-				return nil, err
-			}
-			out[k] = resolved
-		}
-		return out, nil
-	case []interface{}:
-		out := make([]interface{}, len(t))
-		for i, child := range t {
-			resolved, err := evalNode(env, child, in)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = resolved
-		}
-		return out, nil
-	case string:
-		return EvalProperty(env, t, in)
-	default:
-		return v, nil
-	}
+	return propexpr.Map(v, "", func(_, raw string) (interface{}, error) {
+		return EvalProperty(env, raw, in)
+	})
 }
 
 func contains(list []string, s string) bool {

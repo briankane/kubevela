@@ -187,7 +187,7 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 func (e *SourceEngine) Reads(properties interface{}) ([]propexpr.Reference, error) {
 	var out []propexpr.Reference
 	seen := map[string]struct{}{}
-	err := walkStrings(properties, func(raw string) error {
+	err := propexpr.Walk(properties, "", func(_, raw string) error {
 		parsed, err := propexpr.Parse(raw)
 		if err != nil || !parsed.HasExpr() {
 			return err
@@ -223,27 +223,6 @@ func joinPath(path []string) string {
 		out += p
 	}
 	return out
-}
-
-// walkStrings visits every string leaf in a JSON-shaped value.
-func walkStrings(node interface{}, fn func(string) error) error {
-	switch val := node.(type) {
-	case map[string]interface{}:
-		for _, child := range val {
-			if err := walkStrings(child, fn); err != nil {
-				return err
-			}
-		}
-	case []interface{}:
-		for _, child := range val {
-			if err := walkStrings(child, fn); err != nil {
-				return err
-			}
-		}
-	case string:
-		return fn(val)
-	}
-	return nil
 }
 
 // CheckError is one expression that will not compile, and where it was found.
@@ -312,7 +291,7 @@ func (e *SourceEngine) Check(properties interface{}) []CheckError {
 		return []CheckError{{Err: err}}
 	}
 	var out []CheckError
-	_ = walkStringsWithPath(properties, "", func(path, raw string) error {
+	_ = propexpr.Walk(properties, "", func(path, raw string) error {
 		parsed, perr := propexpr.Parse(raw)
 		if perr != nil {
 			out = append(out, CheckError{Property: path, Expr: raw, Err: perr})
@@ -342,25 +321,4 @@ func (e *SourceEngine) TypeOf(expr string) (*cel.Type, error) {
 		return nil, err
 	}
 	return celexpr.OutputType(env, expr)
-}
-
-// walkStringsWithPath visits every string leaf, carrying where it was found.
-func walkStringsWithPath(node interface{}, path string, fn func(path, raw string) error) error {
-	switch val := node.(type) {
-	case map[string]interface{}:
-		for k, child := range val {
-			if err := walkStringsWithPath(child, joinPropertyPath(path, k), fn); err != nil {
-				return err
-			}
-		}
-	case []interface{}:
-		for i, child := range val {
-			if err := walkStringsWithPath(child, fmt.Sprintf("%s[%d]", path, i), fn); err != nil {
-				return err
-			}
-		}
-	case string:
-		return fn(path, val)
-	}
-	return nil
 }

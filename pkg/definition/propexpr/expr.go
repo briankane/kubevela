@@ -42,6 +42,7 @@ limitations under the License.
 package propexpr
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -203,22 +204,19 @@ func closingParen(raw string, start int) (int, error) {
 // HasExpression reports whether a decoded properties tree contains anything to
 // substitute, so a caller can skip the work entirely when it does not.
 func HasExpression(v interface{}) bool {
-	switch t := v.(type) {
-	case map[string]interface{}:
-		for _, nested := range t {
-			if HasExpression(nested) {
-				return true
-			}
+	found := false
+	//nolint:errcheck // the visitor only signals, it never fails
+	_ = Walk(v, "", func(_, raw string) error {
+		parsed, err := Parse(raw)
+		if err == nil && parsed.HasExpr() {
+			found = true
+			return errStopWalk
 		}
-	case []interface{}:
-		for _, nested := range t {
-			if HasExpression(nested) {
-				return true
-			}
-		}
-	case string:
-		parsed, err := Parse(t)
-		return err == nil && parsed.HasExpr()
-	}
-	return false
+		return nil
+	})
+	return found
 }
+
+// errStopWalk ends a Walk early. Walk stops at the first error, which is how a
+// visitor says it has seen enough.
+var errStopWalk = errors.New("stop")
