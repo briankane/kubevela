@@ -153,7 +153,7 @@ The admission webhook and the reconcile controller operate on different informat
 - Checks in-memory LRU cache, then backing `Config` object
 - On miss or TTL expiry: executes `template:` via CueX, writes updated `Config`
 - Substitutes resolved field values into component/trait properties before CUE template render
-- Surfaces per-source phase (`Resolved` / `Stale` / `Pending` / `Failed`) on `status.services`
+- Surfaces per-source phase (`Resolved` / `Stale` / `Failed` / `Unused`) on `status.sources`
 
 ### Custom Error Messages (`errs:`)
 
@@ -469,8 +469,8 @@ Configs (labelled Secrets in `vela-system`) are accessed through the `vela confi
 # List all cache entries for a SourceDefinition
 vela config list -t cluster-config-reader-a3f9c21b
 
-# Check Application status for per-source phase (Resolved / Stale / Pending / Failed)
-kubectl get application <name> -o jsonpath='{.status.services}'
+# Check per-source phase (Resolved / Stale / Failed / Unused), and who read each value
+vela status <name> --sources
 
 # Force a refresh: delete the cache entry - the controller will re-execute template: on next reconcile
 vela config delete cluster-config-reader-us-east-1
@@ -1242,6 +1242,35 @@ Values marked `// +sensitive`, and any path the binding's `statusPolicy` masks, 
 appear - including inside a struct or list that was substituted whole, where a mark one level below the
 read would otherwise not match.
 
+### `statusPolicy`
+
+A definition author marks what is secret with `// +sensitive`; `statusPolicy` is how the *consuming*
+Application narrows what reaches its own status, for a value the author had no reason to consider secret
+but this Application does.
+
+```yaml
+spec:
+  sources:
+    - name: db
+      type: db-config
+      statusPolicy:
+        maskPaths: [password, "tls.key"]   # redacted to *** wherever they appear
+        exposeConsumedValues: false        # omit every value; the properties are still listed
+```
+
+| Field | Unset | Effect |
+|---|---|---|
+| `maskPaths` | mask nothing beyond `// +sensitive` | a path here, or anything beneath it, is replaced with `***` |
+| `exposeConsumedValues` | expose | `false` omits `values[].value` entirely, keeping `property` and `sourceAttr` |
+
+The two are independent, and unset is not the same as `false`. Masking one path narrows what is published;
+it does not ask for silence, so the fields not named stay visible. `exposeConsumedValues` is the blunt
+instrument for a source whose whole output is sensitive, where naming the paths would mean keeping a list
+in step with a schema that can change under you.
+
+Neither affects what a component *renders* - only what is reported. A masked value still reaches the
+workload; `status` is not the security boundary, RBAC on the `SourceDefinition` is.
+
 There is no per-component copy. `status.services[].sources` carried one, and everything in it was in
 `status.sources[].consumedBy` alongside the property each value landed in and where the component was
 placed, so it was strictly less information stored twice - and it multiplied by components and clusters,
@@ -1295,8 +1324,8 @@ This section describes runtime behavior at each stage of the cache lifecycle and
 
 **What to check:**
 ```bash
-kubectl get application <name> -o jsonpath='{.status.services}'  # phase: Stale, check error message
-vela config list | grep <definition>                              # check lastSyncAt to assess how stale
+vela status <name> --sources          # phase: Stale, with the message saying why
+vela config list | grep <definition>  # check lastSyncAt to assess how stale
 ```
 
 **How to respond:** Investigate why the data source is unreachable. The controller will refresh automatically on the next reconcile once it recovers. To force a refresh and drop the stale value (accepting that a subsequent failure will block the render):
@@ -1312,8 +1341,8 @@ vela config delete <cache-entry-name>
 
 **What to check:**
 ```bash
-kubectl get application <name> -o jsonpath='{.status.services}'  # phase: Failed, error message
-kubectl describe application <name>                               # events may include the raw error
+vela status <name> --sources         # phase: Failed, with the message saying why
+kubectl describe application <name>  # events may include the raw error
 ```
 
 ---
@@ -1326,16 +1355,16 @@ kubectl describe application <name>                               # events may i
 | List entries by schema version | `vela config list -t <definition>-<schema-hash>` |
 | Check the registered output schema | `vela config-template show <definition>-<schema-hash>` |
 | Force a cache refresh | `vela config delete <cache-entry-name>` |
-| Check per-source phase per component | `kubectl get application <name> -o jsonpath='{.status.services}'` |
+| Check per-source phase, and who read each value | `vela status <name> --sources` |
 
 ### Expected operational failures
 
 | Failure | `phase` | Likely cause | Resolution |
 |---|---|---|---|
-| Source never resolves on first apply | `Failed` | External endpoint unreachable, missing parameter, `errs:` check failing | Check `status.services` error; verify endpoint reachability and parameters |
+| Source never resolves on first apply | `Failed` | External endpoint unreachable, missing parameter, `errs:` check failing | Check the message in `vela status --sources`; verify endpoint reachability and parameters |
 | Source resolved initially, now `Stale` | `Stale` | Transient or persistent failure after a successful first fetch | Components render with stale data; investigate source; use `onStaleFailure: fail` if stale data is unacceptable |
 | Source path rejected at `kubectl apply` | Admission error | Expression path not in `schema:`, a missing default, a type mismatch, or no `get` permission on `SourceDefinition` | Check the admission error; verify the path is declared in `schema:` and a default is present where required |
-| Key computation fails | `Failed` | `storage:` interpolation references a label or parameter that is absent | Check `status.services` error; verify required Application labels or parameters are present |
+| Key computation fails | `Failed` | `storage:` interpolation references a label or parameter that is absent | Check the message in `vela status --sources`; verify required Application labels or parameters are present |
 
 ## Security
 
