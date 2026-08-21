@@ -2,11 +2,12 @@ package application
 
 import (
 	"context"
-	"cuelang.org/go/cue"
-	"cuelang.org/go/cue/cuecontext"
 	"reflect"
 	"strings"
 	"testing"
+
+	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/cuecontext"
 
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
