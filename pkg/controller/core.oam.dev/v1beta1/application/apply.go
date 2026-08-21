@@ -545,14 +545,33 @@ func (h *AppHandler) recordSourceResolution(kind, name, readerType, cluster, nam
 		if len(rs.ConsumedFields) == 0 {
 			continue
 		}
-		entry.ConsumedBy = append(entry.ConsumedBy, common.SourceConsumer{
+		consumer := common.SourceConsumer{
 			DefinitionKind: kind,
 			Name:           name,
 			Type:           readerType,
 			Cluster:        cluster,
 			Namespace:      namespace,
 			Values:         consumerValues(src, rs, "", ""),
-		})
+		}
+		// Replace rather than append when this reader is already recorded.
+		// collectHealthStatus records the reads, and it runs both in the ordinary
+		// apply and again in refreshSourceDrivenComponents, so a component that
+		// auto-updates is recorded twice in one reconcile. A placement is part of
+		// the identity: the same component in two clusters is two readers.
+		replaced := false
+		for i, existing := range entry.ConsumedBy {
+			if existing.DefinitionKind == consumer.DefinitionKind &&
+				existing.Name == consumer.Name &&
+				existing.Cluster == consumer.Cluster &&
+				existing.Namespace == consumer.Namespace {
+				entry.ConsumedBy[i] = consumer
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			entry.ConsumedBy = append(entry.ConsumedBy, consumer)
+		}
 	}
 }
 

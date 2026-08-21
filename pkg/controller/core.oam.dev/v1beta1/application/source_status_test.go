@@ -356,3 +356,46 @@ func TestResolutionsDivideWithinOneCluster(t *testing.T) {
 	}
 	r.NotEqual(got.Resolutions[0].StorageKey, got.Resolutions[1].StorageKey)
 }
+
+// TestSourceStatusListRecordsAReaderOnce pins that a component rendered more
+// than once in a reconcile appears once in consumedBy.
+//
+// collectHealthStatus records the reads, and it runs both in the ordinary apply
+// and again in refreshSourceDrivenComponents when a source value changed, so a
+// component that auto-updates is recorded twice in the same reconcile.
+func TestSourceStatusListRecordsAReaderOnce(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "configmap"})
+
+	rs := map[string]sources.SourceResolutionStatus{
+		"cfg": {Name: "cfg", Phase: sourcePhaseResolved,
+			ConsumedFields: map[string]interface{}{"data.image": "nginx"},
+			Reads: []sources.SourceRead{
+				{SourceAttr: "data.image", Property: "image", Value: "nginx"},
+			}},
+	}
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default", rs)
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default", rs)
+
+	out := h.sourceStatusList()
+	r.Len(out, 1)
+	r.Len(out[0].ConsumedBy, 1, "one reader recorded twice is still one reader")
+	r.Equal("web", out[0].ConsumedBy[0].Name)
+	r.Len(out[0].ConsumedBy[0].Values, 1)
+}
+
+// The same component in two clusters is two readers, not one.
+func TestSourceStatusListKeepsReadersPerPlacement(t *testing.T) {
+	r := require.New(t)
+	h := handlerFor(nil, v1beta1.ApplicationSource{Name: "cfg", Type: "configmap"})
+
+	rs := map[string]sources.SourceResolutionStatus{
+		"cfg": {Name: "cfg", Phase: sourcePhaseResolved,
+			ConsumedFields: map[string]interface{}{"data.image": "nginx"}},
+	}
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "local", "default", rs)
+	h.recordSourceResolution(sourceKindComponent, "web", "webservice", "remote", "default", rs)
+
+	out := h.sourceStatusList()
+	r.Len(out[0].ConsumedBy, 2, "a component placed in two clusters read it twice, in two places")
+}
