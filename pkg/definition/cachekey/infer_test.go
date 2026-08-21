@@ -331,7 +331,7 @@ func TestUnsupportedContextIsOneMessage(t *testing.T) {
 // discovered against a cluster - the other hash tests prove the function is
 // stable, not that this particular value has not moved.
 func TestStampedRulesHashHasNotMoved(t *testing.T) {
-	const stamped = "6ac674fa" // as written into examples/source-library/*.yaml
+	const stamped = "6ac674fa" // as written into every generated SourceDefinition
 
 	rules, err := LoadRules()
 	if err != nil {
@@ -344,7 +344,7 @@ func TestStampedRulesHashHasNotMoved(t *testing.T) {
 	if got != stamped {
 		t.Fatalf("the rules hash is now %q, was %q.\n"+
 			"If the keyed rules genuinely changed, restamp every generated definition "+
-			"(examples/source-library/*.yaml and examples/source-expressions-demo/definitions/*.yaml) "+
+			"(`make manifests`, plus examples/source-expressions-demo/definitions/*.yaml) "+
 			"and update this constant. If they did not, something edited "+
 			"pkg/definition/cachekey/rules/ by accident", got, stamped)
 	}

@@ -64,11 +64,11 @@ func stubFiles(t *testing.T, s fileStub) {
 func compileGitFile(t *testing.T, params string) (map[string]interface{}, error) {
 	t.Helper()
 
-	tmpl, err := os.ReadFile("../../../examples/source-library/git-file.cue")
+	tmpl, err := os.ReadFile("../../../vela-templates/definitions/internal/source/git-file.cue")
 	require.NoError(t, err)
 
 	// The template declares `parameter` as a schema; the caller supplies values.
-	src := string(tmpl) + "\n\nparameter: " + params + "\n"
+	src := unwrapDefinitionTemplate(t, string(tmpl)) + "\n\nparameter: " + params + "\n"
 
 	val, err := velacuex.WorkloadCompiler.Get().CompileString(context.Background(), src)
 	if err != nil {
@@ -180,4 +180,40 @@ out: registry.#MustReadFile & {
 		require.Error(t, err, "#MustReadFile exists to fail here; #ReadFile is the one that branches")
 		assert.Contains(t, err.Error(), "missing.txt")
 	})
+}
+
+// unwrapDefinitionTemplate returns the `template:` body of a `vela def` source
+// file, with its imports hoisted back to the top.
+//
+// The shipped definition wraps the template in the metadata block vela def
+// renders from; evaluating the template alone needs it unwrapped.
+func unwrapDefinitionTemplate(t *testing.T, src string) string {
+	t.Helper()
+
+	lines := strings.Split(src, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "template: {") {
+			start = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, start, 0, "no template block in the definition")
+
+	var imports []string
+	for _, l := range lines[:start] {
+		if strings.HasPrefix(l, "import ") || strings.HasPrefix(l, "\t\"") ||
+			l == ")" || strings.HasPrefix(l, "\t") && strings.Contains(l, "\"") {
+			imports = append(imports, l)
+		}
+	}
+
+	var body []string
+	for _, l := range lines[start+1:] {
+		if l == "}" {
+			break
+		}
+		body = append(body, strings.TrimPrefix(l, "\t"))
+	}
+	return strings.Join(append(imports, body...), "\n")
 }

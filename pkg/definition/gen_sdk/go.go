@@ -90,6 +90,19 @@ var (
 	}
 )
 
+// SupportedDefinitionKind reports whether the generator models a definition
+// kind.
+//
+// The kind decides the base struct, the API type and the registration call, so
+// an unmodelled kind produces Go that does not compile rather than an SDK that
+// is merely incomplete. SourceDefinition is the one currently absent: adding it
+// needs a SourceBase and a Source interface in the scaffold, a RegisterSource,
+// and Application-builder support for spec.sources.
+func SupportedDefinitionKind(kind string) bool {
+	_, ok := DefinitionKindToBaseType[kind]
+	return ok
+}
+
 // GoDefModifier is the Modifier for golang, modify code for each definition
 type GoDefModifier struct {
 	*GenMeta
