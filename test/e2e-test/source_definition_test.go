@@ -157,7 +157,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 		Eventually(func() (string, error) {
@@ -298,7 +298,7 @@ output: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		cmExists := func(name string) func() bool {
@@ -462,7 +462,7 @@ patch: metadata: labels: "trait-case/label": parameter.label
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		renderedValue := func() string {
@@ -556,7 +556,7 @@ parameter: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed(),
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed(),
 			"a list parameter with a default must be admitted, not rejected as undeclared")
 
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
@@ -668,7 +668,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		// The cache entry is named <storage.key>-<propertiesHash>: the generated key
@@ -785,7 +785,7 @@ parameter: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		// The app's own status reports both facts this test needs: which cache
 		// entry the binding resolved against, and what it resolved to. Reading
@@ -983,7 +983,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 		Eventually(func() (string, error) {
@@ -1071,7 +1071,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 		Eventually(func() (int32, error) {
@@ -1142,7 +1142,7 @@ parameter: {
 			}, []oamcomm.ApplicationComponent{
 				{Name: "web", Type: "webservice", Properties: &runtime.RawExtension{Raw: []byte(`{"image":"$(source.s.doesNotExist)","port":80}`)}},
 			})
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("is not declared in schema of SourceDefinition"))
 		})
@@ -1154,7 +1154,7 @@ parameter: {
 			}, []oamcomm.ApplicationComponent{
 				{Name: "web", Type: "webservice", Properties: &runtime.RawExtension{Raw: []byte(`{"image":"$(source.s.vpcId)","port":80}`)}},
 			})
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("guard it with"))
 		})
@@ -1166,7 +1166,7 @@ parameter: {
 				{Name: "first", Type: "typed-source", Properties: &runtime.RawExtension{Raw: []byte(`{"image":"$(source.second.image)","replicas":1}`)}},
 				{Name: "second", Type: "typed-source", Properties: &runtime.RawExtension{Raw: []byte(`{"image":"nginx","replicas":1}`)}},
 			}, minimalComp())
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("can only depend on prior sources"))
 		})
@@ -1176,7 +1176,7 @@ parameter: {
 			app := newApp("unknown-prop", []v1beta1.ApplicationSource{
 				{Name: "s", Type: "typed-source", Properties: &runtime.RawExtension{Raw: []byte(`{"image":"nginx","replicas":1,"bogus":"x"}`)}},
 			}, minimalComp())
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("is not declared in the parameter schema of SourceDefinition"))
 		})
@@ -1186,7 +1186,7 @@ parameter: {
 			app := newApp("bad-type", []v1beta1.ApplicationSource{
 				{Name: "s", Type: "typed-source", Properties: &runtime.RawExtension{Raw: []byte(`{"image":"nginx","replicas":"three"}`)}},
 			}, minimalComp())
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("type mismatch for parameter"))
 		})

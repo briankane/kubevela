@@ -291,7 +291,7 @@ patch: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -340,7 +340,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		// The point: an expression must drive the same resolution and the same
@@ -400,7 +400,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -443,7 +443,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -493,7 +493,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -548,7 +548,7 @@ output: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		Eventually(func() (map[string]string, error) {
 			return configMapData("expr-wf-result")
@@ -603,7 +603,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -666,7 +666,7 @@ output: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		Eventually(func() (map[string]string, error) {
 			return configMapData("alpha")
@@ -699,7 +699,7 @@ output: {
 				}}},
 			},
 		}
-		err := k8sClient.Create(ctx, bad)
+		err := k8sClient.Create(ctx, optIn(bad))
 		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("context.componentName"))
 		Expect(err.Error()).To(ContainSubstring("spec.workflow"))
@@ -768,7 +768,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		Eventually(func() (map[string]string, error) {
 			return configMapData("expr-render-policy-out")
@@ -833,7 +833,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
 
 		Eventually(func() (map[string]string, error) {
 			latest := &v1beta1.Application{}
@@ -863,7 +863,7 @@ output: {
 					}},
 				},
 			}
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			for _, w := range wants {
 				Expect(err.Error()).To(ContainSubstring(w))
@@ -935,7 +935,7 @@ output: labels: "policy-owner": parameter.owner
 					}},
 				},
 			}
-			err := k8sClient.Create(ctx, app)
+			err := k8sClient.Create(ctx, optIn(app))
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("type mismatch"))
 			// The render phase never ran, so neither of its error shapes appears.
@@ -967,6 +967,56 @@ output: labels: "policy-owner": parameter.owner
 				"found no matching overload for '_?_:_'")
 		})
 
+		// The suite runs in opt-in mode, so every other Application here carries
+		// the annotation. This one does not, which is what an untouched
+		// Application on an upgraded cluster looks like.
+		It("leaves an Application that has not opted in alone", func() {
+			// $(SVC_HOST) is Kubernetes' own dependent-env-var syntax, not a
+			// source read. Without the opt-in it must reach the workload verbatim
+			// for kubelet to expand, rather than being read as an expression and
+			// refused.
+			app := &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{Name: "expr-no-optin", Namespace: namespaceName},
+				Spec: v1beta1.ApplicationSpec{
+					Components: []oamcomm.ApplicationComponent{{
+						Name: "probe", Type: "expr-probe-comp",
+						Properties: &runtime.RawExtension{Raw: []byte(`{
+							"host":"http://$(SVC_HOST):8080","port":1,"ratio":1.5,
+							"secure":true,"tags":["a"],"meta":{"region":"eu","zone":"a"},
+							"fallback":"f","halved":2
+						}`)},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, app)).To(Succeed(),
+				"an Application that never asked for expressions must not be judged by them")
+			Expect(k8sClient.Delete(ctx, app)).To(Succeed())
+		})
+
+		// Declaring sources without opting in is refused rather than ignored:
+		// ignoring would write $(source.x.y) into the workload as text.
+		It("refuses sources declared without opting in", func() {
+			app := &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{Name: "src-no-optin", Namespace: namespaceName},
+				Spec: v1beta1.ApplicationSpec{
+					Sources: []v1beta1.ApplicationSource{{
+						Name: "infra", Type: "infra-facts",
+						Properties: &runtime.RawExtension{Raw: []byte(`{"host":"h","port":1}`)},
+					}},
+					Components: []oamcomm.ApplicationComponent{{
+						Name: "probe", Type: "expr-probe-comp",
+						Properties: &runtime.RawExtension{Raw: []byte(`{
+							"host":"h","port":1,"ratio":1.5,"secure":true,"tags":["a"],
+							"meta":{"region":"eu","zone":"a"},"fallback":"f","halved":2
+						}`)},
+					}},
+				},
+			}
+			err := k8sClient.Create(ctx, app)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("has not opted in"))
+		})
+
 		// Whether a policy may read a source depends on which kind it is, so both
 		// refusing kinds are asserted. A resource-rendering PolicyDefinition is
 		// deliberately absent from this list: it renders through the same engine a
@@ -996,7 +1046,7 @@ output: labels: "policy-owner": parameter.owner
 						}},
 					},
 				}
-				err := k8sClient.Create(ctx, app)
+				err := k8sClient.Create(ctx, optIn(app))
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("cannot be read here"))
 			},
