@@ -113,6 +113,30 @@ func TestCacheIdentityChangesWithTheTemplate(t *testing.T) {
 	}
 }
 
+// The two built-in ConfigMap sources generate prefixes that can land on the same
+// string: configmap-local in cluster "local" namespace "default" reads
+// configmap-local-local-default, and so does configmap in cluster "local"
+// namespace "local-default". Their parameters can also match, since
+// configmap-local's `name` is the only one configmap requires.
+//
+// The templates differ, and that is the whole reason the prefix is allowed to be
+// cosmetic. Pinning it here because the pair now ships together, so a future
+// change to how prefixes are built has a shipped collision to answer for.
+func TestCacheIdentitySeparatesTheTwoConfigMapSources(t *testing.T) {
+	props := map[string]interface{}{"name": "app-config"}
+	local, err := cacheIdentity("configmap-local-local-default", inputs("configmap-local-template", props, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generic, err := cacheIdentity("configmap-local-local-default", inputs("configmap-template", props, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local == generic {
+		t.Fatal("configmap and configmap-local must not share a cache entry when their prefixes collide")
+	}
+}
+
 func TestCacheIdentityIsStable(t *testing.T) {
 	// Map iteration order must not leak into the hash, or the same binding would
 	// address a different entry on each reconcile.
