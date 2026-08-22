@@ -33,7 +33,6 @@ import (
 
 	oamcomm "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	"github.com/oam-dev/kubevela/pkg/oam/util"
 )
 
 // exprComponentDefinition builds a ConfigMap-producing ComponentDefinition, so a
@@ -213,19 +212,14 @@ patch: {
 }
 `
 
-	applyDef := func(obj client.Object) {
-		Expect(k8sClient.Create(ctx, obj)).Should(SatisfyAny(BeNil(), &util.AlreadyExistMatcher{}))
-	}
+	applyDef := func(obj client.Object) { applyDefinition(ctx, obj) }
 
-	// The definitions above are created through the API server; the webhook reads
-	// them through the manager's cache, and admission is synchronous. So a
-	// definition applied milliseconds earlier can still be invisible when the
-	// Application arrives, and the Application is refused outright rather than
-	// retried - "WorkloadDefinition ... not found" at create, from a definition
-	// that plainly exists.
+	// applyDefinition handles the cache race for the definitions this file creates.
+	// This covers the ones it does not - the chart's webservice, override and the
+	// rest - whose cache can lag a controller restart just the same.
 	//
-	// Retry only that: a genuine denial still fails on the first attempt with its
-	// own message, so this cannot turn a rejection into a pass.
+	// Retry only on "not found": any other denial calls StopTrying with its own
+	// message on the first attempt, so this cannot turn a rejection into a pass.
 	createApp := func(app *v1beta1.Application) {
 		GinkgoHelper()
 		Eventually(func() error {

@@ -123,7 +123,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, sourceDef)).Should(Succeed())
+		applyDefinition(ctx, sourceDef)
 
 		app := &v1beta1.Application{
 			ObjectMeta: metav1.ObjectMeta{
@@ -610,7 +610,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, sourceDef)).Should(Succeed())
+		applyDefinition(ctx, sourceDef)
 		// SourceDefinition controller should publish deterministic ConfigTemplate reference.
 		Eventually(func() error {
 			latest := &v1beta1.SourceDefinition{}
@@ -766,7 +766,7 @@ parameter: {
 				Schematic: &oamcomm.Schematic{CUE: &oamcomm.CUE{Template: templateFor("1.25.0")}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, sourceDef)).Should(Succeed())
+		applyDefinition(ctx, sourceDef)
 
 		app := &v1beta1.Application{
 			ObjectMeta: metav1.ObjectMeta{Name: "edited-source-app", Namespace: namespaceName},
@@ -1030,7 +1030,7 @@ parameter: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, sourceDef)).Should(Succeed())
+		applyDefinition(ctx, sourceDef)
 
 		app := &v1beta1.Application{
 			ObjectMeta: metav1.ObjectMeta{
@@ -1116,7 +1116,7 @@ parameter: {
 `}},
 				},
 			}
-			Expect(k8sClient.Create(ctx, sourceDef)).Should(Succeed())
+			applyDefinition(ctx, sourceDef)
 		}
 
 		newApp := func(name string, sources []v1beta1.ApplicationSource, comps []oamcomm.ApplicationComponent) *v1beta1.Application {
