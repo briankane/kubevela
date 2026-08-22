@@ -156,3 +156,57 @@ func TestPruneRespectsGarbageCollectPolicy(t *testing.T) {
 	r.NoError(err)
 	r.True(exists(t, cli, "web-eternal"), "a never-collect resource must survive a prune")
 }
+
+// A pruned resource has to be deleted in the cluster it actually lives in, and
+// the tracker entry has to be marked there too.
+//
+// Both hang off the same fact: ManagedResource records a Cluster, and
+// ClusterObjectReference.Equal compares it. A manifest synthesised without it
+// carries Cluster "", so multicluster routing sends the DELETE to the hub and
+// findMangedResourceIndex never matches the entry it was meant to retire.
+//
+// The hub-routing half is the dangerous one. A component placed on both the hub
+// and a member, whose member variant goes stale, would have its live hub object
+// deleted instead.
+func TestPrunedResourceKeepsItsCluster(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	cli := fake.NewClientBuilder().WithScheme(common.Scheme).Build()
+
+	app := &v1beta1.Application{
+		ObjectMeta: v12.ObjectMeta{Name: "app", Namespace: "default", Generation: 1},
+	}
+	_rk, err := NewResourceKeeper(ctx, cli, app)
+	r.NoError(err)
+	rk := _rk.(*resourceKeeper)
+
+	// The component renders one resource into a member cluster.
+	remote := componentResource("web-remote", "web")
+	oam.SetCluster(remote, "cluster-1")
+	r.NoError(rk.Dispatch(ctx, []*unstructured.Unstructured{remote}, nil))
+
+	rt, err := rk.getCurrentRT(ctx)
+	r.NoError(err)
+	r.Len(rt.Spec.ManagedResources, 1)
+	r.Equal("cluster-1", rt.Spec.ManagedResources[0].Cluster,
+		"the tracker records where the resource was placed")
+
+	// A source change re-renders the component with nothing at all, so the
+	// remote resource is stale and must be pruned.
+	pruned, err := rk.PruneComponentResources(ctx, "web", nil)
+	r.NoError(err)
+	r.Len(pruned, 1)
+	r.Equal("cluster-1", pruned[0].Cluster)
+
+	// The tracker entry must be marked deleted. It only can be if the manifest
+	// carried the cluster, because Equal compares it.
+	rt, err = rk.getCurrentRT(ctx)
+	r.NoError(err)
+	for _, mr := range rt.Spec.ManagedResources {
+		if mr.Name == "web-remote" {
+			r.True(mr.Deleted,
+				"the entry is still tracked, so the manifest did not match it: "+
+					"the synthesised manifest lost mr.Cluster")
+		}
+	}
+}

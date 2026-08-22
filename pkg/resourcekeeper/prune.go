@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
 // PruneComponentResources deletes resources attributed to a component that its
@@ -82,6 +83,10 @@ func (h *resourceKeeper) PruneComponentResources(ctx context.Context, component 
 		u.SetKind(mr.Kind)
 		u.SetNamespace(mr.Namespace)
 		u.SetName(mr.Name)
+		// Carry the cluster. Delete routes on it, and the tracker matches on it -
+		// ClusterObjectReference.Equal compares Cluster - so a manifest without it
+		// deletes against the hub and leaves the entry tracked.
+		oam.SetCluster(u, mr.Cluster)
 		stale = append(stale, u)
 		pruned = append(pruned, mr)
 	}
