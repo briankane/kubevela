@@ -57,7 +57,7 @@ const (
 // +kubebuilder:rbac:groups=core.oam.dev,resources=sourcedefinitions,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=core.oam.dev,resources=sourcedefinitions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;update;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;delete
 
 // Reconciler reconciles a SourceDefinition object.
 type Reconciler struct {
