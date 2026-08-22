@@ -299,3 +299,71 @@ func TestSurfaceAllowed(t *testing.T) {
 		t.Fatal("component-only source must not be allowed from a trait")
 	}
 }
+
+// The compatibility check is inert while the cache-key rules key only on fields
+// every source-reading surface offers, so these pin the paths that are reachable
+// and the shape of the answer for the ones that are not yet.
+func TestValidateSurfaceCompatibility(t *testing.T) {
+	const keyedOnCluster = `
+$internal: {key: "s-\(context.cluster)", keyInputs: ["cluster"]}
+schema: {host: string}
+output: {host: "x"}
+`
+	cases := []struct {
+		name       string
+		template   string
+		consumable []string
+		wantErr    string
+	}{
+		{
+			name:     "a template reading no context is usable anywhere",
+			template: "$internal: {key: \"s\", keyInputs: []}\nschema: {host: string}\noutput: {host: \"x\"}",
+		},
+		{
+			name:     "a template that will not parse is left to the cache-key check",
+			template: `output: {this is not cue`,
+		},
+		{
+			name:     "cluster is offered by every surface that resolves sources",
+			template: keyedOnCluster,
+		},
+		{
+			name:       "and by each of them named explicitly",
+			template:   keyedOnCluster,
+			consumable: []string{"component"},
+		},
+		{
+			name:       "an unrestricted definition is judged against every surface",
+			template:   keyedOnCluster,
+			consumable: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateSurfaceCompatibility(tc.template, tc.consumable)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected acceptance, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// Every surface a source may be consumed from has a plural name, because the
+// refusal message lists them and a blank there reads as a bug.
+func TestPluraliseNamesEverySurface(t *testing.T) {
+	got := pluralise(sources.ConsumableSurfaces)
+	if len(got) != len(sources.ConsumableSurfaces) {
+		t.Fatalf("pluralise dropped a surface: %v", got)
+	}
+	for i, name := range got {
+		if strings.TrimSpace(name) == "" {
+			t.Errorf("%s has no plural form", sources.ConsumableSurfaces[i])
+		}
+	}
+}
