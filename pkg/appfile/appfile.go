@@ -889,6 +889,13 @@ func setParameterValuesToKubeObj(obj *unstructured.Unstructured, values paramVal
 // GenerateContextDataFromAppFile generates process context data from app file
 func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess.ContextData {
 	data := velaprocess.ContextData{
+		// An unset cluster means the local one - multicluster.IsLocal treats "" and
+		// "local" alike, and routing relies on it. Nothing that compares or hashes
+		// the name does: ClusterObjectReference.Equal compares the string, and the
+		// source cache hashes it, so a caller that left this empty would key its
+		// sources on "" and take a second cache entry for a cluster that already
+		// has one. Callers rendering for a specific cluster overwrite this.
+		Cluster:              pkgmulticluster.Local,
 		Namespace:            appfile.Namespace,
 		AppName:              appfile.Name,
 		CompName:             wlName,
