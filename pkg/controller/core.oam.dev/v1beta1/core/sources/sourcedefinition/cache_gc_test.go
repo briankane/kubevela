@@ -220,3 +220,85 @@ func TestSweepSourceCache(t *testing.T) {
 	assertExists(&corev1.ConfigMap{}, types.NamespacedName{Namespace: ns, Name: config.TemplateConfigMapNamePrefix + "source-livesd-cccc3333"})
 	assertExists(&corev1.ConfigMap{}, types.NamespacedName{Namespace: ns, Name: config.TemplateConfigMapNamePrefix + "source-young-dddd4444"})
 }
+
+// The sweep is a manager Runnable so it runs on its own timer rather than off
+// SourceDefinition events. Two things have to hold: it stops when the manager
+// does, and a failing sweep does not take the manager down with it.
+func TestCacheGCRunnableStopsWithItsContext(t *testing.T) {
+	g := &cacheGCRunnable{
+		reconciler: &Reconciler{Client: fake.NewClientBuilder().Build()},
+		interval:   time.Hour, // never fires; this is about the exit
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- g.Start(ctx) }()
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "a cancelled sweep is a clean stop, not a manager failure")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return when its context was cancelled; the manager would hang on shutdown")
+	}
+}
+
+func TestCacheGCRunnableSweepsOnEachTick(t *testing.T) {
+	scheme := runtime.NewScheme()
+	assert.NoError(t, corev1.AddToScheme(scheme))
+	assert.NoError(t, v1beta1.AddToScheme(scheme))
+
+	// A cache entry old enough to collect, so a sweep that ran leaves a mark.
+	old := time.Now().Add(-72 * time.Hour)
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "expired-entry",
+			Namespace: "vela-system",
+			Labels: map[string]string{
+				apitypes.LabelConfigCatalog: apitypes.VelaCoreConfig,
+				apitypes.LabelConfigType:    "http-get",
+			},
+			Annotations: map[string]string{
+				apitypes.AnnotationConfigLastSyncAt:   rfc3339(old),
+				apitypes.AnnotationConfigLastAccessed: rfc3339(old),
+				apitypes.AnnotationConfigTTL:          "1m",
+			},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()
+
+	g := &cacheGCRunnable{reconciler: &Reconciler{Client: cli}, interval: 10 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = g.Start(ctx) }()
+
+	assert.Eventually(t, func() bool {
+		err := cli.Get(context.Background(),
+			types.NamespacedName{Namespace: "vela-system", Name: "expired-entry"}, &corev1.Secret{})
+		return apierrors.IsNotFound(err)
+	}, 5*time.Second, 20*time.Millisecond,
+		"the ticker never reached the sweep, so entries would accumulate forever")
+}
+
+// A sweep that errors must be logged and the ticker must keep going: the
+// alternative is one bad reconcile silently ending cache collection for the
+// lifetime of the process.
+func TestCacheGCRunnableSurvivesAFailingSweep(t *testing.T) {
+	// No scheme registered, so every List inside the sweep fails.
+	g := &cacheGCRunnable{
+		reconciler: &Reconciler{Client: fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()},
+		interval:   10 * time.Millisecond,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- g.Start(ctx) }()
+
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "a failing sweep is logged, not returned")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return")
+	}
+}
