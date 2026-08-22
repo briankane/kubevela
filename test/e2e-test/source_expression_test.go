@@ -19,6 +19,7 @@ package controllers_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -216,6 +217,29 @@ patch: {
 		Expect(k8sClient.Create(ctx, obj)).Should(SatisfyAny(BeNil(), &util.AlreadyExistMatcher{}))
 	}
 
+	// The definitions above are created through the API server; the webhook reads
+	// them through the manager's cache, and admission is synchronous. So a
+	// definition applied milliseconds earlier can still be invisible when the
+	// Application arrives, and the Application is refused outright rather than
+	// retried - "WorkloadDefinition ... not found" at create, from a definition
+	// that plainly exists.
+	//
+	// Retry only that: a genuine denial still fails on the first attempt with its
+	// own message, so this cannot turn a rejection into a pass.
+	createApp := func(app *v1beta1.Application) {
+		GinkgoHelper()
+		Eventually(func() error {
+			err := k8sClient.Create(ctx, optIn(app))
+			if err != nil && strings.Contains(err.Error(), "not found") {
+				return err
+			}
+			if err != nil {
+				StopTrying("Application refused").Wrap(err).Now()
+			}
+			return nil
+		}, 30*time.Second, time.Second).Should(Succeed())
+	}
+
 	BeforeEach(func() {
 		namespaceName = randomNamespaceName("source-expr-e2e")
 		ns = createNamespace(ctx, namespaceName)
@@ -291,7 +315,7 @@ patch: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -340,7 +364,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		// The point: an expression must drive the same resolution and the same
@@ -400,7 +424,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -443,7 +467,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -493,7 +517,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -548,7 +572,7 @@ output: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 
 		Eventually(func() (map[string]string, error) {
 			return configMapData("expr-wf-result")
@@ -603,7 +627,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 		verifyApplicationPhase(ctx, namespaceName, app.Name, oamcomm.ApplicationRunning)
 
 		Eventually(func() (map[string]string, error) {
@@ -666,7 +690,7 @@ output: {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 
 		Eventually(func() (map[string]string, error) {
 			return configMapData("alpha")
@@ -768,7 +792,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 
 		Eventually(func() (map[string]string, error) {
 			return configMapData("expr-render-policy-out")
@@ -833,7 +857,7 @@ output: {
 				}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, optIn(app))).Should(Succeed())
+		createApp(app)
 
 		Eventually(func() (map[string]string, error) {
 			latest := &v1beta1.Application{}
