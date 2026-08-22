@@ -29,6 +29,7 @@
 > - `KEP-2.20`: Module & API Line Versioning — module identity model, definition naming convention, API line coexistence and deprecation lifecycle; extends KEP-2.13
 > - `KEP-2.21`: `from*` family resolution model — render-time resolution pass, admission schema validation, and shorthand syntax shared by `fromParameter`, `fromSource`, and `fromDependency`
 > - `KEP-2.22`: Multi-Instance Addons — `instance` field in `_module.cue`, per-instance Addon CR naming, namespace-scoped definition isolation
+> - `KEP-2.26`: Definition Permissions — policy stating who may bind a Definition, as a `Config` against a `vela-definition-permission` template; namespace/user/group/label allow and deny lists, enforced at Application admission alongside RBAC
 
 ---
 
@@ -353,3 +354,4 @@ This subsumes the current workaround of maintaining manual RBAC groups per defin
 | KEP-2.20 | Module & API Line Versioning | High | [2.20-module-versioning/README.md](2.20-module-versioning/README.md) |
 | KEP-2.21 | `from*` family resolution model | High | [2.21-from-resolution/README.md](2.21-from-resolution/README.md) |
 | KEP-2.22 | Multi-Instance Addons | Medium | [2.22-multi-instance-addons/README.md](2.22-multi-instance-addons/README.md) |
+| KEP-2.26 | Definition Permissions | Medium | [2.26-definition-permissions/README.md](2.26-definition-permissions/README.md) |
