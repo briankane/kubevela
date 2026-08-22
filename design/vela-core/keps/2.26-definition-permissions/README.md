@@ -244,9 +244,12 @@ next to the examples in the docs, where a first-time policy author will see it.
 
 ### CUE escape hatch
 
-For decisions the fields cannot express, a policy may carry a CUE script, compiled
-from string and evaluated against the Application context, the resolved Definition,
-its parameters, and the namespace's labels.
+For decisions the fields cannot express, a policy may carry a **plain CUE** script,
+compiled from string and evaluated against the Application context, the resolved
+Definition, its parameters, and the namespace's labels.
+
+Plain CUE, not CueX: policy is a decision over data it is handed, so it needs
+unification and comprehensions, not provider functions. See the constraints below.
 
 This reopens the one case the fields deliberately cannot reach: gating on
 **resolved Definition parameters**, so *"`configmap` is allowed, but only with
@@ -255,11 +258,17 @@ including it.
 
 Three constraints, all non-negotiable:
 
-**No providers.** Compile with `DisableResolveProviderFunctions`, the way
-KEP-2.16's `loadTargetParameter` does. Otherwise a policy performs I/O on the
-admission path — latency, a webhook that fails when an unrelated API call does, and
-a policy that can read cluster state and encode it in its decision. Policy must be
-a pure function of what it is handed.
+**Plain CUE, not CueX.** Compile with `cuecontext.New()`, as
+`webhookutils.ValidateCueTemplate` already does — not the CueX compiler with
+providers switched off. The distinction
+matters: disabling providers is a flag someone can get wrong or a future refactor
+can quietly drop, whereas plain CUE has no provider functions to reach for in the
+first place. `kube.#Get` is not disabled, it is absent.
+
+That rules out I/O on the admission path — latency, a webhook that fails when an
+unrelated API call does, and a policy that could read cluster state and fold it
+into its decision. Policy is a pure function of what it is handed, structurally
+rather than by configuration.
 
 **Fail closed.** An error or an incomplete evaluation is a denial. Which means a
 typo denies every Application using that Definition, so `audit` mode and a
