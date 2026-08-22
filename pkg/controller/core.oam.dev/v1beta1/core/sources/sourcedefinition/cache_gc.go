@@ -152,12 +152,21 @@ func (r *Reconciler) liveTemplateRefs(ctx context.Context) (map[string]struct{},
 // window.
 func (r *Reconciler) sweepTemplates(ctx context.Context, now time.Time, referenced map[string]struct{}, res *cacheGCResult) error {
 	grace := sourceCacheStaleMultiplier * defaultSourceCacheTTL
+	// Select on the owning-SourceDefinition label the controller stamps, not on
+	// the name. "config-template-source-" is a convention, and a ConfigTemplate
+	// somebody happened to call source-of-truth would otherwise be swept: it
+	// matches the prefix, no SourceDefinition references it, and it ages past the
+	// grace window like anything else. The label is written by us, so it says
+	// ownership rather than resemblance.
 	var cms corev1.ConfigMapList
-	if err := r.List(ctx, &cms, client.InNamespace(sourceTemplateNamespace)); err != nil {
+	if err := r.List(ctx, &cms, client.InNamespace(sourceTemplateNamespace),
+		client.HasLabels{apitypes.LabelSourceDefinitionName}); err != nil {
 		return err
 	}
 	for i := range cms.Items {
 		cm := &cms.Items[i]
+		// Still checked, so an object carrying the label but not the naming the
+		// TrimPrefix below assumes is left alone rather than misparsed.
 		if !strings.HasPrefix(cm.Name, sourceTemplateConfigMapPrefix) {
 			continue
 		}

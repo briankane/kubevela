@@ -142,9 +142,21 @@ func templateCM(name string, created time.Time) *corev1.ConfigMap {
 			Name:              config.TemplateConfigMapNamePrefix + name,
 			Namespace:         sourceTemplateNamespace,
 			CreationTimestamp: metav1.NewTime(created),
-			Labels:            map[string]string{apitypes.LabelConfigCatalog: apitypes.VelaCoreConfig},
+			Labels: map[string]string{
+				apitypes.LabelConfigCatalog:        apitypes.VelaCoreConfig,
+				apitypes.LabelSourceDefinitionName: "owner",
+			},
 		},
 	}
+}
+
+// A ConfigTemplate somebody else created that happens to start with "source-".
+// The controller stamps its own with an owning-SourceDefinition label; this has
+// none.
+func foreignTemplateCM(name string, created time.Time) *corev1.ConfigMap {
+	cm := templateCM(name, created)
+	delete(cm.Labels, apitypes.LabelSourceDefinitionName)
+	return cm
 }
 
 func TestSweepSourceCache(t *testing.T) {
@@ -178,6 +190,9 @@ func TestSweepSourceCache(t *testing.T) {
 	liveTmpl := templateCM("source-live-bbbb2222", now.Add(-2*time.Hour))
 	sdRefTmpl := templateCM("source-livesd-cccc3333", now.Add(-2*time.Hour))
 	youngOrphanTmpl := templateCM("source-young-dddd4444", now.Add(-1*time.Minute))
+	// Old and unreferenced, so name-prefix matching alone would collect it. It
+	// belongs to whoever made it, and the sweep does not own it.
+	foreignTmpl := foreignTemplateCM("source-of-truth", now.Add(-2*time.Hour))
 
 	liveSD := &v1beta1.SourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: "livesd", Namespace: "vela-system"},
@@ -188,7 +203,7 @@ func TestSweepSourceCache(t *testing.T) {
 
 	cli := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(
 		staleSecret, freshSecret, otherSecret,
-		orphanTmpl, liveTmpl, sdRefTmpl, youngOrphanTmpl, liveSD,
+		orphanTmpl, liveTmpl, sdRefTmpl, youngOrphanTmpl, foreignTmpl, liveSD,
 	).Build()
 
 	r := &Reconciler{Client: cli}
@@ -219,6 +234,7 @@ func TestSweepSourceCache(t *testing.T) {
 	assertExists(&corev1.ConfigMap{}, types.NamespacedName{Namespace: ns, Name: config.TemplateConfigMapNamePrefix + "source-live-bbbb2222"})
 	assertExists(&corev1.ConfigMap{}, types.NamespacedName{Namespace: ns, Name: config.TemplateConfigMapNamePrefix + "source-livesd-cccc3333"})
 	assertExists(&corev1.ConfigMap{}, types.NamespacedName{Namespace: ns, Name: config.TemplateConfigMapNamePrefix + "source-young-dddd4444"})
+	assertExists(&corev1.ConfigMap{}, types.NamespacedName{Namespace: ns, Name: config.TemplateConfigMapNamePrefix + "source-of-truth"})
 }
 
 // The sweep is a manager Runnable so it runs on its own timer rather than off
