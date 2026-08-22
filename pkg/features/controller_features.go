@@ -145,6 +145,30 @@ const (
 	// CUE definition schema. When enabled, any parameter field not present in the template's
 	// parameter stanza will cause a validation error at admission time.
 	ValidateUndeclaredParameters = "ValidateUndeclaredParameters"
+
+	// EnableSourceExpressions turns on $( ) property expressions, and with them
+	// SourceDefinition, which cannot be used without them.
+	//
+	// Off by default because the delimiter is Kubernetes' own: $(VAR_NAME) is the
+	// documented syntax for a dependent environment variable, and is ordinary in
+	// env, command and args. With the pass running, such a value is read as an
+	// expression and refused - at admission and again at render. An installed base
+	// that has never heard of this feature must not have to escape anything, so
+	// the pass does not run until an operator asks for it.
+	//
+	// When enabled, an Application still opts in individually unless
+	// RequireSourceExpressionOptIn is turned off. See there for why.
+	EnableSourceExpressions featuregate.Feature = "EnableSourceExpressions"
+
+	// RequireSourceExpressionOptIn keeps expressions to Applications that ask for
+	// them by annotation, so enabling the feature is not itself a fleet-wide
+	// change.
+	//
+	// Defaults on, so the safe path is the default one: switch the feature on,
+	// annotate the Applications that want it, and only relax this once the fleet
+	// has been checked for $(VAR) in env, command and args. Turning it off makes
+	// every Application eligible at once.
+	RequireSourceExpressionOptIn featuregate.Feature = "RequireSourceExpressionOptIn"
 )
 
 var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
@@ -177,6 +201,8 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	EnableApplicationScopedPolicies:               {Default: false, PreRelease: featuregate.Alpha},
 	ValidateUndeclaredParameters:                  {Default: false, PreRelease: featuregate.Alpha},
 	EnableSourceAutoUpdate:                        {Default: false, PreRelease: featuregate.Alpha},
+	EnableSourceExpressions:                       {Default: false, PreRelease: featuregate.Alpha},
+	RequireSourceExpressionOptIn:                  {Default: true, PreRelease: featuregate.Alpha},
 }
 
 func init() {

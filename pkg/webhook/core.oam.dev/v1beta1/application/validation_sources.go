@@ -13,15 +13,35 @@ import (
 	"github.com/google/cel-go/cel"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/appfile"
+
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
+	"github.com/oam-dev/kubevela/pkg/features"
+	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/sourcedefinition"
 )
 
 // ValidateSources validates source bindings and the source reads expressions make.
 func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Application) field.ErrorList {
 	var errs field.ErrorList
+
+	// Nothing here runs unless expressions are enabled for this Application. The
+	// same decision the render makes, from the same function, because an
+	// Application admitted under one answer and rendered under the other is the
+	// one outcome worse than either.
+	if !sources.ExpressionsEnabledFor(app.GetAnnotations()) {
+		// Declaring sources without them enabled is refused rather than ignored.
+		// Ignoring would render $(source.x.y) into the workload as text, which
+		// reaches the cluster looking like a value and fails much further away.
+		if len(app.Spec.Sources) > 0 {
+			errs = append(errs, field.Forbidden(field.NewPath("spec", "sources"),
+				sourcesDisabledMessage()))
+		}
+		return errs
+	}
 
 	// Expression syntax and sandbox first: it needs no definition lookups, so a
 	// typo is reported even when the rest of validation cannot run.
@@ -373,3 +393,16 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 // Keyed on the template text, so a definition that changes gets a new entry and
 // there is no invalidation to get wrong.
 var parameterBlockSources sync.Map // template -> parameterBlockExtract
+
+// sourcesDisabledMessage says which of the two switches is off, because "not
+// enabled" sends an author to the wrong one half the time.
+func sourcesDisabledMessage() string {
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSourceExpressions) {
+		return "source expressions are not enabled on this cluster; " +
+			"an operator enables them with the EnableSourceExpressions feature gate"
+	}
+	return fmt.Sprintf("this Application has not opted in to source expressions; "+
+		"set the %s annotation to \"true\", and check its properties for $(VAR) "+
+		"environment-variable syntax, which must be written $$(VAR) once expressions are read",
+		oam.AnnotationSourceExpressions)
+}

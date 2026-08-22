@@ -164,6 +164,16 @@ const (
 	// AnnotationAutoUpdate is annotation that let application auto update when it finds definition changes
 	AnnotationAutoUpdate = "app.oam.dev/autoUpdate"
 
+	// AnnotationSourceExpressions opts one Application in to $( ) property
+	// expressions while RequireSourceExpressionOptIn is on. Any value other than
+	// "true" leaves the Application as it was.
+	//
+	// Per-Application rather than per-namespace because the thing being opted in
+	// to is a reading of the Application's own property values: a $(VAR) that used
+	// to reach the container verbatim now has to be written $$(VAR). Whoever owns
+	// the Application is who can answer for that.
+	AnnotationSourceExpressions = "app.oam.dev/source-expressions"
+
 	// AnnotationAutoRevision controls whether policy-rendered spec changes create new ApplicationRevisions.
 	// When set to "true", policies can modify Application.Spec and trigger new revisions.
 	// This is orthogonal to AnnotationAutoUpdate which controls definition version updates.

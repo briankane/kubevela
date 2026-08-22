@@ -47,6 +47,18 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	if params == nil {
 		return nil, nil
 	}
+	// The gate is read here rather than at each of the four render surfaces, so
+	// they cannot drift: a surface that forgot to check would read $(VAR) as an
+	// expression on a cluster where the feature is off, which is the failure the
+	// gate exists to prevent.
+	//
+	// Returning params rather than the normalised copy matters. With the feature
+	// off this function is a no-op, and a no-op that quietly round-tripped every
+	// component's properties through JSON would still turn an int64 into a
+	// float64.
+	if !ExpressionsEnabledFor(appAnnotationsFrom(ctx)) {
+		return params, nil
+	}
 	bt, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
@@ -187,6 +199,26 @@ type sourceInputs struct {
 // contextValuesFor flattens the render context into the field values a source may
 // read, which is every field the cache-key rules allow. Narrowing to a surface
 // happens later, when the source's own context block is rendered.
+// appAnnotationsFrom reads the Application's annotations off the render context.
+// Every process.Context carries them - NewContext pushes appAnnotations
+// unconditionally - so this is the one thing a render knows about the
+// Application it belongs to without being handed it.
+func appAnnotationsFrom(ctx process.Context) map[string]string {
+	switch v := ctx.GetData(velaprocess.ContextAppAnnotations).(type) {
+	case map[string]string:
+		return v
+	case map[string]interface{}:
+		out := make(map[string]string, len(v))
+		for k, raw := range v {
+			if s, ok := raw.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 func contextValuesFor(ctx process.Context) map[string]interface{} {
 	rules, err := cachekey.LoadRules()
 	if err != nil {
