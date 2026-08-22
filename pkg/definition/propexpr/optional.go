@@ -46,7 +46,11 @@ func UndefendedIn(refs []Reference, schemas map[string]string) ([]Reference, err
 
 	var out []Reference
 	for _, ref := range refs {
-		if !ref.IsSource() || ref.Defaulted {
+		// Both roots, not just source. An unguarded read of an absent label -
+		// context.appLabels["team"] - fails the render with "no such key" exactly
+		// as an absent source field does, so admission owes the author the same
+		// warning. canBeAbsent judges each root by what it knows.
+		if ref.Defaulted {
 			continue
 		}
 		absent, err := canBeAbsent(ref, compiled)

@@ -908,6 +908,14 @@ output: labels: "policy-owner": parameter.owner
 			expectRejected(`{"host":"$(source.infra.missing)"}`, "not declared")
 		})
 
+		// A label may simply not be set, and reading one that is not fails the
+		// render with "no such key". Admission owes the author the same warning
+		// it gives for an optional source field, and the guarded form beside it
+		// is what the author should write instead.
+		It("denies an unguarded label read feeding a required parameter", func() {
+			expectRejected(`{"host":"$(context.appLabels[\"team\"])"}`, "may be absent")
+		})
+
 		It("reports the type error alone, without also attempting the render", func() {
 			// Validation is two-phase: soundness gates rendering. Without the gate
 			// a type error is told twice, once precisely and once as an opaque
