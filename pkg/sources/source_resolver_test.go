@@ -404,3 +404,102 @@ output: {v: "hello"}
 		t.Fatal("a nil compiler must default, not stay nil")
 	}
 }
+
+// resolverFor builds a resolver over the given bindings, with no cache.
+func resolverFor(t *testing.T, in sourceInputs) *sourceResolver {
+	t.Helper()
+	return newSourceResolver(context.Background(), map[string]interface{}{}, SurfaceComponent, in)
+}
+
+// The failure paths, which are where a resolver either says what is wrong or
+// leaves an operator staring at an empty status.
+func TestResolveReportsWhyItCannot(t *testing.T) {
+	t.Run("a binding nothing declares", func(t *testing.T) {
+		r := resolverFor(t, sourceInputs{})
+		_, err := r.resolve("ghost")
+		require.ErrorContains(t, err, `source "ghost" not found`)
+		require.Equal(t, PhaseFailed, r.statuses["ghost"].Phase)
+		require.Contains(t, r.statuses["ghost"].Message, "not found",
+			"status has to carry the cause, not just the failure")
+	})
+
+	t.Run("a type with no template", func(t *testing.T) {
+		r := resolverFor(t, sourceInputs{
+			Types:     map[string]string{"cfg": "http-get"},
+			Templates: map[string]string{},
+		})
+		_, err := r.resolve("cfg")
+		require.ErrorContains(t, err, "missing cue template")
+		require.Equal(t, PhaseFailed, r.statuses["cfg"].Phase)
+	})
+
+	t.Run("a template that is the empty string", func(t *testing.T) {
+		r := resolverFor(t, sourceInputs{
+			Types:     map[string]string{"cfg": "http-get"},
+			Templates: map[string]string{"http-get": ""},
+		})
+		_, err := r.resolve("cfg")
+		require.ErrorContains(t, err, "missing cue template")
+	})
+
+	t.Run("properties that read a binding that does not exist", func(t *testing.T) {
+		r := resolverFor(t, sourceInputs{
+			Types:     map[string]string{"cfg": "t"},
+			Templates: map[string]string{"t": `schema: {}` + "\n" + `output: {}`},
+			Bindings:  map[string]map[string]interface{}{"cfg": {"x": "$(source.absent.v)"}},
+		})
+		_, err := r.resolve("cfg")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "resolve source properties for cfg",
+			"the error names the binding whose properties failed, not just the inner cause")
+		require.Equal(t, PhaseFailed, r.statuses["cfg"].Phase)
+	})
+}
+
+// A source whose properties read itself, directly or through another, must be
+// refused rather than recursing until the stack gives out.
+func TestResolveRefusesACircularChain(t *testing.T) {
+	t.Run("direct", func(t *testing.T) {
+		r := resolverFor(t, sourceInputs{
+			Types:     map[string]string{"a": "t"},
+			Templates: map[string]string{"t": "schema: {}\noutput: {}"},
+			Bindings:  map[string]map[string]interface{}{"a": {"x": "$(source.a.v)"}},
+		})
+		_, err := r.resolve("a")
+		require.ErrorContains(t, err, "circular source dependency")
+	})
+
+	t.Run("through another binding", func(t *testing.T) {
+		r := resolverFor(t, sourceInputs{
+			Types:     map[string]string{"a": "t", "b": "t"},
+			Templates: map[string]string{"t": "schema: {}\noutput: {}"},
+			Bindings: map[string]map[string]interface{}{
+				"a": {"x": "$(source.b.v)"},
+				"b": {"x": "$(source.a.v)"},
+			},
+		})
+		_, err := r.resolve("a")
+		require.ErrorContains(t, err, "circular source dependency")
+	})
+}
+
+// Resolving twice returns the first answer rather than fetching again: a source
+// read by a component and its trait must not hit the network twice.
+func TestResolveIsMemoisedWithinOneRender(t *testing.T) {
+	r := resolverFor(t, sourceInputs{})
+	r.resolved["cfg"] = map[string]interface{}{"v": "cached"}
+	got, err := r.resolve("cfg")
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"v": "cached"}, got)
+}
+
+func TestResolveSourceExpressionsOnEmptyAndBadInput(t *testing.T) {
+	pCtx := process.NewContext(process.ContextData{Namespace: "default", CompName: "web", AppName: "app"})
+
+	out, err := ResolveSourceExpressions(pCtx, nil, SurfaceComponent)
+	require.NoError(t, err)
+	require.Nil(t, out, "no properties, no work")
+
+	_, err = ResolveSourceExpressions(pCtx, map[string]interface{}{"ch": make(chan int)}, SurfaceComponent)
+	require.Error(t, err, "properties that cannot be normalised are refused rather than half-resolved")
+}

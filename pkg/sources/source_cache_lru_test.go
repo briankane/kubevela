@@ -188,3 +188,86 @@ func TestLRUSourceCacheSharedAcrossStores(t *testing.T) {
 	assert.Equal(t, "shared", got["region"], "second store should hit the shared Layer 1 entry")
 	assert.Equal(t, 0, delegate2.reads, "shared Layer 1 hit must avoid the second delegate")
 }
+
+// A toucher delegate, to prove Touch is forwarded only when the delegate can
+// take it.
+type touchableCacheStore struct {
+	fakeSourceCacheStore
+	touched  int
+	touchErr error
+}
+
+func (f *touchableCacheStore) Touch(_ context.Context, _ string) error {
+	f.touched++
+	return f.touchErr
+}
+
+// No delegate means source caching is off, and the wrapper must be nil rather
+// than an object that silently swallows every read and write.
+func TestNewLRUSourceCacheStoreIsNilWithoutADelegate(t *testing.T) {
+	assert.Nil(t, NewLRUSourceCacheStore(nil))
+	assert.NotNil(t, NewLRUSourceCacheStore(&fakeSourceCacheStore{}))
+}
+
+// An empty key is not an identity, so it must not become a shared entry that
+// every unkeyed source reads from.
+func TestLRUStoreIgnoresAnEmptyKey(t *testing.T) {
+	delegate := &fakeSourceCacheStore{found: true, data: map[string]interface{}{"a": 1}}
+	s := NewLRUSourceCacheStore(delegate)
+
+	_, _, found, _, err := s.Read(context.Background(), "", time.Minute)
+	assert.NoError(t, err)
+	assert.False(t, found)
+	assert.Equal(t, 0, delegate.reads, "an empty key must not reach the store")
+
+	assert.NoError(t, s.Write(context.Background(), "", "t", map[string]interface{}{"a": 1},
+		velaprocess.SourceCacheWriteMeta{}))
+	assert.Equal(t, 0, delegate.writes)
+}
+
+// The wrapper has to keep offering Touch, or wrapping a store silently loses
+// last-accessed stamping and the GC sweep starts reaping entries in use.
+func TestLRUStoreStaysTouchable(t *testing.T) {
+	wrapped, ok := NewLRUSourceCacheStore(&fakeSourceCacheStore{}).(velaprocess.SourceCacheToucher)
+	assert.True(t, ok, "wrapping must not hide Touch")
+	assert.NotNil(t, wrapped)
+}
+
+func TestLRUStoreTouchForwardsOnlyToATouchingDelegate(t *testing.T) {
+	toucher := func(d velaprocess.SourceCacheStore) velaprocess.SourceCacheToucher {
+		return NewLRUSourceCacheStore(d).(velaprocess.SourceCacheToucher)
+	}
+
+	assert.NoError(t, toucher(&fakeSourceCacheStore{}).Touch(context.Background(), "k"),
+		"a delegate that cannot touch is not an error")
+
+	backing := &touchableCacheStore{}
+	assert.NoError(t, toucher(backing).Touch(context.Background(), "k"))
+	assert.Equal(t, 1, backing.touched)
+
+	assert.NoError(t, toucher(&touchableCacheStore{}).Touch(context.Background(), ""),
+		"an empty key is not touched")
+}
+
+func TestLRUStoreTouchPropagatesTheDelegateError(t *testing.T) {
+	backing := &touchableCacheStore{touchErr: assert.AnError}
+	wrapped := NewLRUSourceCacheStore(backing).(velaprocess.SourceCacheToucher)
+	assert.Error(t, wrapped.Touch(context.Background(), "k"))
+}
+
+// A failed write must not seed the in-memory layer, or the process serves a
+// value the store never accepted.
+func TestLRUStoreDoesNotCacheAFailedWrite(t *testing.T) {
+	sharedSourceLRU.Clear()
+	delegate := &fakeSourceCacheStore{writeErr: assert.AnError}
+	s := NewLRUSourceCacheStore(delegate)
+
+	assert.Error(t, s.Write(context.Background(), "k-failed-write", "t",
+		map[string]interface{}{"a": 1}, velaprocess.SourceCacheWriteMeta{}))
+
+	delegate.writeErr = nil
+	_, _, found, _, err := s.Read(context.Background(), "k-failed-write", time.Minute)
+	assert.NoError(t, err)
+	assert.False(t, found, "nothing was written, so nothing may be served")
+	assert.Equal(t, 1, delegate.reads, "the read had to go to the store")
+}
