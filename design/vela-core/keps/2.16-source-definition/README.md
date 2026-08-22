@@ -87,13 +87,14 @@ Both are identified by the `config.oam.dev/catalog: velacore-config` label, not 
 
 ## Built-in SourceDefinitions
 
-Eight ship with the chart, generated into `charts/vela-core/templates/defwithtemplate/`
+Nine ship with the chart, generated into `charts/vela-core/templates/defwithtemplate/`
 from `vela-templates/definitions/internal/source/`. Most Applications never need to
 author one.
 
 | Type | Reads |
 |---|---|
-| `configmap-source` | A ConfigMap's `data`, optionally from another cluster. Values are strings, as Kubernetes stores them. |
+| `configmap` | A ConfigMap's `data`, optionally from another namespace or another cluster. Values are strings, as Kubernetes stores them. |
+| `configmap-local` | The same, from the Application's own namespace on the cluster being rendered for, and nowhere else. Two definitions rather than one flag, because a parameter cannot be taken away: grant this one and withhold `configmap` to give tenants their own config without giving them everyone's. |
 | `git-file` | A file from a registry configured in this cluster, optionally at a branch or tag. YAML and JSON are parsed; anything else comes back as a string. |
 | `http-get` | A URL. The response is parsed when Content-Type says JSON or YAML; a non-2xx fails the source rather than becoming its value. |
 | `vela-config` | A KubeVela Config: its properties, the ConfigTemplate it satisfies, and references to what that template produced. Output values are never returned, only their references, and a Config marked sensitive is refused. |

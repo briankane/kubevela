@@ -11,6 +11,12 @@ spec:
     - name: platform
       type: configmap
       properties: {name: platform-config, namespace: vela-system}
+    # Same read, no reach: configmap-local takes no namespace and no cluster, so
+    # it can only ever see the Application's own. Grant this one and withhold
+    # `configmap` to give tenants their config without giving them everyone's.
+    - name: locked
+      type: configmap-local
+      properties: {name: app-config}
   components:
     - name: probe
       type: webservice
@@ -29,3 +35,7 @@ spec:
           # ConfigMap values are strings - so this concatenates, not adds.
           - name: REPLICAS_STR
             value: '$("replicas" in source.app.data ? source.app.data["replicas"] : "0")'
+          # Reads the same ConfigMap as TIER above, and could not be pointed
+          # anywhere else even if the author wanted to.
+          - name: TIER_LOCKED
+            value: '$("tier" in source.locked.data ? source.locked.data["tier"] : "unset")'
