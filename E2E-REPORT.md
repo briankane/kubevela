@@ -12,6 +12,10 @@ Two full runs, each with `-ginkgo.flake-attempts=2`, which retries a failed spec
 once. A spec that fails then passes is flaky by construction and is reported as
 such.
 
+The two runs came out within 9 seconds of each other overall - 2658s and 2667s,
+199 specs each - so the totals are stable even though one run failed and the
+other did not.
+
 **Two runs is thin evidence for flakiness.** It finds gross flakiness and
 nothing subtle. A spec that fails one run in twenty will not appear here. Treat
 the flakiness section as "what we caught", not "what exists", and treat the
@@ -25,8 +29,8 @@ were skipped. CI (`makefiles/e2e.mk`) does set it, so CI runs more than this and
 
 | | |
 | --- | --- |
-| Specs measured | 197 (199 passed, 17 skipped) |
-| Total | 2658s (44.3 min) |
+| Specs measured | 199 per run, 17 skipped |
+| Total | 2658s and 2667s (44.3 / 44.4 min) |
 | Mean / median | 13.5s / 6.0s |
 | p90 / max | 41.6s / 185.4s |
 | Specs under 1s | 20 (10%) |
@@ -130,25 +134,90 @@ terms.
 
 ### What was actually observed
 
-**Across both instrumented runs: zero failures, zero retries.** No spec failed
-and then passed. On this machine, on this cluster, the suite is stable.
+**One spec flaked across the two runs**, and how it flaked is more instructive
+than the fact of it:
 
-One flake was seen earlier in the same session, outside the instrumented runs:
+> `Helmchart Adoption & Takeover / Adopt an Existing Vanilla Helm Release /
+> should adopt a pre-existing Helm release`
+> — passed in run 1 (18.2s), failed in run 2 (15.8s) after both attempts.
+
+The spec installs podinfo directly with `helm install --set replicaCount=2`,
+waits for both replicas to be ready, records their pod UIDs, then applies a
+KubeVela Application that adopts the release. It asserts the adoption is zero
+downtime (`helmchart_test.go:670`):
+
+```go
+By("Verifying pods are NOT restarted (zero downtime adoption)")
+Expect(h.countSurvivingPods(originalPodUIDs)).Should(BeNumerically(">=", 2))
+```
+
+**Attempt 1 got 1, not 2.** One of the two original pods did not survive the
+adoption.
+
+That is either a test race or a real intermittent breach of the zero-downtime
+guarantee, and one observation cannot tell you which. It is worth resolving
+rather than retrying, because the assertion is about a promise made to users:
+adopting an existing release should not restart their pods. Note also that the
+check is a bare `Expect`, not an `Eventually` — a pod that was replaced stays
+replaced, so waiting longer would not paper over a genuine breach, but it would
+paper over a mid-rollout snapshot.
+
+### The retry made the diagnosis worse
+
+**Attempt 2 failed with something else entirely:**
+
+```
+Error: INSTALLATION FAILED: release name check failed:
+       cannot reuse a name that is still in use
+```
+
+Attempt 1 had already run `helm install podinfo`. The retry re-ran the spec from
+the top, into a namespace that still held the release, and collided with its own
+leftovers. So the failure that surfaces — the one a reader of CI output sees — is
+a helm state error that points nowhere near the zero-downtime assertion that
+actually failed.
+
+**`-ginkgo.flake-attempts` is not safe for this suite.** Any spec that shells out
+to `helm install` is not idempotent, so retrying it converts a real, specific
+failure into a misleading generic one. Enabling flake attempts in CI to "reduce
+flakiness" would actively cost you the ability to diagnose it. Ginkgo does record
+the original under `AdditionalFailures` in the JSON report, but not in the
+console output.
+
+The other flake seen this session, outside the instrumented runs, was the same
+spec family failing differently:
 
 > `Helmchart valuesFrom / Adoption of an existing vanilla Helm release`
 > failed with `dial tcp: lookup stefanprodan.github.io: no such host`,
 > and passed on its own 19 seconds later.
 
-That is the shape to expect: not a race in the product, a dependency on the
-public internet.
+Two flakes, both in helm adoption specs, one from the public internet and one
+from pod-restart timing.
+
+### Duration variance across the two runs
+
+Specs over 5s, widest spread first:
+
+| Ratio | Run A | Run B | Spec |
+| ---: | ---: | ---: | --- |
+| 1.89x | 33.3s | 63.0s | SourceDefinition e2e / keeps a component auto-updating when its trait reads a different source |
+| 1.77x | 15.6s | 27.7s | PostDispatch Trait tests / PostDispatch trait with component |
+| 1.69x | 7.1s | 12.0s | Helmchart Self-Healing / Helm Uninstall the Release |
+| 1.67x | 44.0s | 73.6s | SourceDefinition e2e / reaps a resource the component no longer renders |
+| 1.59x | 7.5s | 12.0s | Helmchart valuesFrom / Self-healing restores a CM-backed Deployment |
+
+Nothing here is alarming — under 2x on a machine also running a controller from
+source — but the two SourceDefinition specs at the top are the ones whose
+timeouts are worth watching, since a 1.9x spread on a 63s spec is closer to its
+budget than the ratio suggests.
 
 ### Static risk factors, in rough order of concern
 
 **1. Public internet in three files.** `helmchart_test.go` references
 `stefanprodan.github.io` 8 times; `definition_test.go` and
-`definition_revision_test.go` reach `github.com` / `kubevela.io`. This is the
-only flake actually observed all session. A chart-repo mirror, or a
-pre-pulled fixture, removes an entire class of failure.
+`definition_revision_test.go` reach `github.com` / `kubevela.io`. One of the two
+flakes seen this session came from here. A chart-repo mirror, or a pre-pulled
+fixture, removes an entire class of failure.
 
 **2. Moving image tags.** Four images have no pinned tag. A `nginx:latest` that
 changes upstream changes what the suite tests, with no commit and no warning.
@@ -174,16 +243,23 @@ runner.
 
 ## Recommendations, by value over effort
 
-1. **Replace the sleeps in `app_autoupdate_test.go` with `Eventually`.** ~8
+1. **Do not enable `-ginkgo.flake-attempts` in CI.** It is worse than nothing
+   here: specs that shell out to `helm install` are not idempotent, so a retry
+   replaces a specific failure with a generic "name still in use" that points
+   nowhere near the cause.
+2. **Resolve the zero-downtime adoption flake** rather than retrying it. It is
+   an assertion about a promise made to users, and one observation cannot say
+   whether the promise or the test is at fault.
+3. **Replace the sleeps in `app_autoupdate_test.go` with `Eventually`.** ~8
    minutes off the suite, one file, no product change, and it removes a
    both-directions flake.
-2. **Stop depending on the public internet for charts.** The only flake actually
-   observed. Mirror the podinfo chart or vendor a fixture.
-3. **Pin the four moving image tags.** Cheap, and stops the suite's inputs
+4. **Stop depending on the public internet for charts.** Source of the other
+   flake seen this session. Mirror the podinfo chart or vendor a fixture.
+5. **Pin the four moving image tags.** Cheap, and stops the suite's inputs
    drifting without a commit.
-4. **Try `ginkgo -p`.** Most of the suite is waiting, so parallelism is the
+6. **Try `ginkgo -p`.** Most of the suite is waiting, so parallelism is the
    biggest lever. Needs verifying, not assuming — see below.
-5. **Look at the ~58s workflow-failure latency** as a product question rather
+7. **Look at the ~58s workflow-failure latency** as a product question rather
    than a test one.
 
 ## Not verified
@@ -194,7 +270,10 @@ runner.
   claiming a speedup without running it would be a guess.
 - **`KUBEVELA_E2E_AUTH=1` was not set**, so 17 auth specs are unmeasured.
 - **Flakiness evidence is two runs.** Anything rarer than roughly one-in-two will
-  not show up here.
+  not show up here. One spec failed in one of them, which is enough to know it is
+  flaky and nowhere near enough to know how often.
+- **The zero-downtime failure was seen once.** Whether the adoption genuinely
+  restarts a pod sometimes, or the assertion is racing a rollout, is unresolved.
 
 ## Reproducing
 
