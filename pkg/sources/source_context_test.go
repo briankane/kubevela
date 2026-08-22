@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,217 +17,202 @@ limitations under the License.
 package sources
 
 import (
-	"strings"
+	"encoding/json"
 	"testing"
 
-	"github.com/kubevela/workflow/pkg/cue/process"
+	"github.com/stretchr/testify/require"
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
-	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
-	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
-// componentContext stands in for the context a component render would produce -
-// including fields a source is not entitled to.
-// componentValues is what a component render offers a source, flattened the way
-// the bridge flattens it. Built from a real process.Context so the test still
-// exercises the same field names the controller pushes.
-func componentValues(t *testing.T) map[string]interface{} {
-	t.Helper()
-	return contextValuesFor(componentContext(t))
-}
-
-func componentContext(t *testing.T) process.Context {
-	t.Helper()
-	ctx := velaprocess.NewContext(velaprocess.ContextData{
-		Namespace: "team-a",
-		Cluster:   "prod-cluster",
-		AppName:   "checkout",
-		CompName:  "api",
-	})
-	// Pushed by PrepareProcessContext before the render, alongside the type.
-	ctx.PushData(velaprocess.ContextComponentName, "api")
-	ctx.PushData(velaprocess.ContextComponentType, "webservice")
-	ctx.PushData(velaprocess.ContextAppLabels, map[string]string{"team": "platform"})
-	return ctx
-}
-
-func TestSourceContextIsBuiltFromTheRules(t *testing.T) {
-	rules, err := cachekey.LoadRules()
-	if err != nil {
-		t.Fatalf("loading rules: %v", err)
-	}
-	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
-	if err != nil {
-		t.Fatalf("rendering: %v", err)
-	}
-
-	for _, want := range []string{`"cluster":"prod-cluster"`, `"namespace":"team-a"`, `"appName":"checkout"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("expected the context to carry %s; got %s", want, got)
-		}
-	}
-}
-
-// The point of building the context from the rules: a field that would not
-// contribute to the key is absent, so it cannot be read even where admission is
-// disabled. Rejecting it at admission alone would leave that gap open.
-//
-// Everything the registry offers a source-resolving surface is keyed now, so what
-// must still be absent is what the rules do not name at all: internal plumbing for
-// source resolution, and the products of a render that has not happened yet.
-func TestSourceContextOmitsUnreadableFields(t *testing.T) {
-	rules, err := cachekey.LoadRules()
-	if err != nil {
-		t.Fatalf("loading rules: %v", err)
-	}
-	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
-	if err != nil {
-		t.Fatalf("rendering: %v", err)
-	}
-
-	for _, unreadable := range []string{
-		"appSourceCacheStore", "appSourceTemplates", "sourceResolutionStatuses",
-		"artifacts", "outputs", "parameter",
+func TestSplitIndexed(t *testing.T) {
+	for _, tc := range []struct {
+		in           string
+		field, index string
+		indexed      bool
+	}{
+		{"cluster", "cluster", "", false},
+		{"appLabels[team]", "appLabels", "team", true},
+		{"appAnnotations[a.b/c]", "appAnnotations", "a.b/c", true},
+		// A key may itself contain a bracket; the split is on the first [ and the
+		// final ], so the whole key survives.
+		{"appLabels[a[b]]", "appLabels", "a[b]", true},
+		{"appLabels[]", "appLabels", "", true},
+		// Unbalanced is not an index, and must stay a field name rather than
+		// becoming a lookup against a key nobody wrote.
+		{"appLabels[team", "appLabels[team", "", false},
+		{"appLabels]", "appLabels]", "", false},
 	} {
-		if strings.Contains(got, unreadable) {
-			t.Errorf("context.%s is not keyed, so it must not reach a source template; got %s",
-				unreadable, got)
-		}
+		t.Run(tc.in, func(t *testing.T) {
+			f, i, ok := splitIndexed(tc.in)
+			require.Equal(t, tc.field, f)
+			require.Equal(t, tc.index, i)
+			require.Equal(t, tc.indexed, ok)
+		})
 	}
 }
 
-// Consumer identity does reach the template, which is what makes a per-component
-// source possible - its key carries the component, so each component gets its own
-// cache entry.
-func TestSourceContextCarriesConsumerIdentity(t *testing.T) {
-	rules, err := cachekey.LoadRules()
-	if err != nil {
-		t.Fatalf("loading rules: %v", err)
-	}
-	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
-	if err != nil {
-		t.Fatalf("rendering: %v", err)
+// Absent and present-but-empty are different answers, and the identity has to
+// draw the line: a template may branch on it.
+func TestLookupIndexSeparatesAbsentFromEmpty(t *testing.T) {
+	require.Equal(t, "blue", lookupIndex(map[string]string{"team": "blue"}, "team"))
+	require.Equal(t, "blue", lookupIndex(map[string]interface{}{"team": "blue"}, "team"))
+	require.Equal(t, "", lookupIndex(map[string]string{"team": ""}, "team"),
+		"present but empty is an empty string")
+	require.Nil(t, lookupIndex(map[string]string{"other": "x"}, "team"),
+		"absent is nil, which is not the same answer")
+	require.Nil(t, lookupIndex(nil, "team"))
+	require.Nil(t, lookupIndex("not a map", "team"))
+	require.Nil(t, lookupIndex(map[string]int{"team": 1}, "team"),
+		"a map this cannot read contributes nothing rather than guessing")
+}
+
+func TestIdentityContextGathersOnlyWhatKeyInputsName(t *testing.T) {
+	values := map[string]interface{}{
+		"cluster":   "eu-west",
+		"namespace": "prod",
+		"appLabels": map[string]string{"team": "blue", "empty": ""},
 	}
 
-	for _, want := range []string{`"componentName":"api"`, `"componentType":"webservice"`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("expected the source context to carry %s; got %s", want, got)
-		}
+	got := identityContext(values, "cfg", []string{"cluster", "appLabels[team]"})
+	require.Equal(t, map[string]interface{}{
+		"cluster":   "eu-west",
+		"appLabels": map[string]interface{}{"team": "blue"},
+	}, got, "namespace is not keyed, so it must not reach the identity")
+}
+
+func TestIdentityContextIsNilWithoutInputs(t *testing.T) {
+	require.Nil(t, identityContext(map[string]interface{}{"cluster": "x"}, "cfg", nil),
+		"a source keyed on nothing has one entry, so there is no identity to build")
+	require.Nil(t, identityContext(nil, "cfg", []string{}))
+}
+
+// context.name is the binding, not whatever the caller happened to be called.
+// Without this a source read by two components would key on the component and
+// get an entry each.
+func TestIdentityContextNameIsTheBinding(t *testing.T) {
+	got := identityContext(map[string]interface{}{velaprocess.ContextName: "web"},
+		"registry-lookup", []string{velaprocess.ContextName})
+	require.Equal(t, map[string]interface{}{velaprocess.ContextName: "registry-lookup"}, got)
+}
+
+// An absent field still contributes, as nil. Dropping it would make "no label"
+// and "label set to empty" share one cache entry.
+func TestIdentityContextKeepsAbsentAndEmptyApart(t *testing.T) {
+	absent := identityContext(map[string]interface{}{"appLabels": map[string]string{}},
+		"cfg", []string{"appLabels[team]"})
+	empty := identityContext(map[string]interface{}{"appLabels": map[string]string{"team": ""}},
+		"cfg", []string{"appLabels[team]"})
+	require.NotEqual(t, identityJSON(t, absent), identityJSON(t, empty),
+		"absent and empty must not produce the same cache key")
+
+	missingField := identityContext(map[string]interface{}{}, "cfg", []string{"cluster"})
+	require.Equal(t, map[string]interface{}{"cluster": nil}, missingField)
+}
+
+// Two indexed reads of one field share a nested map rather than overwriting.
+func TestIdentityContextKeepsEveryIndexOfAField(t *testing.T) {
+	got := identityContext(
+		map[string]interface{}{"appLabels": map[string]string{"team": "blue", "tier": "gold"}},
+		"cfg", []string{"appLabels[team]", "appLabels[tier]"})
+	require.Equal(t, map[string]interface{}{
+		"appLabels": map[string]interface{}{"team": "blue", "tier": "gold"},
+	}, got)
+}
+
+// The rules make a field either bare or indexed, never both, so these orderings
+// are unreachable today. They are pinned because the failure is silent: whichever
+// read arrived second would replace the first and the identity would stop
+// telling entries apart.
+func TestIdentityContextDoesNotLoseAContributionEitherOrder(t *testing.T) {
+	values := map[string]interface{}{"appLabels": map[string]string{"team": "blue"}}
+
+	indexedFirst := identityContext(values, "cfg", []string{"appLabels[team]", "appLabels"})
+	bareFirst := identityContext(values, "cfg", []string{"appLabels", "appLabels[team]"})
+
+	for name, got := range map[string]map[string]interface{}{
+		"indexed first": indexedFirst, "bare first": bareFirst,
+	} {
+		nested, ok := got["appLabels"].(map[string]interface{})
+		require.True(t, ok, "%s: the field should hold both reads", name)
+		require.Equal(t, "blue", nested["team"], "%s: the indexed read survives", name)
+		require.Contains(t, nested, wholeFieldKey, "%s: the bare read survives too", name)
 	}
 }
 
-// context.name is the spec.sources[] entry, not the component consuming it.
-func TestSourceContextNameIsTheBinding(t *testing.T) {
-	rules, err := cachekey.LoadRules()
-	if err != nil {
-		t.Fatalf("loading rules: %v", err)
-	}
-	got, err := sourceContextFile(componentValues(t), "backstage", rules.Fields())
-	if err != nil {
-		t.Fatalf("rendering: %v", err)
+func identityJSON(t *testing.T, m map[string]interface{}) string {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// The rendered context is CUE the template unifies with, so its shape matters as
+// much as its contents.
+func TestSourceContextFileRendersOnlyTheAllowedFields(t *testing.T) {
+	values := map[string]interface{}{
+		"cluster":               "eu-west",
+		"namespace":             "prod",
+		"secretish":             "should not appear",
+		velaprocess.ContextName: "web",
 	}
 
-	if !strings.Contains(got, `"name":"backstage"`) {
-		t.Errorf("expected context.name to be the binding entry; got %s", got)
+	out, err := sourceContextFile(values, "registry-lookup",
+		[]string{"cluster", "namespace", velaprocess.ContextName})
+	require.NoError(t, err)
+	require.True(t, len(out) > len("context: "))
+	require.Equal(t, "context: ", out[:9], "the template unifies with a context: field")
+
+	var got struct {
+		Cluster   string `json:"cluster"`
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+		Secretish string `json:"secretish"`
 	}
-	if strings.Contains(got, `"name":"api"`) {
-		t.Errorf("context.name is the consuming component, not the binding: %s", got)
+	require.NoError(t, json.Unmarshal([]byte(out[len("context: "):]), &got))
+	require.Equal(t, "eu-west", got.Cluster)
+	require.Equal(t, "prod", got.Namespace)
+	require.Equal(t, "registry-lookup", got.Name,
+		"name comes from the binding, never from the component that read it")
+	require.Empty(t, got.Secretish, "a field the rules do not list must not be rendered")
+}
+
+// A nil value is dropped rather than rendered as null: the template declares
+// these as strings, and unifying a declared string with null fails the render.
+func TestSourceContextFileDropsAbsentFields(t *testing.T) {
+	out, err := sourceContextFile(map[string]interface{}{"cluster": nil}, "cfg", []string{"cluster"})
+	require.NoError(t, err)
+	require.NotContains(t, out, "null")
+}
+
+func TestSourceContextFileFailsOnUnrenderableValue(t *testing.T) {
+	_, err := sourceContextFile(map[string]interface{}{"cluster": make(chan int)}, "cfg", []string{"cluster"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "rendering source context")
+}
+
+// An unrecognised surface must offer everything the rules allow. Failing closed
+// would silently strip the context from any caller that forgot to name itself.
+func TestAvailableFieldsFailsOpenOnAnUnknownSurface(t *testing.T) {
+	fields := []string{"cluster", "namespace", velaprocess.ContextName}
+	require.Equal(t, fields, availableFields(fields, ""))
+	require.Equal(t, fields, availableFields(fields, "not-a-surface"))
+}
+
+// Every field the rules key on is offered by every surface that resolves a
+// source, so narrowing removes nothing today. context.name is kept regardless,
+// since it comes from the binding rather than the caller.
+func TestAvailableFieldsKeepsTheKeyedFieldsOnEverySurface(t *testing.T) {
+	for _, surface := range ConsumableSurfaces {
+		got := availableFields([]string{"cluster", velaprocess.ContextName}, surface)
+		require.Contains(t, got, velaprocess.ContextName, "%s: name is always available", surface)
+		require.Contains(t, got, "cluster", "%s: cluster is keyed, so it must be offered", surface)
 	}
 }
 
-// availableFields narrows what a source may read to what its call site offers.
-//
-// Now that caller identity is keyed this genuinely filters: a component render
-// has no stepName, a workflow step has no componentName. The projection is what
-// keeps a template from reading a field that is simply absent at that call site -
-// admission refuses the binding first, but this is the backstop where admission
-// is disabled.
-func TestAvailableFields(t *testing.T) {
-	rules, err := cachekey.LoadRules()
-	if err != nil {
-		t.Fatalf("loading rules: %v", err)
-	}
-	all := rules.Fields()
-
-	t.Run("each surface keeps its own identity and drops the others", func(t *testing.T) {
-		for _, tc := range []struct {
-			surface  string
-			expect   []string
-			excluded []string
-		}{
-			{SurfaceComponent, []string{"componentName", "componentType"},
-				[]string{"traitType", "stepName", "stepType", "policyName"}},
-			{SurfaceTrait, []string{"componentName", "componentType", "traitType"},
-				[]string{"stepName", "stepType", "policyName"}},
-			{SurfaceWorkflowStep, []string{"stepName", "stepType"},
-				[]string{"componentName", "componentType", "traitType", "policyName"}},
-			{SurfacePolicyRendered, []string{"policyName", "policyType"},
-				[]string{"componentName", "traitType", "stepName"}},
-		} {
-			got := availableFields(all, tc.surface)
-			has := map[string]bool{}
-			for _, f := range got {
-				has[f] = true
-			}
-			for _, f := range tc.expect {
-				if !has[f] {
-					t.Errorf("%s should offer %s; got %v", tc.surface, f, got)
-				}
-			}
-			for _, f := range tc.excluded {
-				if has[f] {
-					t.Errorf("%s has no %s, so it must not reach the template; got %v", tc.surface, f, got)
-				}
-			}
-			// The universal fields survive everywhere, which is what keeps an
-			// ordinary source consumable from any call site.
-			for _, f := range []string{"name", "cluster", "namespace", "appName"} {
-				if !has[f] {
-					t.Errorf("%s dropped the universal field %s; got %v", tc.surface, f, got)
-				}
-			}
-		}
-	})
-
-	t.Run("narrows to what the surface offers", func(t *testing.T) {
-		// policy-app offers no cluster: that render targets none. A source is not
-		// consumable there yet, but the narrowing must be real rather than
-		// accidental, or the machinery proves nothing.
-		got := availableFields(all, "policy-app")
-		for _, field := range got {
-			if field == "cluster" {
-				t.Error("cluster survived narrowing to an application-scoped policy, which has none")
-			}
-		}
-		if len(got) >= len(all) {
-			t.Errorf("expected narrowing on policy-app, got %d of %d", len(got), len(all))
-		}
-	})
-
-	t.Run("context.name always survives", func(t *testing.T) {
-		// It is supplied from the binding, not the caller, so no surface can
-		// withhold it.
-		for _, surface := range append(propexpr.SurfaceNames(), SurfaceComponent) {
-			found := false
-			for _, field := range availableFields(all, surface) {
-				if field == velaprocess.ContextName {
-					found = true
-				}
-			}
-			if !found {
-				t.Errorf("%s: context.name must survive; it comes from the binding", surface)
-			}
-		}
-	})
-
-	// Failing open matters: a caller that forgot to name its surface should
-	// behave as it did before, not silently lose its whole context.
-	t.Run("an unknown or empty surface fails open", func(t *testing.T) {
-		for _, surface := range []string{"", "not-a-surface"} {
-			if got := availableFields(all, surface); len(got) != len(all) {
-				t.Errorf("%q: expected every field, got %d of %d", surface, len(got), len(all))
-			}
-		}
-	})
+func TestSourceContextUsesTheCurrentRules(t *testing.T) {
+	out, err := sourceContext(map[string]interface{}{"cluster": "eu-west"}, "cfg", SurfaceComponent)
+	require.NoError(t, err)
+	require.Contains(t, out, `"name":"cfg"`)
+	require.Contains(t, out, `"cluster":"eu-west"`)
 }
