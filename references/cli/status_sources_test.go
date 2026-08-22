@@ -19,6 +19,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -249,4 +250,108 @@ func TestFormatConsumerType(t *testing.T) {
 	// A reader whose type is unset is still a component, and that half is worth
 	// keeping - better than an empty parenthetical.
 	r.Equal("component", formatConsumerType(common.SourceConsumer{DefinitionKind: "component"}))
+}
+
+// The table is what an operator actually reads, and it was the half of this
+// command with no test at all.
+func TestPrintAppSourcesTable(t *testing.T) {
+	r := require.New(t)
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(sourcesFixture()).Build()
+
+	var buf bytes.Buffer
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "", &buf))
+	out := buf.String()
+
+	r.Contains(out, "Sources of prod/checkout")
+	for _, col := range []string{"NAME", "TYPE", "PHASE", "AUTO-UPDATE", "CLUSTERS", "EXPIRES", "STORAGE KEY"} {
+		r.Contains(out, col)
+	}
+	r.Contains(out, "registry")
+	r.Contains(out, "cm-local-a1")
+	r.Contains(out, "Consumed by:")
+	for _, col := range []string{"SOURCE", "READER", "CLUSTER", "NAMESPACE", "PROPERTY", "SOURCE ATTR", "VALUE"} {
+		r.Contains(out, col)
+	}
+	r.Contains(out, "nginx:1.27", "a scalar value is shown unquoted")
+	r.Contains(out, "eu-west", "each placement is its own row")
+}
+
+// A binding whose key varies has an entry per key, and the binding's own columns
+// are printed once so it reads as one thing with several entries.
+func TestPrintAppSourcesTableGroupsResolutions(t *testing.T) {
+	r := require.New(t)
+	app := sourcesFixture()
+	app.Status.Sources[0].Resolutions = append(app.Status.Sources[0].Resolutions,
+		common.SourceResolution{StorageKey: "cm-eu-b2", Clusters: []string{"eu-west"}, Phase: "Failed",
+			Message: "dial tcp: i/o timeout"})
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(app).Build()
+
+	var buf bytes.Buffer
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "", &buf))
+	out := buf.String()
+
+	r.Contains(out, "cm-local-a1")
+	r.Contains(out, "cm-eu-b2")
+	r.Equal(1, strings.Count(out, "configmap@v2"),
+		"the binding's own columns are printed once, against its first entry")
+	r.Contains(out, "dial tcp: i/o timeout",
+		"a resolution message is printed in full below the table, not truncated into a column")
+}
+
+// A message is the only place a false auto-update says which of the gate, the
+// binding and a publishVersion pin won, so it must not be lost.
+func TestPrintAppSourcesTablePrintsTheBindingMessage(t *testing.T) {
+	r := require.New(t)
+	app := sourcesFixture()
+	app.Status.Sources[0].Message = "auto-update is off: pinned by publishVersion"
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(app).Build()
+
+	var buf bytes.Buffer
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "", &buf))
+	r.Contains(buf.String(), "pinned by publishVersion")
+}
+
+// Three different nothings, each with its own sentence. "No sources" and "not
+// resolved yet" are not the same situation and an operator acts differently on
+// them.
+func TestPrintAppSourcesDistinguishesTheEmptyCases(t *testing.T) {
+	r := require.New(t)
+	build := func(app *v1beta1.Application) string {
+		cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(app).Build()
+		var buf bytes.Buffer
+		r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "", &buf))
+		return buf.String()
+	}
+
+	none := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: "checkout", Namespace: "prod"}}
+	r.Contains(build(none), "declares no sources")
+
+	unresolved := &v1beta1.Application{
+		ObjectMeta: metav1.ObjectMeta{Name: "checkout", Namespace: "prod"},
+		Spec:       v1beta1.ApplicationSpec{Sources: []v1beta1.ApplicationSource{{Name: "registry"}}},
+	}
+	r.Contains(build(unresolved), "has not resolved them yet")
+
+	unread := sourcesFixture()
+	unread.Status.Sources[0].ConsumedBy = nil
+	r.Contains(build(unread), "nothing has consumed a source value")
+}
+
+// A binding with no resolutions still gets a row: it is declared, and silence
+// would read as though it did not exist.
+func TestPrintAppSourcesTableShowsABindingWithNoEntries(t *testing.T) {
+	r := require.New(t)
+	app := sourcesFixture()
+	app.Status.Sources[0].Resolutions = nil
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).WithObjects(app).Build()
+
+	var buf bytes.Buffer
+	r.NoError(printAppSources(cli, "prod", "checkout", Filter{}, "", &buf))
+	r.Contains(buf.String(), "registry")
+}
+
+func TestPrintAppSourcesReportsALookupFailure(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(velacommon.Scheme).Build()
+	var buf bytes.Buffer
+	require.Error(t, printAppSources(cli, "prod", "absent", Filter{}, "", &buf))
 }
