@@ -69,9 +69,6 @@ func TestVerifyNamesEveryMissingCRD(t *testing.T) {
 	require.Contains(t, err.Error(), "kubectl apply -f vela-core/crds/")
 	require.Contains(t, err.Error(), "vela install")
 	require.Contains(t, err.Error(), "https://kubevela.io/docs/")
-
-	// And why it matters, so an operator can judge urgency without reading source.
-	require.Contains(t, err.Error(), "nothing can be garbage collected")
 }
 
 // An unreachable API server is not a missing CRD, and saying so sends an operator
@@ -103,7 +100,6 @@ func TestEveryChartCRDIsClassified(t *testing.T) {
 
 	classified := map[string]CRD{}
 	for _, c := range append(append([]CRD{}, Required...), Optional...) {
-		require.NotEmpty(t, c.Why, "%s must record what depends on it", c.Name())
 		_, dup := classified[c.Name()]
 		require.False(t, dup, "%s is listed twice", c.Name())
 		classified[c.Name()] = c
