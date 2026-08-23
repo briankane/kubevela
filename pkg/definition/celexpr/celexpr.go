@@ -228,8 +228,11 @@ func EvalProperty(env *cel.Env, raw string, in map[string]interface{}) (interfac
 	if err != nil {
 		return nil, err
 	}
+	// Nothing to evaluate, but `$$(` still has to collapse: a value mixing an
+	// escape with an expression already did, through the joining path below, and
+	// the two halves have to agree.
 	if !parsed.HasExpr() {
-		return raw, nil
+		return parsed.Literal(), nil
 	}
 	// A lone expression substitutes as its own type.
 	if expr, ok := parsed.SoleExpr(); ok {

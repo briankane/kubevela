@@ -35,7 +35,8 @@ func resolveSourceNode(node interface{}, resolver *sourceResolver) (interface{},
 }
 
 // evaluateSourceExpression substitutes $(...) expressions in a property value.
-// A value with no delimiter comes back byte-identical.
+// A value with no delimiter comes back byte-identical; one holding only `$$(`
+// escapes comes back with them collapsed, which is the point of writing them.
 //
 // Resolution happens here rather than at admission so that reading a source
 // through an expression drives the resolution and the consumed-value recording
@@ -47,7 +48,7 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 		return nil, err
 	}
 	if !parsed.HasExpr() {
-		return raw, nil
+		return parsed.Literal(), nil
 	}
 
 	resolved := map[string]map[string]interface{}{}

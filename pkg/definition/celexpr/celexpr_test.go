@@ -23,6 +23,7 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/google/cel-go/cel"
+	"github.com/stretchr/testify/require"
 	apiservercel "k8s.io/apiserver/pkg/cel"
 )
 
@@ -240,5 +241,28 @@ func TestInterpolation(t *testing.T) {
 			continue
 		}
 		t.Logf("%-46s -> %#v", tc.raw, got)
+	}
+}
+
+// The escape has to collapse whether or not the same value also carries an
+// expression. It used to do so only in the mixed case, because the no-expression
+// branch returned the raw string, which meant an author who escaped
+// $(SERVICE_HOST) shipped $$(SERVICE_HOST) and Kubernetes rendered the literal
+// text $(SERVICE_HOST) instead of expanding it.
+func TestEvalPropertyCollapsesEscapesWithoutAnExpression(t *testing.T) {
+	env, err := cel.NewEnv()
+	require.NoError(t, err)
+
+	for _, tc := range []struct{ name, raw, want string }{
+		{"escape alone", "$$(SERVICE_HOST)", "$(SERVICE_HOST)"},
+		{"two escapes", "$$(HOST):$$(PORT)", "$(HOST):$(PORT)"},
+		{"in a command", "echo $$(hostname)", "echo $(hostname)"},
+		{"plain value untouched", "nginx:1.25.0", "nginx:1.25.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := EvalProperty(env, tc.raw, map[string]interface{}{})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
 	}
 }

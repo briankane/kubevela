@@ -84,6 +84,28 @@ func (p Parsed) HasExpr() bool {
 	return false
 }
 
+// Literal renders the value's text with no expressions evaluated, which is what
+// a value with nothing to evaluate should become.
+//
+// Not the raw string: `$$(` is the escape for a literal `$(`, so a value holding
+// only escapes has still asked for something. Returning the raw string there
+// left `$$(` in the object, and `$$(` is exactly what an author writes to keep
+// Kubernetes' own `$(VAR)` expansion working - so the escape silently broke the
+// thing it existed to protect. A value with no delimiter comes back
+// byte-identical either way.
+func (p Parsed) Literal() string {
+	if len(p.Fragments) == 1 && !p.Fragments[0].IsExpr() {
+		return p.Fragments[0].Text
+	}
+	var b strings.Builder
+	for _, f := range p.Fragments {
+		if !f.IsExpr() {
+			b.WriteString(f.Text)
+		}
+	}
+	return b.String()
+}
+
 // Whole reports whether the value is a single expression and nothing else.
 //
 // This is what decides the substituted value's type. A whole value is replaced

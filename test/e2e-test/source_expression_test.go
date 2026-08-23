@@ -24,6 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -863,6 +864,63 @@ output: {
 			HaveKeyWithValue("policy-owner", "payments"),
 			HaveKeyWithValue("policy-where", "expr-policy--"+namespaceName),
 		))
+	})
+
+	// $$( is the escape for a literal $(, and it is the whole migration path: an
+	// operator escapes $(SERVICE_HOST) before enabling expressions so Kubernetes
+	// keeps expanding it. It used to collapse only when the same value also held
+	// a real expression, because the no-expression branch returned the raw string
+	// - so an escaped value shipped as $$(SERVICE_HOST), which Kubernetes renders
+	// as the literal text $(SERVICE_HOST) rather than expanding it. Silently, at
+	// runtime, in the properties the escape existed to protect.
+	It("collapses the $$( escape with and without an expression present", func() {
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "expr-escape", Namespace: namespaceName},
+			Spec: v1beta1.ApplicationSpec{
+				Components: []oamcomm.ApplicationComponent{{
+					Name: "web", Type: "webservice",
+					Properties: &runtime.RawExtension{Raw: []byte(`{
+  "image":"nginx:1.25.0",
+  "port":80,
+  "cmd":["sh","-c","echo $$(hostname)"],
+  "env":[
+    {"name":"ALONE","value":"$$(SERVICE_HOST)"},
+    {"name":"PAIR","value":"$$(SERVICE_HOST):$$(SERVICE_PORT)"},
+    {"name":"MIXED","value":"$$(SERVICE_HOST) in $(context.appName)"},
+    {"name":"PLAIN","value":"no delimiter here"}
+  ]
+}`)},
+				}},
+			},
+		}
+		createApp(app)
+
+		// The rendered spec is the whole assertion, so this waits for the
+		// Deployment rather than for the Application to go healthy: `cmd` runs
+		// echo and exits, so the workload never becomes ready and the phase stays
+		// at runningWorkflow. Waiting for health here would test the container's
+		// lifetime, not the substitution.
+		Eventually(func() (map[string]string, error) {
+			deploy := &appsv1.Deployment{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: namespaceName, Name: "web"}, deploy); err != nil {
+				return nil, err
+			}
+			if len(deploy.Spec.Template.Spec.Containers) == 0 {
+				return nil, fmt.Errorf("deployment has no containers")
+			}
+			c := deploy.Spec.Template.Spec.Containers[0]
+			out := map[string]string{"cmd": strings.Join(c.Command, " ")}
+			for _, e := range c.Env {
+				out[e.Name] = e.Value
+			}
+			return out, nil
+		}, 90*time.Second, time.Second).Should(Equal(map[string]string{
+			"cmd":   "sh -c echo $(hostname)",
+			"ALONE": "$(SERVICE_HOST)",
+			"PAIR":  "$(SERVICE_HOST):$(SERVICE_PORT)",
+			"MIXED": "$(SERVICE_HOST) in expr-escape",
+			"PLAIN": "no delimiter here",
+		}))
 	})
 
 	Context("rejects at admission what would fail at render", func() {
