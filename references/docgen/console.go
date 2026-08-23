@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kubevela/pkg/cue/cuex"
+
 	"github.com/fatih/color"
 
 	"github.com/olekukonko/tablewriter"
@@ -60,6 +62,12 @@ type ConsoleReference struct {
 	ParseReference
 	TableName   string             `json:"tableName"`
 	TableObject *tablewriter.Table `json:"tableObject"`
+	// Compiler overrides the default cuex compiler used to extract CUE parameter
+	// values. Set it to providers.DefaultCompiler.Get() for definitions that
+	// import vela-specific packages (vela/registry, vela/velaconfig and the
+	// rest); the upstream default knows none of them and the extraction fails
+	// with "parameter not exist". MarkdownReference carries the same field.
+	Compiler *cuex.Compiler
 }
 
 // BaseOpenAPIV3Template is Standard OpenAPIV3 Template
@@ -100,7 +108,7 @@ func (ref *ConsoleReference) GenerateCUETemplateProperties(capability *types.Cap
 
 	// TODO: Accept context parameter for proper cancellation/timeout support
 	// Currently using Background() to avoid breaking changes to function
-	cueValue, err := common.GetCUExParameterValue(context.Background(), capability.CueTemplate)
+	cueValue, err := common.GetCUExParameterValue(context.Background(), capability.CueTemplate, ref.Compiler)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to retrieve `parameters` value from %s with err: %w", capName, err)
 	}
