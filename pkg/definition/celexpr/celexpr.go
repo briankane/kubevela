@@ -254,6 +254,40 @@ func EvalProperty(env *cel.Env, raw string, in map[string]interface{}) (interfac
 	return b.String(), nil
 }
 
+// EvalPropertyTyped is EvalProperty for an activation whose values already carry
+// the types their schema declares.
+//
+// The `source` subtree is only width-converted; everything else, `context`
+// included, is read the way EvalProperty reads it. That split is the point: a
+// resolved source has a schema to consult, so guessing an int from a float64
+// with no fractional part would undo the answer, while a context value comes
+// from Go and needs the widths lined up either way.
+func EvalPropertyTyped(env *cel.Env, raw string, in map[string]interface{}) (interface{}, error) {
+	prepared := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		if k == "source" {
+			prepared[k] = normaliseWidths(v)
+			continue
+		}
+		prepared[k] = v
+	}
+	return EvalProperty(env, raw, typedActivation(prepared))
+}
+
+// typedActivation marks an activation as already typed, so Eval's own
+// normalisation leaves the `source` subtree alone.
+func typedActivation(in map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		if k == "source" {
+			out[k] = alreadyTyped{value: v}
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // EnvForSurface builds an environment from the shared context registry.
 //
 // The registry stays the single declaration of what each call site offers; this

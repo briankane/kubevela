@@ -400,6 +400,10 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	if err != nil {
 		klog.Warningf("read source cache failed for %s: %v", sourceName, err)
 	} else if found {
+		// A stored value has been through JSON. Retyping it against the schema
+		// is what makes a cache hit and a fresh resolution mean the same thing
+		// to an expression.
+		cached = r.typeToSchema(sourceTemplate, cached)
 		if !stale {
 			r.resolved[sourceName] = cached
 			r.setSourceStatus(sourceName, sourceType, PhaseResolved, "", cachePolicy.Key, formatExpiry(cacheExpiresAt))

@@ -101,7 +101,9 @@ func celEvalProperty(raw string, resolved map[string]map[string]interface{},
 		sources[name] = values
 	}
 	in["source"] = sources
-	return celexpr.EvalProperty(env, raw, in)
+	// Typed: resolved values were retyped against their source's schema, so
+	// guessing an int from a float64 with no fractional part would undo it.
+	return celexpr.EvalPropertyTyped(env, raw, in)
 }
 
 func lookupMapPath(data map[string]interface{}, path string) (interface{}, bool) {

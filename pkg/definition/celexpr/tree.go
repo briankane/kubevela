@@ -111,20 +111,20 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// normaliseNumbers turns an integral float64 into an int64 throughout a value.
+// normaliseNumbers turns an integral float64 into an int64 throughout a value,
+// on top of the width conversions normaliseWidths makes.
 //
-// Resolved source values reach here having been through JSON, where every number
-// decodes as float64 and the int/float distinction is lost. CEL has no mixed
-// numeric overloads, so `source.cfg.port + 1000` on a JSON-decoded 8080 fails at
-// evaluation with "no such overload" - an error that names neither the field nor
-// the cause, on an expression that type-checked cleanly at admission because the
-// schema said `port: int`.
+// It is the reading for a value with no schema to consult. Such a value has been
+// through JSON, where every number decodes as float64 and the int/float
+// distinction is lost. CEL has no mixed numeric overloads, so
+// `source.cfg.port + 1000` on a JSON-decoded 8080 fails at evaluation with "no
+// such overload" - an error that names neither the field nor the cause, on an
+// expression that type-checked cleanly at admission because the schema said
+// `port: int`.
 //
-// Restoring the distinction from the value is the best available reading: a JSON
-// number with no fractional part was an integer in the schema that produced it.
-// The cost is a float-typed field holding exactly 2.0, which becomes an int and
-// then needs double() before it can be used in float arithmetic. That is the rarer
-// case by a wide margin, and unlike the alternative it is expressible.
+// A JSON number with no fractional part was an integer in the schema that
+// produced it, more often than not. Where the schema is actually available the
+// guess is unnecessary and wrong: see normaliseWidths.
 func normaliseNumbers(v interface{}) interface{} {
 	switch t := v.(type) {
 	case map[string]interface{}:
@@ -139,14 +139,49 @@ func normaliseNumbers(v interface{}) interface{} {
 			out[i] = normaliseNumbers(child)
 		}
 		return out
+	case alreadyTyped:
+		return t.value
 	case float64:
 		if t == math.Trunc(t) && !math.IsInf(t, 0) {
 			return int64(t)
 		}
 		return t
+	default:
+		return normaliseWidths(v)
+	}
+}
+
+// alreadyTyped wraps a value whose numeric types are the ones its schema
+// declares, so normaliseNumbers unwraps it rather than guessing over it.
+type alreadyTyped struct{ value interface{} }
+
+// normaliseWidths converts Go's numeric widths to the two CEL has overloads for,
+// and nothing else.
+//
+// For a value already typed by a schema, that is the whole job: an int is an
+// int and a float is a float, and guessing from the value would only undo the
+// answer. Guessing turned a field declared `float` holding exactly 2.0 into an
+// int, so `ratio * 2.0` type-checked as double at admission and then failed at
+// render with "no such overload".
+func normaliseWidths(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(t))
+		for k, child := range t {
+			out[k] = normaliseWidths(child)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, child := range t {
+			out[i] = normaliseWidths(child)
+		}
+		return out
 	case float32:
-		return normaliseNumbers(float64(t))
+		return float64(t)
 	case int:
+		return int64(t)
+	case int32:
 		return int64(t)
 	default:
 		return v
