@@ -353,3 +353,34 @@ func sourceTestScheme(t *testing.T) *runtime.Scheme {
 	require.NoError(t, corev1.AddToScheme(sc))
 	return sc
 }
+
+// The live SourceDefinition's ConfigTemplate took precedence over the one the
+// render actually used. A published ApplicationRevision resolves against the
+// definition it snapshotted, so once the live definition's schema changed the
+// entry was parsed against the wrong template and ParseConfig rejected it.
+//
+// meta.TemplateName is derived from the schema the resolver had in hand, so it
+// is the version-accurate answer; the live lookup remains the fallback for a
+// resolver that reported none.
+func TestConfigStoreWritePrefersTheTemplateTheRenderUsed(t *testing.T) {
+	t.Run("the render's template wins", func(t *testing.T) {
+		f := &fakeConfigFactory{}
+		s := storeWith(f, nil, map[string]string{"http-get": "http-get-live"})
+
+		require.NoError(t, s.Write(context.Background(), "http-get-abc", "http-get",
+			map[string]interface{}{"body": "hi"},
+			velaprocess.SourceCacheWriteMeta{TemplateName: "http-get-pinned"}))
+		require.Equal(t, "http-get-pinned", f.parsed.Template.Name)
+		require.Equal(t, "http-get-pinned",
+			f.written.Secret.Annotations[apitypes.AnnotationConfigTemplate])
+	})
+
+	t.Run("the live lookup is the fallback", func(t *testing.T) {
+		f := &fakeConfigFactory{}
+		s := storeWith(f, nil, map[string]string{"http-get": "http-get-live"})
+
+		require.NoError(t, s.Write(context.Background(), "http-get-abc", "http-get",
+			map[string]interface{}{"body": "hi"}, velaprocess.SourceCacheWriteMeta{}))
+		require.Equal(t, "http-get-live", f.parsed.Template.Name)
+	})
+}

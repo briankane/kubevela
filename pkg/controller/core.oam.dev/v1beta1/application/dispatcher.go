@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 
 	"k8s.io/klog/v2"
 
@@ -123,6 +124,22 @@ type manifestDispatcher struct {
 
 func (h *AppHandler) generateDispatcher(appRev *v1beta1.ApplicationRevision, previousAppRev *v1beta1.ApplicationRevision, readyWorkload *unstructured.Unstructured, readyTraits []*unstructured.Unstructured, overrideNamespace string, annotations map[string]string,
 	autoUpdating map[string]struct{}) ([]*manifestDispatcher, error) {
+	// One read of the live baseline for the whole component. Every stage compares
+	// against it, so a stage running after the default one - which is where the
+	// new baseline is stamped - still sees the change that stage acted on.
+	var (
+		baselineOnce sync.Once
+		baseline     map[string]string
+	)
+	baselineFor := func(ctx context.Context, cluster string) func() map[string]string {
+		return func() map[string]string {
+			baselineOnce.Do(func() {
+				baseline = liveResolvedSourceHashes(ctx, h.Client, cluster, readyWorkload)
+			})
+			return baseline
+		}
+	}
+
 	dispatcherGenerator := func(options DispatchOptions) *manifestDispatcher {
 		assembleManifestFn := func(skipApplyWorkload bool) (bool, []*unstructured.Unstructured) {
 			manifests := options.Traits
@@ -175,11 +192,11 @@ func (h *AppHandler) generateDispatcher(appRev *v1beta1.ApplicationRevision, pre
 			sourceValuesChanged := h.autoUpdatingSourceChanged(ctx, sourceRefreshInputs{
 				component: comp.Name,
 				cluster:   clusterName,
-				workload:  options.Workload,
+				baseline:  baselineFor(ctx, clusterName),
 				hashes:    resolvedHashes,
 				updating:  autoUpdating,
 				consumes:  consumesSource,
-				trackable: !skipWorkload && options.Workload != nil,
+				trackable: !comp.SkipApplyWorkload && readyWorkload != nil,
 				settled:   isHealth && err == nil,
 			})
 
@@ -346,12 +363,17 @@ func componentPropertiesChanged(comp *appfile.Component, appRev *v1beta1.Applica
 type sourceRefreshInputs struct {
 	component string
 	cluster   string
-	workload  *unstructured.Unstructured
-	hashes    map[string]string
-	updating  map[string]struct{}
-	consumes  bool
+	// baseline reads the hashes stamped on the live workload. Shared across the
+	// stages of one component so the default stage's stamp cannot hide the
+	// change from a stage that runs after it.
+	baseline func() map[string]string
+	hashes   map[string]string
+	updating map[string]struct{}
+	consumes bool
 	// trackable is false when a trait manages the workload, so there is nowhere
-	// to stamp a baseline.
+	// to stamp a baseline. It is a property of the component, not of the stage:
+	// only the default stage carries the workload, but a trait dispatched before
+	// or after it reads the same sources and has to follow them too.
 	trackable bool
 	// settled is false while the component is unhealthy or its health check
 	// errored, when it is being dispatched for another reason anyway.
@@ -370,7 +392,7 @@ type sourceRefreshInputs struct {
 // refresh, not this: the workflow only reaches here because the pin was bumped,
 // and a bump that did not pick up current source values would be a pin that
 // freezes the wrong thing.
-func (h *AppHandler) autoUpdatingSourceChanged(ctx context.Context, in sourceRefreshInputs) bool {
+func (h *AppHandler) autoUpdatingSourceChanged(_ context.Context, in sourceRefreshInputs) bool {
 	if !in.consumes || len(in.updating) == 0 {
 		return false
 	}
@@ -383,7 +405,10 @@ func (h *AppHandler) autoUpdatingSourceChanged(ctx context.Context, in sourceRef
 	if !in.settled {
 		return false
 	}
-	live := liveResolvedSourceHashes(ctx, h.Client, in.cluster, in.workload)
+	live := map[string]string{}
+	if in.baseline != nil {
+		live = in.baseline()
+	}
 	for _, name := range changedSources(in.hashes, live) {
 		if _, ok := in.updating[name]; ok {
 			return true

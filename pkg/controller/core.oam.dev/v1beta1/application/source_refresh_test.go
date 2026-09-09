@@ -83,8 +83,10 @@ func TestAutoUpdatingSourceChangedComparesAgainstTheLiveWorkload(t *testing.T) {
 		}
 		return sourceRefreshInputs{
 			component: "web", cluster: "local",
-			workload: live(`{"cfg":"aaa","other":"bbb"}`),
-			hashes:   current, updating: updating,
+			baseline: func() map[string]string {
+				return map[string]string{"cfg": "aaa", "other": "bbb"}
+			},
+			hashes: current, updating: updating,
 			consumes: true, trackable: true, settled: true,
 		}
 	}
@@ -104,4 +106,33 @@ func TestAutoUpdatingSourceChangedComparesAgainstTheLiveWorkload(t *testing.T) {
 	require.False(t, h.autoUpdatingSourceChanged(ctx,
 		in(map[string]string{"cfg": "aaa", "other": "zzz"}, "cfg")),
 		"a binding that did not opt in changed, which is not this function's business")
+}
+
+// Only the default stage carries the workload, so a trait dispatched before or
+// after it had nothing to compare against and never followed a source it reads.
+// Every stage of one component shares a single read of the live baseline, taken
+// before the default stage stamps the new one over it.
+func TestAutoUpdatingSourceChangedSharesOneBaselineAcrossStages(t *testing.T) {
+	reads := 0
+	shared := func() map[string]string {
+		reads++
+		return map[string]string{"cfg": "aaa"}
+	}
+	in := sourceRefreshInputs{
+		component: "web", cluster: "local",
+		baseline: shared,
+		hashes:   map[string]string{"cfg": "zzz"},
+		updating: map[string]struct{}{"cfg": {}},
+		consumes: true, trackable: true, settled: true,
+	}
+
+	h := &AppHandler{Client: fake.NewClientBuilder().Build()}
+	ctx := context.Background()
+
+	// Pre, default and post: each stage asks, each gets the same answer.
+	for stage := 0; stage < 3; stage++ {
+		require.True(t, h.autoUpdatingSourceChanged(ctx, in),
+			"every stage must see the change, not only the one holding the workload")
+	}
+	require.Equal(t, 3, reads, "the caller memoises; this asserts each stage does ask")
 }

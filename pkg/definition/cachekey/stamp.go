@@ -300,6 +300,16 @@ func Verify(definitionName, template, rulesHash string) error {
 		return err
 	}
 
+	// The stamped policy settles what the key must be, so a definition already
+	// committed and re-applied by GitOps keeps passing. It does not settle what
+	// the resolver will supply: sourceContext is built from the current rules,
+	// so a field those rules no longer key is one the template reads and the
+	// render cannot provide. Saying so here beats a definition that is admitted
+	// and then loses a context value.
+	if err := readsSurviveCurrentRules(template, rules); err != nil {
+		return err
+	}
+
 	file, err := cueparser.ParseFile("-", template, cueparser.ParseComments)
 	if err != nil {
 		return fmt.Errorf("parse cue template: %w", err)
@@ -342,6 +352,28 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// readsSurviveCurrentRules reports a context read the stamped policy allows and
+// the current one does not.
+//
+// A no-op while one policy is embedded, which is the point: it fails on the
+// change that introduces a second and drops a field, rather than leaving that
+// to be noticed at render.
+func readsSurviveCurrentRules(template string, stamped *Rules) error {
+	current, err := LoadRules()
+	if err != nil {
+		return err
+	}
+	if current.Hash == stamped.Hash {
+		return nil
+	}
+	if _, err := Infer(template, current); err != nil {
+		return fmt.Errorf("this definition was generated against cache-key rules %s and reads context "+
+			"the current rules %s do not key, so the resolver could not supply it: %w",
+			stamped.Hash, current.Hash, err)
+	}
+	return nil
 }
 
 // rulesFor loads the named policy, or the current one when nothing is named.

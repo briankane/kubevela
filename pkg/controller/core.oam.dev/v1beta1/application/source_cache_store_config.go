@@ -112,9 +112,15 @@ func (s *configAPISourceCacheStore) Read(ctx context.Context, cacheKey string, t
 }
 
 func (s *configAPISourceCacheStore) Write(ctx context.Context, cacheKey, sourceType string, data map[string]interface{}, meta velaprocess.SourceCacheWriteMeta) error {
-	templateName := s.templateBySource[sourceType]
+	// The template the render actually used, not the one the live definition
+	// points at now. A published ApplicationRevision resolves against the
+	// definition it snapshotted, so once the live definition's schema changed
+	// the entry was parsed against the wrong template and ParseConfig rejected
+	// it. The live lookup stays as the fallback for a resolver that reported
+	// none - a source with no schema to name one.
+	templateName := meta.TemplateName
 	if templateName == "" {
-		templateName = meta.TemplateName
+		templateName = s.templateBySource[sourceType]
 	}
 	template := config.NamespacedName{}
 	if templateName != "" {
