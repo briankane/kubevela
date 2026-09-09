@@ -128,11 +128,16 @@ subjects:
 # Namespaced rather than added to the :manager ClusterRole, because cache entries
 # only ever live here and cluster-wide secret write is a much larger grant than
 # this needs.
+#
+# The namespace is systemDefinitionNamespace, not the release namespace: cache
+# entries sit with the definitions they are bookkeeping about, which is what the
+# controller writes to. Binding this in the release namespace instead left every
+# cache write, touch and sweep Forbidden wherever the two differ.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "kubevela.fullname" . }}:source-cache
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "systemDefinitionNamespace" . }}
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -142,7 +147,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "kubevela.fullname" . }}:source-cache
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "systemDefinitionNamespace" . }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

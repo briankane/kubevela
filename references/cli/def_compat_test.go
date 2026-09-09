@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	oamcommon "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
@@ -597,4 +598,23 @@ func TestPrintAppCompatReport(t *testing.T) {
 			t.Error("expected traits to be omitted when empty")
 		}
 	})
+}
+
+// A DefinitionRevision names its kind as the short DefinitionType - Component,
+// Trait, Source - while a live definition names the full kind. Without Source
+// in this map, an incompatible live SourceDefinition and its revision landed in
+// two separate report entries instead of being grouped as one definition.
+func TestNormaliseDefKindCoversEveryDefinitionType(t *testing.T) {
+	for shortName, kind := range map[string]string{
+		"Component":    v1beta1.ComponentDefinitionKind,
+		"Trait":        v1beta1.TraitDefinitionKind,
+		"WorkflowStep": v1beta1.WorkflowStepDefinitionKind,
+		"Policy":       v1beta1.PolicyDefinitionKind,
+		"Source":       v1beta1.SourceDefinitionKind,
+	} {
+		require.Equal(t, kind, normaliseDefKind(shortName))
+	}
+	// An unrecognised kind is passed through, since a live definition already
+	// carries the full name.
+	require.Equal(t, v1beta1.SourceDefinitionKind, normaliseDefKind(v1beta1.SourceDefinitionKind))
 }

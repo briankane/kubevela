@@ -31,6 +31,8 @@ import (
 
 	apitypes "github.com/oam-dev/kubevela/apis/types"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+
+	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
 func cacheSecret(name string, props map[string]interface{}, created time.Time, anns map[string]string) *corev1.Secret {
@@ -38,7 +40,7 @@ func cacheSecret(name string, props map[string]interface{}, created time.Time, a
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              name,
-			Namespace:         sourceCacheNamespace,
+			Namespace:         CacheNamespace(),
 			CreationTimestamp: metav1.NewTime(created),
 			Annotations:       anns,
 		},
@@ -70,14 +72,14 @@ func TestSecretStoreReadMisses(t *testing.T) {
 	})
 	t.Run("an entry with no payload", func(t *testing.T) {
 		s := secretStore(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Name: "empty", Namespace: sourceCacheNamespace}})
+			Name: "empty", Namespace: CacheNamespace()}})
 		_, _, found, _, err := s.Read(context.Background(), "empty", time.Minute)
 		require.NoError(t, err)
 		require.False(t, found, "an entry with nothing in it cannot be served")
 	})
 	t.Run("a corrupt payload is an error, not a silent miss", func(t *testing.T) {
 		bad := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "bad", Namespace: sourceCacheNamespace},
+			ObjectMeta: metav1.ObjectMeta{Name: "bad", Namespace: CacheNamespace()},
 			Data:       map[string][]byte{sourceCacheDataKey: []byte("{not json")},
 		}
 		_, _, found, _, err := secretStore(bad).Read(context.Background(), "bad", time.Minute)
@@ -138,7 +140,7 @@ func TestSecretStoreWriteCreatesAndUpdates(t *testing.T) {
 		t.Helper()
 		got := &corev1.Secret{}
 		require.NoError(t, cli.Get(ctx, ktypes.NamespacedName{
-			Namespace: sourceCacheNamespace, Name: "k"}, got))
+			Namespace: CacheNamespace(), Name: "k"}, got))
 		return got
 	}
 
@@ -172,7 +174,7 @@ func TestSecretStoreWriteCreatesAndUpdates(t *testing.T) {
 
 	t.Run("an entry with nil maps is filled in rather than panicking", func(t *testing.T) {
 		bare := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Name: "k", Namespace: sourceCacheNamespace}}
+			Name: "k", Namespace: CacheNamespace()}}
 		cli := fake.NewClientBuilder().WithObjects(bare).Build()
 		require.NoError(t, NewSecretSourceCacheStore(cli).Write(ctx, "k", "http-get",
 			map[string]interface{}{"body": "hi"}, velaprocess.SourceCacheWriteMeta{}))
@@ -213,7 +215,7 @@ func TestSecretStoreTouch(t *testing.T) {
 		require.NoError(t, toucher(cli).Touch(ctx, "k"))
 		got := &corev1.Secret{}
 		require.NoError(t, cli.Get(ctx, ktypes.NamespacedName{
-			Namespace: sourceCacheNamespace, Name: "k"}, got))
+			Namespace: CacheNamespace(), Name: "k"}, got))
 		require.NotEmpty(t, got.Annotations[sourceCacheAccessedKey])
 	})
 
@@ -224,8 +226,20 @@ func TestSecretStoreTouch(t *testing.T) {
 		require.NoError(t, toucher(cli).Touch(ctx, "k"))
 		got := &corev1.Secret{}
 		require.NoError(t, cli.Get(ctx, ktypes.NamespacedName{
-			Namespace: sourceCacheNamespace, Name: "k"}, got))
+			Namespace: CacheNamespace(), Name: "k"}, got))
 		require.Equal(t, recent, got.Annotations[sourceCacheAccessedKey],
 			"throttled, or every stale serve writes to the apiserver")
 	})
+}
+
+// The cache namespace was a fixed "vela-system" while the chart granted access
+// in the release namespace, so an install with a non-default
+// systemDefinitionNamespace had every cache write, touch and sweep Forbidden.
+func TestCacheNamespaceFollowsTheConfiguredSystemNamespace(t *testing.T) {
+	restore := oam.SystemDefinitionNamespace
+	defer func() { oam.SystemDefinitionNamespace = restore }()
+
+	require.Equal(t, restore, CacheNamespace())
+	oam.SystemDefinitionNamespace = "vela-core"
+	require.Equal(t, "vela-core", CacheNamespace())
 }

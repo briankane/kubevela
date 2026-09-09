@@ -35,9 +35,11 @@ spec:
         parameter: {
         	// +usage=Name of the addon, as `vela addon list` reports it
         	name: string
+        	// +usage=Namespace addon Applications are installed into. Set it where the chart was installed with a non-default systemDefinitionNamespace.
+        	namespace: *"vela-system" | string
         }
 
-        _addonNamespace: "vela-system"
+        _addonNamespace: parameter.namespace
 
         _apps: kube.#List & {
         	$params: {

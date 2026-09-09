@@ -46,7 +46,7 @@ func (s *secretSourceCacheStore) Read(ctx context.Context, cacheKey string, ttl 
 		return nil, false, false, time.Time{}, nil
 	}
 	secret := &corev1.Secret{}
-	if err := s.client.Get(ctx, ktypes.NamespacedName{Namespace: sourceCacheNamespace, Name: cacheKey}, secret); err != nil {
+	if err := s.client.Get(ctx, ktypes.NamespacedName{Namespace: CacheNamespace(), Name: cacheKey}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, false, false, time.Time{}, nil
 		}
@@ -82,14 +82,14 @@ func (s *secretSourceCacheStore) Write(ctx context.Context, cacheKey, sourceType
 		return err
 	}
 	now := time.Now().Format(time.RFC3339)
-	key := ktypes.NamespacedName{Namespace: sourceCacheNamespace, Name: cacheKey}
+	key := ktypes.NamespacedName{Namespace: CacheNamespace(), Name: cacheKey}
 	secret := &corev1.Secret{}
 	if err := s.client.Get(ctx, key, secret); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
 		secret = &corev1.Secret{}
-		secret.Namespace = sourceCacheNamespace
+		secret.Namespace = CacheNamespace()
 		secret.Name = cacheKey
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Labels = map[string]string{}
@@ -125,7 +125,7 @@ func (s *secretSourceCacheStore) Touch(ctx context.Context, cacheKey string) err
 		return nil
 	}
 	secret := &corev1.Secret{}
-	if err := s.client.Get(ctx, ktypes.NamespacedName{Namespace: sourceCacheNamespace, Name: cacheKey}, secret); err != nil {
+	if err := s.client.Get(ctx, ktypes.NamespacedName{Namespace: CacheNamespace(), Name: cacheKey}, secret); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 	if !ShouldTouchSourceCache(secret.Annotations, time.Now()) {

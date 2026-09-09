@@ -36,7 +36,6 @@ import (
 )
 
 const (
-	sourceCacheNamespace   = "vela-system"
 	sourceCacheSyncAtKey   = apitypes.AnnotationConfigLastSyncAt
 	sourceCacheAccessedKey = apitypes.AnnotationConfigLastAccessed
 )
@@ -90,7 +89,7 @@ func sourceTemplateRefsByType(ctx context.Context, cli client.Client, af *appfil
 }
 
 func (s *configAPISourceCacheStore) Read(ctx context.Context, cacheKey string, ttl time.Duration) (map[string]interface{}, bool, bool, time.Time, error) {
-	cfg, err := s.factory.GetConfig(ctx, sourceCacheNamespace, cacheKey, false)
+	cfg, err := s.factory.GetConfig(ctx, sources.CacheNamespace(), cacheKey, false)
 	if err != nil {
 		if errors.Is(err, config.ErrConfigNotFound) {
 			return nil, false, false, time.Time{}, nil
@@ -121,13 +120,13 @@ func (s *configAPISourceCacheStore) Write(ctx context.Context, cacheKey, sourceT
 	if templateName != "" {
 		template = config.NamespacedName{
 			Name:      templateName,
-			Namespace: sourceCacheNamespace,
+			Namespace: sources.CacheNamespace(),
 		}
 	}
 	cfg, err := s.factory.ParseConfig(ctx, template, config.Metadata{
 		NamespacedName: config.NamespacedName{
 			Name:      cacheKey,
-			Namespace: sourceCacheNamespace,
+			Namespace: sources.CacheNamespace(),
 		},
 		Properties: data,
 	})
@@ -147,7 +146,7 @@ func (s *configAPISourceCacheStore) Write(ctx context.Context, cacheKey, sourceT
 	stampMeta.TemplateName = templateName
 	sources.ApplySourceCacheMetadata(cfg.Secret, sourceType, stampMeta)
 	cfg.Secret.Annotations[sourceCacheSyncAtKey] = time.Now().UTC().Format(time.RFC3339)
-	return s.factory.CreateOrUpdateConfig(ctx, cfg, sourceCacheNamespace)
+	return s.factory.CreateOrUpdateConfig(ctx, cfg, sources.CacheNamespace())
 }
 
 // Touch advances the last-accessed marker on a stale cache entry that is being
@@ -157,7 +156,7 @@ func (s *configAPISourceCacheStore) Touch(ctx context.Context, cacheKey string) 
 		return nil
 	}
 	secret := &corev1.Secret{}
-	if err := s.client.Get(ctx, client.ObjectKey{Namespace: sourceCacheNamespace, Name: cacheKey}, secret); err != nil {
+	if err := s.client.Get(ctx, client.ObjectKey{Namespace: sources.CacheNamespace(), Name: cacheKey}, secret); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 	if !sources.ShouldTouchSourceCache(secret.Annotations, time.Now()) {

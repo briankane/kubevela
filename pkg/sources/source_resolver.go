@@ -36,6 +36,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/cue/render"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
+	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
 // ResolveSourceExpressions substitutes $(...) expressions in a properties blob.
@@ -147,7 +148,6 @@ const (
 	// the render context, for a caller that has one.
 	SourceResolutionStatusKey = "sourceResolutionStatuses"
 
-	sourceCacheNamespace      = "vela-system"
 	sourceCacheTTL            = 15 * time.Minute
 	sourceCacheSyncAtKey      = apitypes.AnnotationConfigLastSyncAt
 	sourceCacheAccessedKey    = apitypes.AnnotationConfigLastAccessed
@@ -157,6 +157,19 @@ const (
 	sourceCachePolicyUseStale = "use-stale"
 	sourceCachePolicyFail     = "fail"
 )
+
+// CacheNamespace is where cache entries live: with the definitions they are
+// bookkeeping about, which is the namespace the controller was told to use
+// rather than a fixed "vela-system". An install with a non-default
+// systemDefinitionNamespace would otherwise write to a namespace its own chart
+// granted it no access to, and every cache write, touch and sweep would be
+// Forbidden.
+//
+// Read through a function rather than copied into a constant: the flag that
+// sets it is parsed after package initialisation.
+func CacheNamespace() string {
+	return oam.SystemDefinitionNamespace
+}
 
 // SourceCompiler evaluates a source's CUE template. Satisfied by
 // *cuex.Compiler.

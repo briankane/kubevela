@@ -32,6 +32,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/logging"
+	"github.com/oam-dev/kubevela/pkg/oam"
 	webhookutils "github.com/oam-dev/kubevela/pkg/webhook/utils"
 )
 
@@ -145,6 +146,33 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	// wrong on its own terms, and says so now rather than when someone binds it.
 	if err := ValidateSurfaceCompatibility(cueTemplate, consumable); err != nil {
 		logger.WithStep("validate-surface-compatibility").WithError(err).Error(err, "SourceDefinition cannot resolve on the surfaces it declares")
+		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
+	}
+
+	// spec.version is what makes each version a distinct DefinitionRevision, so
+	// a malformed one is accepted here and fails when reconciliation tries to
+	// parse it, leaving the definition unusable. The other definition kinds
+	// validate it at admission; sources do the same.
+	if obj.Spec.Version != "" {
+		if err := webhookutils.ValidateSemanticVersion(obj.Spec.Version); err != nil {
+			logger.WithStep("validate-version").WithError(err).Error(err, "SourceDefinition version does not follow semantic versioning format (x.y.z)", "version", obj.Spec.Version)
+			return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
+		}
+	}
+
+	revisionName := obj.GetAnnotations()[oam.AnnotationDefinitionRevisionName]
+	if revisionName != "" {
+		defRevName := fmt.Sprintf("%s-v%s", obj.Name, revisionName)
+		if err := webhookutils.ValidateDefinitionRevision(ctx, h.Client, obj,
+			client.ObjectKey{Namespace: obj.Namespace, Name: defRevName}); err != nil {
+			logger.WithStep("validate-revision").WithError(err).Error(err, "SourceDefinition revision conflicts with an existing revision or has an invalid format", "revisionName", revisionName)
+			return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
+		}
+	}
+
+	// Both name the revision, and they can disagree.
+	if err := webhookutils.ValidateMultipleDefVersionsNotPresent(obj.Spec.Version, revisionName, obj.Kind); err != nil {
+		logger.WithStep("validate-version-conflict").WithError(err).Error(err, "SourceDefinition sets both spec.version and the revision annotation", "specVersion", obj.Spec.Version, "revisionName", revisionName)
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 

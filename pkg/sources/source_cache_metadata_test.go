@@ -103,7 +103,7 @@ func TestSecretStoreWriteStampsMetadata(t *testing.T) {
 	assert.NoError(t, err)
 
 	got := &corev1.Secret{}
-	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Namespace: sourceCacheNamespace, Name: "source-cache-x"}, got))
+	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Namespace: CacheNamespace(), Name: "source-cache-x"}, got))
 	assert.Equal(t, "10m0s", got.Annotations[apitypes.AnnotationConfigTTL])
 	assert.Equal(t, "source-img-source-abcd1234", got.Annotations[apitypes.AnnotationConfigTemplate])
 	assert.Equal(t, "img-source", got.Labels[apitypes.LabelSourceDefinitionName])
@@ -118,7 +118,7 @@ func TestSecretStoreTouchThrottled(t *testing.T) {
 	recent := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "source-cache-recent",
-			Namespace: sourceCacheNamespace,
+			Namespace: CacheNamespace(),
 			Annotations: map[string]string{
 				apitypes.AnnotationConfigTTL:          "10m",
 				apitypes.AnnotationConfigLastAccessed: time.Now().Add(-1 * time.Minute).Format(time.RFC3339),
@@ -129,7 +129,7 @@ func TestSecretStoreTouchThrottled(t *testing.T) {
 	old := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "source-cache-old",
-			Namespace: sourceCacheNamespace,
+			Namespace: CacheNamespace(),
 			Annotations: map[string]string{
 				apitypes.AnnotationConfigTTL:          "10m",
 				apitypes.AnnotationConfigLastAccessed: time.Now().Add(-30 * time.Minute).Format(time.RFC3339),
@@ -142,13 +142,13 @@ func TestSecretStoreTouchThrottled(t *testing.T) {
 	before := recent.Annotations[apitypes.AnnotationConfigLastAccessed]
 	assert.NoError(t, store.Touch(context.Background(), "source-cache-recent"))
 	gotRecent := &corev1.Secret{}
-	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Namespace: sourceCacheNamespace, Name: "source-cache-recent"}, gotRecent))
+	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Namespace: CacheNamespace(), Name: "source-cache-recent"}, gotRecent))
 	assert.Equal(t, before, gotRecent.Annotations[apitypes.AnnotationConfigLastAccessed], "recent marker should not be rewritten")
 
 	oldBefore := old.Annotations[apitypes.AnnotationConfigLastAccessed]
 	assert.NoError(t, store.Touch(context.Background(), "source-cache-old"))
 	gotOld := &corev1.Secret{}
-	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Namespace: sourceCacheNamespace, Name: "source-cache-old"}, gotOld))
+	assert.NoError(t, cli.Get(context.Background(), types.NamespacedName{Namespace: CacheNamespace(), Name: "source-cache-old"}, gotOld))
 	assert.NotEqual(t, oldBefore, gotOld.Annotations[apitypes.AnnotationConfigLastAccessed], "stale marker should be advanced")
 
 	// Missing entry is a no-op, not an error.

@@ -169,7 +169,7 @@ func TestResolveSourceUsesStaleCacheOnRefreshFailure(t *testing.T) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cacheKey,
-			Namespace: sourceCacheNamespace,
+			Namespace: CacheNamespace(),
 			Annotations: map[string]string{
 				sourceCacheSyncAtKey: time.Now().Add(-time.Hour).Format(time.RFC3339),
 			},
@@ -214,7 +214,7 @@ func TestResolveSourceFailsOnStaleRefreshFailureWhenPolicyFail(t *testing.T) {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cacheKey,
-			Namespace: sourceCacheNamespace,
+			Namespace: CacheNamespace(),
 			Annotations: map[string]string{
 				sourceCacheSyncAtKey: time.Now().Add(-time.Hour).Format(time.RFC3339),
 			},

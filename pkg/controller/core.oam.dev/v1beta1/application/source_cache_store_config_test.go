@@ -36,6 +36,8 @@ import (
 	"github.com/oam-dev/kubevela/pkg/config/writer"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/oam"
+
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // fakeConfigFactory implements config.Factory. Only the three methods this store
@@ -209,7 +211,7 @@ func TestConfigStoreWriteStampsIdentityAndSyncTime(t *testing.T) {
 		map[string]interface{}{"body": "hi"}, velaprocess.SourceCacheWriteMeta{})
 	require.NoError(t, err)
 	require.NotNil(t, f.written)
-	require.Equal(t, sourceCacheNamespace, f.writeNS)
+	require.Equal(t, sources.CacheNamespace(), f.writeNS)
 	require.Equal(t, "http-get-a1b2", f.parsed.Template.Name,
 		"the template registered for this source type is the one used")
 	require.NotEmpty(t, f.written.Secret.Annotations[sourceCacheSyncAtKey],
@@ -239,7 +241,7 @@ func TestConfigStoreWritePropagatesParseFailure(t *testing.T) {
 func TestConfigStoreTouch(t *testing.T) {
 	entry := func(accessed string) *corev1.Secret {
 		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-			Name: "k", Namespace: sourceCacheNamespace, Annotations: map[string]string{}}}
+			Name: "k", Namespace: sources.CacheNamespace(), Annotations: map[string]string{}}}
 		if accessed != "" {
 			s.Annotations[sourceCacheAccessedKey] = accessed
 		}
@@ -249,7 +251,7 @@ func TestConfigStoreTouch(t *testing.T) {
 		t.Helper()
 		got := &corev1.Secret{}
 		require.NoError(t, cli.Get(context.Background(),
-			client.ObjectKey{Namespace: sourceCacheNamespace, Name: "k"}, got))
+			client.ObjectKey{Namespace: sources.CacheNamespace(), Name: "k"}, got))
 		return got
 	}
 

@@ -281,6 +281,8 @@ func normaliseDefKind(kind string) string {
 		return v1beta1.WorkflowStepDefinitionKind
 	case "Policy":
 		return v1beta1.PolicyDefinitionKind
+	case "Source":
+		return v1beta1.SourceDefinitionKind
 	}
 	return kind
 }

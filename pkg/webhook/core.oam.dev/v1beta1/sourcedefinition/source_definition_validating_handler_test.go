@@ -26,10 +26,12 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	oamcommon "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
 // A template that clears every gate the handler runs, so a denial in these
@@ -44,7 +46,10 @@ func handler(t *testing.T) *ValidatingHandler {
 	t.Helper()
 	sc := runtime.NewScheme()
 	require.NoError(t, v1beta1.SchemeBuilder.AddToScheme(sc))
-	return &ValidatingHandler{Decoder: admission.NewDecoder(sc)}
+	return &ValidatingHandler{
+		Decoder: admission.NewDecoder(sc),
+		Client:  fake.NewClientBuilder().WithScheme(sc).Build(),
+	}
 }
 
 func sourceDefRequest(t *testing.T, name, template string, op admissionv1.Operation) admission.Request {
@@ -215,6 +220,53 @@ output: {host: "example.com"}
 	// that sends none is indistinguishable from one. Validate rather than assume.
 	t.Run("denied when no old object was sent", func(t *testing.T) {
 		resp := handler(t).Handle(context.Background(), req)
+		require.False(t, resp.Allowed)
+	})
+}
+
+// spec.version is what makes each version a distinct DefinitionRevision, so a
+// malformed one is accepted and then fails when reconciliation parses it,
+// leaving the definition unusable with nothing to say why. Every other
+// definition kind validates it at admission.
+func TestHandleValidatesTheDeclaredVersion(t *testing.T) {
+	build := func(version string, annotations map[string]string) admission.Request {
+		def := &v1beta1.SourceDefinition{
+			TypeMeta: metav1.TypeMeta{Kind: "SourceDefinition", APIVersion: "core.oam.dev/v1beta1"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "probe-source", Namespace: "vela-system", Annotations: annotations,
+			},
+			Spec: v1beta1.SourceDefinitionSpec{
+				Version:   version,
+				Schematic: &oamcommon.Schematic{CUE: &oamcommon.CUE{Template: validSourceTemplate}},
+			},
+		}
+		raw, err := json.Marshal(def)
+		require.NoError(t, err)
+		req := sourceDefRequest(t, "probe-source", validSourceTemplate, admissionv1.Create)
+		req.Object = runtime.RawExtension{Raw: raw}
+		return req
+	}
+
+	t.Run("a semantic version is admitted", func(t *testing.T) {
+		resp := handler(t).Handle(context.Background(), build("1.2.3", nil))
+		require.True(t, resp.Allowed, "%v", resp.Result)
+	})
+
+	t.Run("no version at all is admitted", func(t *testing.T) {
+		resp := handler(t).Handle(context.Background(), build("", nil))
+		require.True(t, resp.Allowed, "%v", resp.Result)
+	})
+
+	t.Run("a malformed version is denied", func(t *testing.T) {
+		resp := handler(t).Handle(context.Background(), build("v1", nil))
+		require.False(t, resp.Allowed)
+		require.Contains(t, resp.Result.Message, "requestUID=test-uid")
+	})
+
+	// Both name the revision, and they can disagree.
+	t.Run("a version and a revision annotation together are denied", func(t *testing.T) {
+		resp := handler(t).Handle(context.Background(),
+			build("1.2.3", map[string]string{oam.AnnotationDefinitionRevisionName: "1"}))
 		require.False(t, resp.Allowed)
 	})
 }
