@@ -61,7 +61,10 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 			return nil, rerr
 		}
 		for _, ref := range refs {
-			if !ref.IsSource() {
+			// A bare `source` names no binding to resolve. Admission refuses it,
+			// and reaching here means it came from somewhere admission does not
+			// cover.
+			if !ref.IsSource() || len(ref.Path) == 0 {
 				continue
 			}
 			name := ref.Path[0]

@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/oam-dev/kubevela/pkg/sources"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateSourceStorage(t *testing.T) {
@@ -392,4 +394,15 @@ func TestPluraliseNamesEverySurface(t *testing.T) {
 			t.Errorf("%s has no plural form", sources.ConsumableSurfaces[i])
 		}
 	}
+}
+
+// `schema: {...}` passed the non-empty check while declaring nothing, so the
+// definition was admitted and then could not be read from: admission has no
+// path to validate a read against, and close(schema) admits no output field.
+func TestValidateSourceSchemaRefusesAnOpenSchemaThatDeclaresNothing(t *testing.T) {
+	require.Error(t, ValidateSourceSchema("schema: {...}\noutput: {anything: \"x\"}\n"))
+	require.Error(t, ValidateSourceSchema("schema: {}\noutput: {}\n"))
+	// Open alongside a declaration is redundant, not wrong.
+	require.NoError(t, ValidateSourceSchema("schema: {host: string, ...}\noutput: {host: \"x\"}\n"))
+	require.NoError(t, ValidateSourceSchema("schema: {host: string}\noutput: {host: \"x\"}\n"))
 }

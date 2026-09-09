@@ -72,6 +72,11 @@ func canBeAbsent(ref Reference, schemas map[string]cue.Value) (bool, error) {
 		return len(ref.Path) > 1, nil
 	}
 
+	if len(ref.Path) == 0 {
+		// A bare `source` names no binding. Root validation refuses it; there is
+		// nothing here to judge against.
+		return false, nil
+	}
 	binding := ref.Path[0]
 	schema, ok := schemas[binding]
 	if !ok {

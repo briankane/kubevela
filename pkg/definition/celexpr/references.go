@@ -63,11 +63,14 @@ func References(env *cel.Env, expr string) ([]propexpr.Reference, error) {
 	for _, n := range celast.MatchDescendants(nav, func(e celast.NavigableExpr) bool {
 		// Only the outermost select of a chain: descending would also yield the
 		// partial prefixes, so `source.cfg.meta.region` would report `source.cfg`
-		// and `source.cfg.meta` alongside it.
-		if e.Kind() != celast.SelectKind && e.Kind() != celast.CallKind {
-			return false
-		}
-		return true
+		// and `source.cfg.meta` alongside it. dropPrefixes removes what does get
+		// through.
+		//
+		// A bare identifier counts. `$(source)` names no binding and reads the
+		// whole map, and reporting nothing for it meant root validation had
+		// nothing to refuse: it passed on a surface that offers no source at all
+		// and was then evaluated against an empty map.
+		return e.Kind() == celast.SelectKind || e.Kind() == celast.CallKind || e.Kind() == celast.IdentKind
 	}) {
 		root, path, ok := chain(n)
 		if !ok || (root != "source" && root != "context") {

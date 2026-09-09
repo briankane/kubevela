@@ -158,19 +158,25 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 		if sourceType == "" {
 			continue
 		}
-		// A SourceDefinition may restrict where it can be consumed from.
-		if ref.Surface == sources.SurfaceComponent || ref.Surface == sources.SurfaceTrait {
-			surfaces, err := h.loadConsumableFrom(ctx, app.Namespace, sourceType, consumableFromCache, app.GetAnnotations())
-			if err != nil {
-				errs = append(errs, field.Invalid(ref.FieldPath, ref.Path,
-					fmt.Sprintf("failed to load SourceDefinition %q: %v", sourceType, err)))
-				continue
-			}
-			if !sourcedefinition.SurfaceAllowed(surfaces, ref.Surface) {
-				errs = append(errs, field.Invalid(ref.FieldPath, ref.Path,
-					fmt.Sprintf("SourceDefinition %q declares consumableFrom %v and cannot be consumed from a %s", sourceType, surfaces, ref.Surface)))
-				continue
-			}
+		// A SourceDefinition may restrict where it can be consumed from. That
+		// restriction holds wherever the value is consumed, not only in a
+		// component or a trait: a workflow step or a rendered policy reading a
+		// component-only source is exactly what consumableFrom refuses.
+		//
+		// A chained read is consumed wherever the outer binding is, so it is
+		// judged against those surfaces rather than against "source".
+		consumedAt := []string{ref.Surface}
+		if ref.SourceIndex >= 0 {
+			consumedAt = effective[ref.SourceName]
+		}
+		if refused, surfaces, err := h.refusedSurface(ctx, app, sourceType, consumableFromCache, consumedAt); err != nil {
+			errs = append(errs, field.Invalid(ref.FieldPath, ref.Path,
+				fmt.Sprintf("failed to load SourceDefinition %q: %v", sourceType, err)))
+			continue
+		} else if refused != "" {
+			errs = append(errs, field.Invalid(ref.FieldPath, ref.Path,
+				fmt.Sprintf("SourceDefinition %q declares consumableFrom %v and cannot be consumed from a %s", sourceType, surfaces, refused)))
+			continue
 		}
 
 		// A source resolves in its call site's context, so it can only be consumed
@@ -210,7 +216,9 @@ func (h *ValidatingHandler) ValidateSources(ctx context.Context, app *v1beta1.Ap
 		if validator == nil {
 			continue
 		}
-		if !ref.OpaquePath && !validator.HasPath(ref.Path) {
+		// An empty path is a read of the binding entire, which is in contract by
+		// definition: there is no field to look up, only the whole output.
+		if ref.Path != "" && !ref.OpaquePath && !validator.HasPath(ref.Path) {
 			fault(ref, ref.Path,
 				fmt.Sprintf("path %q is not declared in schema of SourceDefinition %q", ref.Path, sourceType))
 			continue
@@ -277,6 +285,22 @@ func (h *ValidatingHandler) validateSourceInputs(ctx context.Context, app *v1bet
 		}
 	}
 	return errs
+}
+
+// refusedSurface names the first surface a source is consumed from that its
+// consumableFrom does not allow, or "" when every one of them is allowed.
+func (h *ValidatingHandler) refusedSurface(ctx context.Context, app *v1beta1.Application, sourceType string,
+	cache map[string][]string, consumedAt []string) (string, []string, error) {
+	surfaces, err := h.loadConsumableFrom(ctx, app.Namespace, sourceType, cache, app.GetAnnotations())
+	if err != nil {
+		return "", nil, err
+	}
+	for _, surface := range consumedAt {
+		if !sourcedefinition.SurfaceAllowed(surfaces, surface) {
+			return surface, surfaces, nil
+		}
+	}
+	return "", surfaces, nil
 }
 
 // inputLeaf is a single scalar value within a properties blob, addressed by its

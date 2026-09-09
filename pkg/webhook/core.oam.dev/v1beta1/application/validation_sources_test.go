@@ -26,6 +26,7 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -1428,4 +1429,85 @@ parameter: {
 			assert.Len(t, errs, tc.expectedErrs, "errors: %v", errs)
 		})
 	}
+}
+
+// consumableFrom was enforced only where the read was found in a component or a
+// trait, so a definition restricted to components could still be read from a
+// workflow step or a rendered policy without a word.
+//
+// A whole-binding read - $(source.img) rather than $(source.img.image) - was
+// skipped by the collector entirely, because its path is the binding name and
+// nothing else. That skipped every check in the loop, not only this one: the
+// binding did not even have to be declared.
+func TestValidateSourcesHonoursConsumableFromEverywhere(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = v1beta1.AddToScheme(scheme)
+
+	componentOnly := &v1beta1.SourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "component-only", Namespace: "default"},
+		Spec: v1beta1.SourceDefinitionSpec{
+			Schematic: &common.Schematic{CUE: &common.CUE{Template: `
+consumableFrom: ["component"]
+schema: {image: string}
+$internal: {key: "component-only", keyInputs: []}
+output: {image: parameter.image}
+parameter: {image: string}
+`}},
+		},
+	}
+	source := []v1beta1.ApplicationSource{
+		{Name: "img", Type: "component-only", Properties: rawJSON(`{"image":"nginx:1.25.0"}`)},
+	}
+	handlerFor := func() *ValidatingHandler {
+		return &ValidatingHandler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(componentOnly).Build()}
+	}
+
+	t.Run("rejected from a workflow step", func(t *testing.T) {
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: source,
+				Workflow: &v1beta1.Workflow{
+					Steps: []wfv1alpha1.WorkflowStep{{
+						WorkflowStepBase: wfv1alpha1.WorkflowStepBase{
+							Name: "s", Type: "deploy",
+							Properties: rawJSON(`{"image":"$(source.img.image)"}`),
+						},
+					}},
+				},
+			},
+		}
+		errs := handlerFor().ValidateSources(context.Background(), app)
+		require.NotEmpty(t, errs, "expected the workflow-step binding to be rejected")
+		require.Contains(t, errs.ToAggregate().Error(), "cannot be consumed from")
+	})
+
+	t.Run("a whole-binding read of an undeclared source is caught", func(t *testing.T) {
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: source,
+				Components: []common.ApplicationComponent{
+					{Name: "web", Type: "webservice", Properties: rawJSON(`{"all":"$(source.nosuch)"}`)},
+				},
+			},
+		}
+		errs := handlerFor().ValidateSources(context.Background(), app)
+		require.NotEmpty(t, errs, "expected the undeclared binding to be rejected")
+		require.Contains(t, errs.ToAggregate().Error(), "not declared in spec.sources")
+	})
+
+	t.Run("a whole-binding read of a declared source is still fine", func(t *testing.T) {
+		app := &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: source,
+				Components: []common.ApplicationComponent{
+					{Name: "web", Type: "webservice", Properties: rawJSON(`{"all":"$(source.img)"}`)},
+				},
+			},
+		}
+		errs := handlerFor().ValidateSources(context.Background(), app)
+		require.Empty(t, errs, "%v", errs)
+	})
 }

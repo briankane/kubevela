@@ -88,7 +88,12 @@ func collectSourceRefs(raw *runtime.RawExtension, basePath *field.Path, sourceIn
 				continue
 			}
 			for _, read := range reads {
-				if !read.IsSource() || len(read.Path) < 2 {
+				// The binding name is all a reference needs. A whole-binding
+				// read - $(source.cfg) rather than $(source.cfg.host) - has
+				// nothing after it, and skipping those skipped every check the
+				// loop makes: the binding did not have to be declared, come
+				// earlier in a chain, or allow the surface reading it.
+				if !read.IsSource() || len(read.Path) < 1 {
 					continue
 				}
 				refs = append(refs, sourceReference{

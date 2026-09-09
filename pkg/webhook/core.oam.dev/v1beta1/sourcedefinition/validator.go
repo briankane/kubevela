@@ -95,8 +95,18 @@ func ValidateSourceSchema(template string) error {
 	if !ok {
 		return fmt.Errorf("schema: must be a struct declaring the fields an Application may read")
 	}
-	if len(structLit.Elts) == 0 {
-		return fmt.Errorf("schema: must declare at least one field; an empty schema exposes nothing to a source read")
+	// `...` is an element but not a declaration. A schema that is only open
+	// declares nothing, so admission has no path to check a read against and
+	// close(schema) at resolution admits no output field either: the definition
+	// is accepted and then cannot be read from at all.
+	declared := 0
+	for _, elt := range structLit.Elts {
+		if _, ok := elt.(*ast.Field); ok {
+			declared++
+		}
+	}
+	if declared == 0 {
+		return fmt.Errorf("schema: must declare at least one field; an empty or open schema exposes nothing to a source read")
 	}
 	return nil
 }
