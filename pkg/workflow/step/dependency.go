@@ -79,6 +79,14 @@ func LoadExternalPoliciesForWorkflow(ctx context.Context, cli client.Client, app
 				}
 			}
 			for _, policyName := range props.Policies {
+				// A name that is still an expression names nothing yet. Strict
+				// decoding accepts it - it is a string, whatever it holds - so
+				// looking it up here reported "external policy
+				// $(source.cfg.name) not found" and failed the appfile before
+				// the step that resolves it ever ran.
+				if propexpr.HasExpression(policyName) {
+					continue
+				}
 				if _, found := policyMap[policyName]; !found {
 					po := &v1alpha1.Policy{}
 					if err := cli.Get(ctx, types2.NamespacedName{Namespace: appNs, Name: policyName}, po); err != nil {

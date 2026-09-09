@@ -19,6 +19,8 @@ package cachekey
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // These cases are the frozen behaviour of the current rules. Changing them means
@@ -348,4 +350,29 @@ func TestStampedRulesHashHasNotMoved(t *testing.T) {
 			"and update this constant. If they did not, something edited "+
 			"pkg/definition/cachekey/rules/ by accident", got, stamped)
 	}
+}
+
+// The resolver hands a template the whole appLabels map, but inference recorded
+// nothing for a read of it: only an indexed read produced a dimension. Two
+// Applications differing only in their labels therefore resolved to one cache
+// key and shared a result that was computed from one of them.
+func TestInferRefusesAWholeMapRead(t *testing.T) {
+	rules, err := LoadRules()
+	require.NoError(t, err)
+
+	for _, tc := range []struct{ name, template string }{
+		{"interpolated", "schema: {v: string}\noutput: {v: \"\\(context.appLabels)\"}\n"},
+		{"bound to a hidden field", "schema: {v: string}\n_l: context.appAnnotations\noutput: {v: \"x\"}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Infer(tc.template, rules)
+			require.ErrorContains(t, err, "literal key")
+		})
+	}
+
+	// An indexed read is what the field exists for, and still works.
+	dims, err := Infer("schema: {v: string}\noutput: {v: context.appLabels[\"team\"]}\n", rules)
+	require.NoError(t, err)
+	require.Len(t, dims, 1)
+	require.Equal(t, "appLabels[team]", dims[0].String())
 }

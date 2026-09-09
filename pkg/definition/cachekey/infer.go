@@ -84,6 +84,10 @@ func Infer(template string, rules *Rules) ([]Dimension, error) {
 	stripGenerated(file)
 
 	found := map[string]Dimension{}
+	// Reads of an indexed field, keyed by the selector node, so the pass below
+	// can remove the ones that turned out to carry an index and leave the bare
+	// ones behind.
+	indexedReads := map[*ast.SelectorExpr]string{}
 	var scanErr error
 
 	ast.Walk(file, func(n ast.Node) bool {
@@ -106,7 +110,9 @@ func Infer(template string, rules *Rules) ([]Dimension, error) {
 		}
 		if entry.Indexed {
 			// The value contributing to the key is at an index, so the index has
-			// to be knowable now. Handled where the index is visible, below.
+			// to be knowable now. Handled where the index is visible, below; this
+			// records the read so a bare one can be told from an indexed one.
+			indexedReads[sel] = field
 			return true
 		}
 		d := Dimension{Field: field, order: entry.Order}
@@ -140,6 +146,7 @@ func Infer(template string, rules *Rules) ([]Dimension, error) {
 		if !keyed || !entry.Indexed {
 			return true
 		}
+		delete(indexedReads, sel)
 		lit, ok := idx.Index.(*ast.BasicLit)
 		if !ok || lit.Kind != cuetoken.STRING {
 			scanErr = fmt.Errorf("context.%s must be read with a literal index so the key can be "+
@@ -157,6 +164,16 @@ func Infer(template string, rules *Rules) ([]Dimension, error) {
 	}, nil)
 	if scanErr != nil {
 		return nil, scanErr
+	}
+
+	// A read of the whole map contributes nothing to the key while the resolver
+	// hands the template the whole map, so two Applications with different
+	// labels would share one cached result. The key can only carry a value it
+	// can name, so the read has to name one.
+	for _, field := range indexedReads {
+		return nil, fmt.Errorf("context.%s must be read at a literal key - context.%s[\"team\"] - "+
+			"so the value it contributes to the cache key is knowable; reading the whole map would "+
+			"let two Applications with different %s share one cached result", field, field, field)
 	}
 
 	dims := make([]Dimension, 0, len(found))

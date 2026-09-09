@@ -142,3 +142,23 @@ func TestDeployStepDecodeToleratesExpressionsButNotTypos(t *testing.T) {
 		})
 	}
 }
+
+// A policy name that is still an expression names nothing yet. Strict decoding
+// accepts it - it is a string, whatever it holds - so the loader looked it up
+// literally and failed the whole appfile with "external policy
+// $(source.cfg.name) not found", before the step that resolves it ever ran.
+func TestLoadExternalPoliciesLeavesExpressionNamesToTheStep(t *testing.T) {
+	cli := fake.NewClientBuilder().WithScheme(common.Scheme).Build()
+	steps := []wfTypesv1alpha1.WorkflowStep{{
+		WorkflowStepBase: wfTypesv1alpha1.WorkflowStepBase{
+			Name: "deploy", Type: DeployWorkflowStep,
+			Properties: &runtime.RawExtension{
+				Raw: []byte(`{"policies":["$(source.cfg.policyName)"]}`),
+			},
+		},
+	}}
+
+	policies, err := LoadExternalPoliciesForWorkflow(context.Background(), cli, "default", steps, nil)
+	require.NoError(t, err)
+	require.Empty(t, policies)
+}

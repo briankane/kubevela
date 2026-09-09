@@ -40,6 +40,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	common2 "github.com/oam-dev/kubevela/pkg/utils/common"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParsePolicies(t *testing.T) {
@@ -1340,4 +1341,63 @@ func TestPolicyExpressionValuesMatchPolicyContext(t *testing.T) {
 			t.Errorf("PolicyContext declares %q but the pass does not supply it: %v", field, err)
 		}
 	}
+}
+
+// The appfile-time pass supplied one context for every policy that reaches it,
+// but an Application-scoped policy advertises more than a built-in one:
+// clusterVersion, and the policyRevision fields the scoped render produces.
+// A scoped policy reading any of them failed here, before the render that could
+// have answered it ever ran.
+//
+// The render-time fields are left for that render. Substituting them here is not
+// possible, and failing on them turns an expression the surface advertises into
+// a reconciliation error.
+func TestResolvePolicyExpressionsOnAnApplicationScopedPolicy(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1beta1.AddToScheme(scheme))
+
+	scoped := &v1beta1.PolicyDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "tagger", Namespace: "vela-system"},
+		Spec:       v1beta1.PolicyDefinitionSpec{Scope: v1beta1.ApplicationScope},
+	}
+	parser := &Parser{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(scoped).Build()}
+
+	af := func(props string) *Appfile {
+		return &Appfile{
+			Name:      "checkout",
+			Namespace: "prod",
+			app: &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "checkout", Namespace: "prod",
+					Labels: map[string]string{"owner": "payments"},
+				},
+			},
+			Policies: []v1beta1.AppPolicy{{
+				Name: "tag", Type: "tagger",
+				Properties: &runtime.RawExtension{Raw: []byte(props)},
+			}},
+		}
+	}
+
+	t.Run("a field this pass can supply is substituted", func(t *testing.T) {
+		a := af(`{"where":"$(context.appName + \"--\" + context.namespace)"}`)
+		require.NoError(t, parser.resolvePolicyExpressions(context.Background(), a))
+		require.Contains(t, string(a.Policies[0].Properties.Raw), `"where":"checkout--prod"`)
+	})
+
+	t.Run("clusterVersion is supplied, since the surface advertises it", func(t *testing.T) {
+		a := af(`{"major":"$(context.clusterVersion.major)"}`)
+		require.NoError(t, parser.resolvePolicyExpressions(context.Background(), a))
+		require.NotContains(t, string(a.Policies[0].Properties.Raw), "$(")
+	})
+
+	t.Run("a render-time field is left for the render", func(t *testing.T) {
+		a := af(`{"rev":"$(context.policyRevision)","where":"$(context.namespace)"}`)
+		require.NoError(t, parser.resolvePolicyExpressions(context.Background(), a))
+		got := string(a.Policies[0].Properties.Raw)
+		require.Contains(t, got, `"rev":"$(context.policyRevision)"`,
+			"the scoped render is what knows the revision")
+		require.Contains(t, got, `"where":"prod"`,
+			"a leaf this pass can answer is still answered")
+	})
 }

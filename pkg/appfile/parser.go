@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/pkg/errors"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -887,6 +889,63 @@ func (p *Parser) validateExpressionSurfaces(ctx context.Context, af *Appfile) er
 // appfile is built, so it has no cluster and no policy revision metadata. The
 // wider schema would declare fields it cannot supply, and a read of one would
 // pass admission and fail here as an undefined field.
+// evalWhatIsKnown substitutes the leaves this pass can answer and leaves the
+// rest as the author wrote them.
+//
+// An Application-scoped policy's surface advertises fields only its own render
+// produces - the policyRevision trio, and custom. Failing on those would turn an
+// expression the surface promises into a reconciliation error, and substituting
+// them is not possible from here. Leaving them alone hands them to
+// substituteScopedPolicyExpressions, which has the render's context.
+func evalWhatIsKnown(node interface{}, values map[string]interface{}) (interface{}, error) {
+	env, err := celexpr.DynEnv()
+	if err != nil {
+		return nil, err
+	}
+	return propexpr.Map(node, "", func(_, raw string) (interface{}, error) {
+		parsed, perr := propexpr.Parse(raw)
+		if perr != nil || !parsed.HasExpr() {
+			//nolint:nilerr // an unparseable value is reported by the policy's own parsing
+			return raw, nil
+		}
+		for _, fragment := range parsed.Fragments {
+			if !fragment.IsExpr() {
+				continue
+			}
+			refs, rerr := celexpr.PropertyReferences(fragment.Expr)
+			if rerr != nil {
+				//nolint:nilerr // reported by admission, with a better message
+				return raw, nil
+			}
+			for _, ref := range refs {
+				if ref.IsSource() || len(ref.Path) == 0 {
+					continue
+				}
+				if _, known := values[ref.Path[0]]; !known {
+					return raw, nil
+				}
+			}
+		}
+		return celexpr.EvalProperty(env, raw, map[string]interface{}{
+			"context": values,
+			"source":  map[string]interface{}{},
+		})
+	})
+}
+
+// controlPlaneClusterVersion is what context.clusterVersion reads for a policy
+// that targets no cluster of its own.
+func controlPlaneClusterVersion() map[string]interface{} {
+	cv := types.ControlPlaneClusterVersion
+	minor, _ := strconv.ParseInt(strings.TrimRight(strings.TrimSpace(cv.Minor), ".+-/?!"), 10, 64)
+	return map[string]interface{}{
+		"major":      cv.Major,
+		"gitVersion": cv.GitVersion,
+		"platform":   cv.Platform,
+		"minor":      minor,
+	}
+}
+
 func (p *Parser) resolvePolicyExpressions(ctx context.Context, af *Appfile) error {
 	// Exactly what PolicyContext declares. The registry is what admission types
 	// these expressions against, so supplying less would accept a read here and
@@ -931,14 +990,21 @@ func (p *Parser) resolvePolicyExpressions(ctx context.Context, af *Appfile) erro
 			continue
 		}
 
-		values := make(map[string]interface{}, len(base)+2)
+		values := make(map[string]interface{}, len(base)+3)
 		for k, v := range base {
 			values[k] = v
 		}
 		values["policyName"] = af.Policies[i].Name
 		values["policyType"] = af.Policies[i].Type
+		// An Application-scoped policy reads a wider context than a built-in
+		// one. clusterVersion is knowable here - a scoped policy targets no
+		// cluster, so it is the control plane's - while the policyRevision
+		// fields and custom are produced by the scoped render itself.
+		if surface == sources.SurfacePolicyApp {
+			values["clusterVersion"] = controlPlaneClusterVersion()
+		}
 
-		resolved, err := celexpr.EvalTree(decoded, nil, values)
+		resolved, err := evalWhatIsKnown(decoded, values)
 		if err != nil {
 			return fmt.Errorf("policy %q: %w", af.Policies[i].Name, err)
 		}

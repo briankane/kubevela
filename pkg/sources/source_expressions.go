@@ -77,9 +77,15 @@ func evaluateSourceExpression(raw string, resolver *sourceResolver, property str
 			// Record what the expression read, so status reports it exactly as a
 			// status reports it - including +sensitive redaction, which
 			// matches on the recorded path.
-			path := strings.Join(ref.Path[1:], ".")
-			if value, ok := lookupMapPath(values, path); ok {
-				resolver.recordConsumedValue(name, resolver.sourceTypes[name], path, value, property)
+			// Looked up by segments, reported as text. A key may contain a dot
+			// - a ConfigMap entry called app.properties, a domain-prefixed label
+			// - and splitting the rendered path would read one key as two, so
+			// the read went unrecorded and with it the hash that drives
+			// auto-update for that binding.
+			segments := ref.Path[1:]
+			if value, ok := lookupMapSegments(values, segments); ok {
+				resolver.recordConsumedValue(name, resolver.sourceTypes[name],
+					strings.Join(segments, "."), value, property)
 			}
 		}
 	}
@@ -106,24 +112,23 @@ func celEvalProperty(raw string, resolved map[string]map[string]interface{},
 	return celexpr.EvalPropertyTyped(env, raw, in)
 }
 
-func lookupMapPath(data map[string]interface{}, path string) (interface{}, bool) {
-	// An empty path is a read of the binding entire - `$(source.cfg)` rather
-	// than `$(source.cfg.host)`, whose reference is Path=["cfg"] and so leaves
+func lookupMapSegments(data map[string]interface{}, segments []string) (interface{}, bool) {
+	// No segments is a read of the binding entire - `$(source.cfg)` rather than
+	// `$(source.cfg.host)`, whose reference is Path=["cfg"] and so leaves
 	// nothing after the name.
 	//
-	// Without this, strings.Split("", ".") yields one empty segment, the lookup
-	// asks for the key "" and finds nothing, and the read goes unrecorded. The
-	// value still substituted, so it looked fine; what was lost is the hash that
-	// resolvedSourceHashes stamps, and with it auto-update for that binding.
+	// The value still substituted without this, so it looked fine; what was lost
+	// is the hash that resolvedSourceHashes stamps, and with it auto-update for
+	// that binding.
 	//
 	// Recording it under the empty path is what redaction already expects:
 	// RedactValue descends from the read path and joinMaskPath treats an empty
 	// prefix as the root, so a +sensitive field one level down is still masked.
-	if path == "" {
+	if len(segments) == 0 {
 		return data, true
 	}
 	cur := interface{}(data)
-	for _, p := range strings.Split(path, ".") {
+	for _, p := range segments {
 		// A segment is an index when what it is being applied to is a list. The
 		// reference carries indices as decimal text, and only the value decides
 		// how to read them - the same rule the schema walk uses.
