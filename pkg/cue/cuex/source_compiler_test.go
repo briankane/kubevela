@@ -20,6 +20,7 @@ import (
 	"context"
 	"testing"
 
+	"cuelang.org/go/cue"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,6 +59,57 @@ func TestSourceCompilerRefusesActingPackages(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, v.Err(), "%s must still work for components", tc.pkg)
 	}
+}
+
+// Restricting the package set is not enough on its own: vela/kube carries
+// #Get and #List alongside #Apply and #Patch under one name, so a source could
+// import the package legitimately and then write to the cluster on every cache
+// miss, under the controller's identity.
+//
+// Verified against a live cluster before this was fixed: a source calling
+// kube.#Apply created a ConfigMap in another namespace at render time, and the
+// Application reported running. After the fix the Application is refused at
+// admission with "undefined field: #Apply" and nothing is written.
+//
+// The refusal lands on the Application, not on the SourceDefinition. A missing
+// field surfaces only where it is referenced, and admission cannot evaluate a
+// template that far without concrete parameters. That is enough: a source that
+// reaches for a write is inert, because every binding of it is refused.
+func TestSourceCompilerRefusesKubeWrites(t *testing.T) {
+	for _, tc := range []struct{ name, expr string }{
+		{"apply", "kube.#Apply.#do"},
+		{"patch", "kube.#Patch.#do"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := SourceCompiler.Get().CompileString(context.Background(),
+				"import \"vela/kube\"\noutput: x: "+tc.expr+"\n")
+			require.NoError(t, err)
+			out := v.LookupPath(cue.ParsePath("output.x"))
+			require.ErrorContains(t, out.Err(), "undefined field",
+				"a source must not reach kube write %s", tc.name)
+		})
+	}
+
+	// The reads it exists for keep working, and so does a plain parameter
+	// reference, which is what makes the check above a real distinction rather
+	// than every unresolved value erroring alike.
+	for _, tc := range []struct{ name, src string }{
+		{"get", "import \"vela/kube\"\noutput: x: kube.#Get.#do\n"},
+		{"list", "import \"vela/kube\"\noutput: x: kube.#List.#do\n"},
+		{"parameter", "parameter: n: string\noutput: x: parameter.n\n"},
+	} {
+		v, err := SourceCompiler.Get().CompileString(context.Background(), tc.src)
+		require.NoError(t, err)
+		require.NoError(t, v.LookupPath(cue.ParsePath("output.x")).Err(),
+			"%s must remain available", tc.name)
+	}
+
+	// Components still get the whole package.
+	v, err := WorkloadCompiler.Get().CompileString(context.Background(),
+		"import \"vela/kube\"\noutput: x: kube.#Apply.#do\n")
+	require.NoError(t, err)
+	require.NoError(t, v.LookupPath(cue.ParsePath("output.x")).Err(),
+		"vela/kube must stay complete for components")
 }
 
 // The fetching packages a source is built on have to stay available, or the

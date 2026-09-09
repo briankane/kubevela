@@ -17,6 +17,7 @@ limitations under the License.
 package sources
 
 import (
+	"strconv"
 	"strings"
 
 	"cuelang.org/go/cue/ast"
@@ -78,10 +79,33 @@ func collectSensitivePaths(st *ast.StructLit, prefix []string, out *[]string) {
 		if hasSensitiveMarker(field) {
 			*out = append(*out, strings.Join(path, "."))
 		}
-		if nested, ok := field.Value.(*ast.StructLit); ok {
-			collectSensitivePaths(nested, path, out)
+		// A list element shares its parent's path: a mark inside
+		// `members: [...{token: string}]` is "members.token", applying to the
+		// token of every member. RedactValue treats indices the same way.
+		for _, st := range structsUnder(field.Value) {
+			collectSensitivePaths(st, path, out)
 		}
 	}
+}
+
+// structsUnder returns the struct literals a field's value descends into: the
+// value itself, or the elements of a list.
+func structsUnder(v ast.Expr) []*ast.StructLit {
+	switch val := v.(type) {
+	case *ast.StructLit:
+		return []*ast.StructLit{val}
+	case *ast.ListLit:
+		var out []*ast.StructLit
+		for _, elt := range val.Elts {
+			if e, ok := elt.(*ast.Ellipsis); ok {
+				out = append(out, structsUnder(e.Type)...)
+				continue
+			}
+			out = append(out, structsUnder(elt)...)
+		}
+		return out
+	}
+	return nil
 }
 
 func hasSensitiveMarker(field *ast.Field) bool {
@@ -181,7 +205,22 @@ func joinMaskPath(prefix, key string) string {
 // whatever template produced it - has nowhere to put a marker except on the
 // struct itself. Matching exactly would mask a read of `properties` and publish
 // `properties.token` beside it, which is the one case the marker exists for.
+//
+// Indices are dropped before matching. A read through a list arrives as
+// "members.0.token" because a reference carries its indices as decimal
+// segments, while the mark can only ever be "members.token" - the schema walk
+// records no indices, since a mark on one element applies to them all.
 func MaskedPath(path string, masks map[string]struct{}) bool {
+	if maskedExact(path, masks) {
+		return true
+	}
+	if stripped := dropIndexSegments(path); stripped != path {
+		return maskedExact(stripped, masks)
+	}
+	return false
+}
+
+func maskedExact(path string, masks map[string]struct{}) bool {
 	if _, ok := masks[path]; ok {
 		return true
 	}
@@ -191,4 +230,22 @@ func MaskedPath(path string, masks map[string]struct{}) bool {
 		}
 	}
 	return false
+}
+
+// dropIndexSegments removes the decimal segments of a read path. A map key that
+// happens to be decimal is indistinguishable from an index here, so the caller
+// tries the path unchanged first and only falls back to this.
+func dropIndexSegments(path string) string {
+	if path == "" {
+		return path
+	}
+	segments := strings.Split(path, ".")
+	kept := segments[:0]
+	for _, s := range segments {
+		if _, err := strconv.Atoi(s); err == nil {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return strings.Join(kept, ".")
 }

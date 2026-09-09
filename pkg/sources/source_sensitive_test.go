@@ -142,3 +142,31 @@ func TestJoinMaskPath(t *testing.T) {
 	require.Equal(t, "db", joinMaskPath("", "db"))
 	require.Equal(t, "db.password", joinMaskPath("db", "password"))
 }
+
+// An expression reading through a list index produces a path with the index in
+// it - "members.0.token" - while the mark from the schema is "members.token".
+// The recorded read went into status unredacted.
+func TestMaskedPathTreatsListIndicesAsTransparent(t *testing.T) {
+	masks := map[string]struct{}{"members.token": {}}
+	require.True(t, MaskedPath("members.0.token", masks))
+	require.True(t, MaskedPath("members.12.token", masks))
+	require.True(t, MaskedPath("members.0.token.value", masks))
+	// A named field is not an index, so it must not collapse.
+	require.False(t, MaskedPath("members.other.token", masks))
+	require.False(t, MaskedPath("members.token2", masks))
+}
+
+// A marker written inside a list element was dropped entirely, because the walk
+// descended into structs but not into the elements of a list.
+func TestExtractSensitiveOutputPathsDescendsIntoLists(t *testing.T) {
+	template := `
+schema: {
+	members: [...{
+		name: string
+		// +sensitive
+		token: string
+	}]
+}
+`
+	require.Equal(t, []string{"members.token"}, ExtractSensitiveOutputPaths(template))
+}

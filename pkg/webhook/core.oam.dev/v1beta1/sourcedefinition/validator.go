@@ -232,25 +232,43 @@ func ValidateSurfaceCompatibility(template string, consumable []string) error {
 		return nil
 	}
 
-	// Where the author said it may be consumed, or everywhere if unrestricted.
+	// Naming a surface is an assertion that the source works there, so every
+	// named surface has to supply what the template reads. Naming none asserts
+	// nothing, and one working surface is enough: the check at bind time is what
+	// refuses the rest.
 	declared := consumable
-	if len(declared) == 0 {
+	needAll := len(declared) > 0
+	if !needAll {
 		declared = sources.ConsumableSurfaces
 	}
 
 	supported := cachekey.SurfacesSupporting(fields, declared)
-	if len(supported) > 0 {
+	if needAll && len(supported) == len(declared) {
+		return nil
+	}
+	if !needAll && len(supported) > 0 {
 		return nil
 	}
 
-	// Nothing works. Say why against one surface rather than repeating the same
-	// sentence per surface, and name where it would work if anywhere does.
-	reason := cachekey.CheckSurface(fields, declared[0])
+	// Report against a surface that actually fails, rather than repeating the
+	// same sentence per surface, and name where it would work if anywhere does.
+	reason := cachekey.CheckSurface(fields, firstUnsupported(fields, declared))
 	if elsewhere := cachekey.SurfacesSupporting(fields, sources.ConsumableSurfaces); len(elsewhere) > 0 {
 		return fmt.Errorf("this source %w, where it declares it may be consumed; it is available in %s",
 			reason, strings.Join(pluralise(elsewhere), ", "))
 	}
 	return fmt.Errorf("this source %w, and is available in no surface that resolves sources", reason)
+}
+
+// firstUnsupported names a surface the fields cannot be read from, in the order
+// the author declared them so the diagnostic matches what they wrote.
+func firstUnsupported(fields, declared []string) string {
+	for _, surface := range declared {
+		if cachekey.CheckSurface(fields, surface) != nil {
+			return surface
+		}
+	}
+	return declared[0]
 }
 
 // SurfaceAllowed reports whether a source declaring the given surfaces may be

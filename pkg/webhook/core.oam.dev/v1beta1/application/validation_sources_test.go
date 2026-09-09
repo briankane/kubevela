@@ -716,7 +716,7 @@ func TestCueStructLookupHandlesOpenLists(t *testing.T) {
 		{"fixed.1", cue.IntKind},
 		{"nested.0.name", cue.StringKind},
 	} {
-		got, declared := c.kindAt(tc.path)
+		got, declared := c.kindAt(segs(tc.path))
 		if !declared {
 			t.Errorf("%s should resolve through the list's element type", tc.path)
 			continue
@@ -728,7 +728,7 @@ func TestCueStructLookupHandlesOpenLists(t *testing.T) {
 
 	// A fixed list still reports out-of-range as undeclared, rather than
 	// silently falling back to an element type it does not have.
-	if _, declared := c.kindAt("fixed.5"); declared {
+	if _, declared := c.kindAt(segs("fixed.5")); declared {
 		t.Error("an index beyond a fixed list must not resolve")
 	}
 }
@@ -758,7 +758,7 @@ func TestCueStructLookupHandlesOpenMaps(t *testing.T) {
 		{"nested.a.enabled", cue.BoolKind},
 		{"declared.known", cue.StringKind},
 	} {
-		got, declared := c.kindAt(tc.path)
+		got, declared := c.kindAt(segs(tc.path))
 		if !declared {
 			t.Errorf("%s should resolve through the map's value type", tc.path)
 			continue
@@ -770,7 +770,7 @@ func TestCueStructLookupHandlesOpenMaps(t *testing.T) {
 
 	// A closed struct still rejects an unknown field, so the fallback does not
 	// make everything permissive.
-	if _, declared := c.kindAt("declared.unknown"); declared {
+	if _, declared := c.kindAt(segs("declared.unknown")); declared {
 		t.Error("an undeclared field of a closed struct must not resolve")
 	}
 }
@@ -874,11 +874,11 @@ parameter: {
 		if !ok {
 			t.Fatal("the parameter block should compile on its own")
 		}
-		kind, declared := param.kindAt("parallelism")
+		kind, declared := param.kindAt(segs("parallelism"))
 		if !declared || kind != cue.IntKind {
 			t.Fatalf("parallelism should be int, got %v (declared=%v)", kind, declared)
 		}
-		if kind, declared := param.kindAt("auto"); !declared || kind != cue.BoolKind {
+		if kind, declared := param.kindAt(segs("auto")); !declared || kind != cue.BoolKind {
 			t.Fatalf("auto should be bool, got %v (declared=%v)", kind, declared)
 		}
 	})
@@ -894,7 +894,7 @@ parameter: #Args
 		if !ok {
 			t.Fatal("a parameter aliased to a local definition should resolve")
 		}
-		if kind, declared := param.kindAt("replicas"); !declared || kind != cue.IntKind {
+		if kind, declared := param.kindAt(segs("replicas")); !declared || kind != cue.IntKind {
 			t.Fatalf("replicas should be int, got %v (declared=%v)", kind, declared)
 		}
 	})
@@ -1347,4 +1347,85 @@ parameter: {objects: [...{}]}
 		t.Fatalf("an undeclared field nested in a list should still be caught, got:\n%s", joined)
 	}
 	t.Logf("nested undeclared field caught: %s", strings.TrimSpace(joined))
+}
+
+// Properties are flattened to dotted paths before they are looked up in the
+// parameter block, so a map key containing a dot was read as two segments: the
+// key "content.type" of an open map became content, then type, and the lookup
+// failed on a value that was declared perfectly well.
+//
+// An empty object or list had the opposite problem: the walk emitted a leaf only
+// for a scalar, so nothing was checked at all and an undeclared field passed.
+func TestValidateSourceInputsAddressesPropertiesAsWritten(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = v1beta1.AddToScheme(scheme)
+
+	defs := []runtime.Object{
+		&v1beta1.SourceDefinition{
+			ObjectMeta: metav1.ObjectMeta{Name: "hdr-source", Namespace: "default"},
+			Spec: v1beta1.SourceDefinitionSpec{
+				Schematic: &common.Schematic{CUE: &common.CUE{Template: `
+schema: {
+  body: string
+}
+output: {
+  body: "x"
+}
+parameter: {
+  url: string
+  headers?: [string]: string
+  labels?: [string]: string
+  tags?: [...string]
+}
+`}},
+			},
+		},
+	}
+
+	app := func(props string) *v1beta1.Application {
+		return &v1beta1.Application{
+			ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
+			Spec: v1beta1.ApplicationSpec{
+				Sources: []v1beta1.ApplicationSource{
+					{Name: "s", Type: "hdr-source", Properties: rawJSON(props)},
+				},
+			},
+		}
+	}
+
+	for _, tc := range []struct {
+		name         string
+		props        string
+		expectedErrs int
+	}{
+		{
+			name:  "a dotted key of an open map is one key",
+			props: `{"url":"https://x","headers":{"content.type":"application/json"}}`,
+		},
+		{
+			name:  "and so is a Kubernetes-style label key",
+			props: `{"url":"https://x","labels":{"app.kubernetes.io/name":"web"}}`,
+		},
+		{
+			name:         "an empty object at an undeclared field is still undeclared",
+			props:        `{"url":"https://x","nope":{}}`,
+			expectedErrs: 1,
+		},
+		{
+			name:         "and so is an empty list",
+			props:        `{"url":"https://x","nope":[]}`,
+			expectedErrs: 1,
+		},
+		{
+			name:  "an empty value at a declared field is fine",
+			props: `{"url":"https://x","headers":{},"tags":[]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cli := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(defs...).Build()
+			handler := &ValidatingHandler{Client: cli}
+			errs := handler.ValidateSources(context.Background(), app(tc.props))
+			assert.Len(t, errs, tc.expectedErrs, "errors: %v", errs)
+		})
+	}
 }

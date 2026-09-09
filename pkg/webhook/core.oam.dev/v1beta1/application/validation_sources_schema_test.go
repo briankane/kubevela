@@ -17,6 +17,7 @@ limitations under the License.
 package application
 
 import (
+	"strings"
 	"testing"
 
 	"cuelang.org/go/cue"
@@ -58,7 +59,7 @@ func TestCueStructLookupResolvesEveryShape(t *testing.T) {
 		{"items.5.name", false, "a position a one-element list does not have"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
-			_, ok := s.valueAt(tc.path)
+			_, ok := s.valueAt(segs(tc.path))
 			require.Equal(t, tc.found, ok, tc.why)
 		})
 	}
@@ -77,11 +78,11 @@ func TestCueStructKindAt(t *testing.T) {
 		"host": cue.StringKind, "port": cue.IntKind, "ratio": cue.FloatKind,
 		"secure": cue.BoolKind, "tags": cue.ListKind, "meta": cue.StructKind,
 	} {
-		got, ok := s.kindAt(path)
+		got, ok := s.kindAt(segs(path))
 		require.True(t, ok, path)
 		require.Equal(t, want, got, path)
 	}
-	_, ok := s.kindAt("absent")
+	_, ok := s.kindAt(segs("absent"))
 	require.False(t, ok)
 }
 
@@ -96,17 +97,17 @@ func TestCueStructRequiredAt(t *testing.T) {
 	items: [{name: string}]
 }`)
 
-	require.True(t, s.requiredAt("host"))
-	require.True(t, s.requiredAt("nested.deep"))
+	require.True(t, s.requiredAt(segs("host")))
+	require.True(t, s.requiredAt(segs("nested.deep")))
 
-	require.False(t, s.requiredAt("note"), "optional")
-	require.False(t, s.requiredAt("port"), "defaulted")
-	require.False(t, s.requiredAt("nested.opt"), "optional, nested")
-	require.False(t, s.requiredAt("absent"), "not declared at all")
-	require.False(t, s.requiredAt(""), "an empty path names nothing")
-	require.False(t, s.requiredAt("nested."), "a trailing separator names nothing")
-	require.False(t, s.requiredAt("items.0"), "a list index is a position, not a named field")
-	require.False(t, s.requiredAt("nope.deep"), "a path whose parent is absent")
+	require.False(t, s.requiredAt(segs("note")), "optional")
+	require.False(t, s.requiredAt(segs("port")), "defaulted")
+	require.False(t, s.requiredAt(segs("nested.opt")), "optional, nested")
+	require.False(t, s.requiredAt(segs("absent")), "not declared at all")
+	require.False(t, s.requiredAt(segs("")), "an empty path names nothing")
+	require.False(t, s.requiredAt(segs("nested.")), "a trailing separator names nothing")
+	require.False(t, s.requiredAt(segs("items.0")), "a list index is a position, not a named field")
+	require.False(t, s.requiredAt(segs("nope.deep")), "a path whose parent is absent")
 }
 
 // kindName is what an author reads in a type-mismatch message, so every kind
@@ -126,4 +127,13 @@ func TestKindNameRendersWhatAnAuthorWrote(t *testing.T) {
 	}
 	require.NotEmpty(t, kindName(cue.BytesKind),
 		"a kind with no friendly name still renders as something")
+}
+
+// segs addresses a path the way the walker does, so a test can keep writing the
+// readable dotted form.
+func segs(path string) []string {
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, ".")
 }

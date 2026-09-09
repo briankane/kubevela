@@ -129,8 +129,8 @@ func TestParameterBlockOnlyRefusals(t *testing.T) {
 
 	param, ok := parameterBlockOnly("parameter: {host: string, port: *8080 | int}\noutput: {}")
 	require.True(t, ok)
-	require.True(t, param.requiredAt("host"))
-	require.False(t, param.requiredAt("port"), "a default means the value is not required")
+	require.True(t, param.requiredAt(segs("host")))
+	require.False(t, param.requiredAt(segs("port")), "a default means the value is not required")
 }
 
 // A definition whose parameter block references the file around it cannot be
@@ -237,7 +237,7 @@ func TestLoadTargetParameterFailsOpen(t *testing.T) {
 
 	param := h.loadTargetParameter(ctx, "default", "component", "webservice")
 	require.NotNil(t, param)
-	require.True(t, param.requiredAt("image"))
+	require.True(t, param.requiredAt(segs("image")))
 
 	require.Nil(t, h.loadTargetParameter(ctx, "default", "component", "absent"),
 		"a definition that is not there yet must not block the apply")

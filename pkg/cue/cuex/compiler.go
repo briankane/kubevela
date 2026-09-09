@@ -31,6 +31,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/addon"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/config"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/helm"
+	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/kuberead"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/registry"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/velaconfig"
 )
@@ -60,7 +61,10 @@ var ConfigCompiler = singleton.NewSingleton[*cuex.Compiler](func() *cuex.Compile
 // WorkloadCompiler, so the choice has to be made rather than inherited.
 func sourcePackages() []cuexruntime.Package {
 	return []cuexruntime.Package{
-		kube.Package,
+		// vela/kube with #Apply and #Patch removed. The package set alone is not
+		// enough: kube carries reads and writes under one name, so a source could
+		// otherwise apply arbitrary resources on every cache miss.
+		kuberead.Package,
 		http.Package,
 		base64.Package,
 		registry.Package,

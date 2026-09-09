@@ -53,7 +53,7 @@ func TestListParameterWithDefaultAcceptsIndexedLeaves(t *testing.T) {
 			cs := &cueStruct{root: v.LookupPath(cue.ParsePath("parameter"))}
 
 			for _, path := range tc.indices {
-				kind, declared := cs.kindAt(path)
+				kind, declared := cs.kindAt(segs(path))
 				r.True(declared, "%s must be declared; admission rejects the Application otherwise", path)
 				r.Equal(cue.StringKind, kind, "%s should type as the element type", path)
 			}
@@ -69,6 +69,6 @@ func TestClosedListRejectsAnIndexPastItsLength(t *testing.T) {
 	r.NoError(v.Err())
 	cs := &cueStruct{root: v.LookupPath(cue.ParsePath("parameter"))}
 
-	_, declared := cs.kindAt("pair.2")
+	_, declared := cs.kindAt(segs("pair.2"))
 	r.False(declared, "a closed two-element list has no third element")
 }

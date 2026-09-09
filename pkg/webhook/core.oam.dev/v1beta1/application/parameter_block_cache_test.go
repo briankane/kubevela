@@ -58,10 +58,10 @@ func TestParameterBlockCompilesFreshEachTime(t *testing.T) {
 
 	// Same answers from both, which is what makes sharing the text sound.
 	for _, c := range []*cueStruct{first, second} {
-		kind, declared := c.kindAt("image")
+		kind, declared := c.kindAt(segs("image"))
 		require.True(t, declared)
 		assert.Equal(t, cue.StringKind, kind)
-		kind, declared = c.kindAt("replicas")
+		kind, declared = c.kindAt(segs("replicas"))
 		require.True(t, declared)
 		assert.Equal(t, cue.IntKind, kind)
 	}
@@ -124,7 +124,7 @@ func TestParameterBlockIsConcurrencySafe(t *testing.T) {
 				t.Error("extraction failed under concurrency")
 				return
 			}
-			if _, declared := c.kindAt("image"); !declared {
+			if _, declared := c.kindAt(segs("image")); !declared {
 				t.Error("compiled value was unusable")
 			}
 		}()

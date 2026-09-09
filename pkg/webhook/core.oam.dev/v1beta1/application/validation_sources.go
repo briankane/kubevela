@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
@@ -281,39 +283,58 @@ func (h *ValidatingHandler) validateSourceInputs(ctx context.Context, app *v1bet
 // dotted path relative to the parameter block.
 type inputLeaf struct {
 	path      string      // dotted path into the parameter block, e.g. "region"
+	segments  []string    // the same path unsplit, since a key may contain a dot
 	fieldPath *field.Path // full field path for error reporting
-	literal   interface{} // the scalar value at this path
+	literal   interface{} // the value at this path
 }
 
 // flattenLeafPaths walks a properties JSON blob and returns one inputLeaf per
-// scalar node, keyed by dotted path. Array elements are addressed by index.
-// Returns nothing on unparseable input, which the collection pass reports.
+// scalar node, addressed by its path segments. Array elements are addressed by
+// index. Returns nothing on unparseable input, which the collection pass reports.
+//
+// An empty object or list is a leaf too. It has nothing under it to recurse
+// into, so emitting nothing would mean `{"nope": {}}` was never checked against
+// the parameter block at all and an undeclared field passed.
 func flattenLeafPaths(raw []byte, basePath *field.Path) []inputLeaf {
 	var decoded interface{}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil
 	}
 	var out []inputLeaf
-	var walk func(node interface{}, dotted string, fp *field.Path)
-	walk = func(node interface{}, dotted string, fp *field.Path) {
+	emit := func(segs []string, fp *field.Path, node interface{}) {
+		out = append(out, inputLeaf{
+			path:      strings.Join(segs, "."),
+			segments:  segs,
+			fieldPath: fp,
+			literal:   node,
+		})
+	}
+	var walk func(node interface{}, segs []string, fp *field.Path)
+	walk = func(node interface{}, segs []string, fp *field.Path) {
 		switch v := node.(type) {
 		case map[string]interface{}:
+			if len(v) == 0 {
+				emit(segs, fp, node)
+				return
+			}
 			for k, child := range v {
-				next := k
-				if dotted != "" {
-					next = dotted + "." + k
-				}
-				walk(child, next, fp.Child(k))
+				// A fresh slice per child: appending into segs would share the
+				// backing array between siblings.
+				walk(child, append(append([]string{}, segs...), k), fp.Child(k))
 			}
 		case []interface{}:
+			if len(v) == 0 {
+				emit(segs, fp, node)
+				return
+			}
 			for idx, child := range v {
-				walk(child, fmt.Sprintf("%s.%d", dotted, idx), fp.Index(idx))
+				walk(child, append(append([]string{}, segs...), strconv.Itoa(idx)), fp.Index(idx))
 			}
 		default:
-			out = append(out, inputLeaf{path: dotted, fieldPath: fp, literal: node})
+			emit(segs, fp, node)
 		}
 	}
-	walk(decoded, "", basePath)
+	walk(decoded, nil, basePath)
 	return out
 }
 
@@ -332,6 +353,10 @@ func jsonKind(v interface{}) cue.Kind {
 		return cue.NumberKind
 	case nil:
 		return cue.NullKind
+	case map[string]interface{}:
+		return cue.StructKind
+	case []interface{}:
+		return cue.ListKind
 	}
 	return cue.BottomKind
 }
@@ -345,7 +370,7 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 	if lf.path == "" {
 		return errs
 	}
-	dstKind, declared := param.kindAt(lf.path)
+	dstKind, declared := param.kindAt(lf.segments)
 	if !declared {
 		errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 			fmt.Sprintf("property %q is not declared in the parameter schema of SourceDefinition %q", lf.path, sourceType)))
@@ -367,7 +392,7 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 
 		// The same optional-feeds-required rule the directive follows.
 		if undefended := h.undefendedExpressionReads(ctx, annotations, appNamespace, raw, sourceNameToType, schemaValidators); len(undefended) > 0 {
-			if param.requiredAt(lf.path) {
+			if param.requiredAt(lf.segments) {
 				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 					fmt.Sprintf("%s may be absent and feeds required parameter %q of SourceDefinition %q; guard it with has(%s) ? %s : <fallback>",
 						undefended[0], lf.path, sourceType, undefended[0], undefended[0])))
@@ -383,7 +408,7 @@ func (h *ValidatingHandler) checkInputLeaf(lf inputLeaf, param *cueStruct, sourc
 		return errs
 	}
 	// The kinds agree, which for a collection means only "both lists".
-	if dv, ok := param.valueAt(lf.path); ok {
+	if dv, ok := param.valueAt(lf.segments); ok {
 		if agree, want, got := celexpr.ElementsCompatible(srcType, dv); !agree {
 			errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 				fmt.Sprintf("type mismatch for parameter %q of SourceDefinition %q: expected %s, got %s",

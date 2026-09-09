@@ -300,14 +300,20 @@ func TestSurfaceAllowed(t *testing.T) {
 	}
 }
 
-// The compatibility check is inert while the cache-key rules key only on fields
-// every source-reading surface offers, so these pin the paths that are reachable
-// and the shape of the answer for the ones that are not yet.
+// context.componentName and context.revision are offered by components and
+// traits but not by workflow steps or rendered policies, so the check has real
+// work to do rather than only pinning the shape of an answer.
 func TestValidateSurfaceCompatibility(t *testing.T) {
+	// The read has to sit outside $internal: inference strips the generated
+	// block before scanning, so a context read that appears only in the stamped
+	// key is not a read at all.
 	const keyedOnCluster = `
-$internal: {key: "s-\(context.cluster)", keyInputs: ["cluster"]}
 schema: {host: string}
-output: {host: "x"}
+output: {host: "x-\(context.cluster)"}
+`
+	const keyedOnComponentName = `
+schema: {host: string}
+output: {host: "x-\(context.componentName)"}
 `
 	cases := []struct {
 		name       string
@@ -317,7 +323,7 @@ output: {host: "x"}
 	}{
 		{
 			name:     "a template reading no context is usable anywhere",
-			template: "$internal: {key: \"s\", keyInputs: []}\nschema: {host: string}\noutput: {host: \"x\"}",
+			template: "schema: {host: string}\noutput: {host: \"x\"}",
 		},
 		{
 			name:     "a template that will not parse is left to the cache-key check",
@@ -335,6 +341,26 @@ output: {host: "x"}
 		{
 			name:       "an unrestricted definition is judged against every surface",
 			template:   keyedOnCluster,
+			consumable: nil,
+		},
+		{
+			// Declaring a surface is an assertion about it, so one surface
+			// working does not excuse another that cannot.
+			name:       "every declared surface has to supply what the template reads",
+			template:   keyedOnComponentName,
+			consumable: []string{"component", "workflowstep"},
+			wantErr:    "context.componentName",
+		},
+		{
+			name:       "and the surfaces that do supply it are still accepted",
+			template:   keyedOnComponentName,
+			consumable: []string{"component", "trait"},
+		},
+		{
+			// Unrestricted asserts nothing, so the narrower check at bind time
+			// is what refuses the surfaces that cannot.
+			name:       "an unrestricted definition needs only one surface to work",
+			template:   keyedOnComponentName,
 			consumable: nil,
 		},
 	}

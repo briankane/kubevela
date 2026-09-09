@@ -163,7 +163,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 			if param == nil {
 				continue
 			}
-			dstKind, declared := param.kindAt(lf.path)
+			dstKind, declared := param.kindAt(lf.segments)
 			if !declared {
 				// The consuming template may accept it via an open struct; do not
 				// over-report, exactly as the directive's check does not.
@@ -176,7 +176,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 				continue
 			}
 			// The kinds agree, which for a collection means only "both lists".
-			if dv, ok := param.valueAt(lf.path); ok {
+			if dv, ok := param.valueAt(lf.segments); ok {
 				if agree, want, got := celexpr.ElementsCompatible(srcType, dv); !agree {
 					errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 						fmt.Sprintf("type mismatch: expression %s is %s but %s expects %s",
@@ -191,7 +191,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 			if uerr != nil || len(undefended) == 0 {
 				continue
 			}
-			if param.requiredAt(lf.path) {
+			if param.requiredAt(lf.segments) {
 				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
 					fmt.Sprintf("%s may be absent and feeds required %s; %s",
 						undefended[0], targetDesc, defaultHint(undefended[0].String()))))

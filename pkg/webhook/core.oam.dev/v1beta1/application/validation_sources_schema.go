@@ -18,7 +18,6 @@ package application
 
 import (
 	"strconv"
-	"strings"
 
 	"cuelang.org/go/cue"
 )
@@ -30,11 +29,16 @@ type cueStruct struct {
 	root cue.Value
 }
 
-// lookup walks a dotted path through the struct, resolving optional fields the
-// same way sourceSchemaValidator does.
-func (c *cueStruct) lookup(path string) (cue.Value, bool) {
+// lookup walks a path through the struct, resolving optional fields the same
+// way sourceSchemaValidator does.
+//
+// The path arrives as segments rather than dotted text because a property key
+// may itself contain a dot - `headers: {"content.type": ...}`, or any
+// Kubernetes-style label - and splitting the rendered path would read one key
+// as two.
+func (c *cueStruct) lookup(segs []string) (cue.Value, bool) {
 	cur := c.root
-	for _, seg := range strings.Split(path, ".") {
+	for _, seg := range segs {
 		if seg == "" {
 			return cur, false
 		}
@@ -68,8 +72,8 @@ func (c *cueStruct) lookup(path string) (cue.Value, bool) {
 
 // valueAt returns the declared CUE value at path, for checks that need more than
 // a kind - comparing a collection's element type, for one.
-func (c *cueStruct) valueAt(path string) (cue.Value, bool) {
-	v, ok := c.lookup(path)
+func (c *cueStruct) valueAt(segs []string) (cue.Value, bool) {
+	v, ok := c.lookup(segs)
 	if !ok || !v.Exists() {
 		return cue.Value{}, false
 	}
@@ -122,8 +126,8 @@ func listElementAtDepth(v cue.Value, idx, depth int) (cue.Value, bool) {
 
 // kindAt returns the declared CUE kind at path (e.g. StringKind, IntKind,
 // StructKind). Returns (BottomKind, false) if the path does not resolve.
-func (c *cueStruct) kindAt(path string) (cue.Kind, bool) {
-	v, ok := c.lookup(path)
+func (c *cueStruct) kindAt(segs []string) (cue.Kind, bool) {
+	v, ok := c.lookup(segs)
 	if !ok || !v.Exists() {
 		return cue.BottomKind, false
 	}
@@ -132,8 +136,7 @@ func (c *cueStruct) kindAt(path string) (cue.Kind, bool) {
 
 // requiredAt reports whether path names a field that the struct declares AND
 // requires: present, not optional, and with no default to fall back on.
-func (c *cueStruct) requiredAt(path string) bool {
-	segs := strings.Split(path, ".")
+func (c *cueStruct) requiredAt(segs []string) bool {
 	if len(segs) == 0 || segs[len(segs)-1] == "" {
 		return false
 	}
@@ -143,7 +146,7 @@ func (c *cueStruct) requiredAt(path string) bool {
 	}
 	parent := c.root
 	if len(segs) > 1 {
-		p, ok := c.lookup(strings.Join(segs[:len(segs)-1], "."))
+		p, ok := c.lookup(segs[:len(segs)-1])
 		if !ok {
 			return false
 		}
