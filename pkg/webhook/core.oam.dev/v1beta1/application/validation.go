@@ -148,6 +148,12 @@ func conciseSchematicError(err error) string {
 
 // checkDefinitionPermission checks if user has permission to access a definition in either system namespace or app namespace
 func (h *ValidatingHandler) checkDefinitionPermission(ctx context.Context, req admission.Request, resource, definitionType, appNamespace string) (bool, error) {
+	// A pinned type names a definition and the revision to render it from -
+	// webservice@v1. The definition is the object RBAC is written against, and
+	// the revision is a DefinitionRevision under a different name entirely, so
+	// asking for an object called "webservice@v1" denies every pinned binding.
+	definitionType = baseDefinitionName(definitionType)
+
 	// Check permission in vela-system namespace first since most definitions are there
 	// This optimizes for the common case and reduces API calls
 	systemNsSar := &authv1.SubjectAccessReview{
@@ -225,6 +231,15 @@ func (h *ValidatingHandler) checkDefinitionPermission(ctx context.Context, req a
 
 	// User doesn't have permission in either namespace
 	return false, nil
+}
+
+// baseDefinitionName strips the revision a type may pin, leaving the definition
+// name. Types carrying no version are returned unchanged.
+func baseDefinitionName(definitionType string) string {
+	if base, _, found := strings.Cut(definitionType, "@"); found {
+		return base
+	}
+	return definitionType
 }
 
 // definitionExistsInNamespace checks if a definition actually exists in the specified namespace

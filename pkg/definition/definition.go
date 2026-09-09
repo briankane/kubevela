@@ -106,7 +106,7 @@ var (
 		common.TraitType:        oam.LabelTraitDefinitionName,
 		common.PolicyType:       oam.LabelPolicyDefinitionName,
 		common.WorkflowStepType: oam.LabelWorkflowStepDefinitionName,
-		common.SourceType:       "source.oam.dev/name",
+		common.SourceType:       oam.LabelSourceDefinitionName,
 	}
 	// DefinitionKindToType maps the definition kinds to a shorter type
 	DefinitionKindToType = map[string]string{

@@ -118,6 +118,40 @@ func TestValidateDefinitionPermissions(t *testing.T) {
 			expectedErrorCount: 0,
 		},
 		{
+			// A pinned type - webservice@v1, atlas@v2 - names a definition and
+			// the revision to render it from. The permission check asked for an
+			// object called "webservice@v1", which never exists, so every pinned
+			// binding was denied.
+			name: "a version-pinned type is checked against its definition",
+			app: &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-app",
+					Namespace: "test-ns",
+				},
+				Spec: v1beta1.ApplicationSpec{
+					Sources: []v1beta1.ApplicationSource{
+						{Name: "cluster-info", Type: "cluster-config-reader@v1"},
+					},
+					Components: []common.ApplicationComponent{
+						{Name: "comp1", Type: "webservice@v2"},
+					},
+				},
+			},
+			userInfo: authenticationv1.UserInfo{
+				Username: "test-user",
+				Groups:   []string{"test-group"},
+			},
+			allowedDefinitions: map[string]bool{
+				"componentdefinitions/vela-system/webservice":         true,
+				"sourcedefinitions/vela-system/cluster-config-reader": true,
+			},
+			existingDefinitions: map[string]bool{
+				"vela-system/webservice":            true,
+				"vela-system/cluster-config-reader": true,
+			},
+			expectedErrorCount: 0,
+		},
+		{
 			name: "user lacks ComponentDefinition permission",
 			app: &v1beta1.Application{
 				ObjectMeta: metav1.ObjectMeta{

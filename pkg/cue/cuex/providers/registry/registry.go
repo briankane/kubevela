@@ -29,6 +29,8 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	stdpath "path"
+	"strings"
 
 	"github.com/kubevela/pkg/cue/cuex/providers"
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
@@ -102,6 +104,9 @@ func ReadFile(ctx context.Context, params *ReadFileParams) (*ReadFileReturns, er
 	if in.Path == "" {
 		return nil, fmt.Errorf("path is required")
 	}
+	if err := validateRegistryPath(in.Path); err != nil {
+		return nil, err
+	}
 
 	reader, ok := di.Get[FileReader]()
 	if !ok {
@@ -124,6 +129,23 @@ func ReadFile(ctx context.Context, params *ReadFileParams) (*ReadFileReturns, er
 	}
 
 	return &ReadFileReturns{Returns: ReadFileResult{Content: content, Found: true}}, nil
+}
+
+// validateRegistryPath keeps a read inside the registry it names.
+//
+// A path is relative to the registry's configured root, so an absolute one or a
+// path that climbs out of it is a read of somewhere else. What "somewhere else"
+// means depends on the backend, and it is not this provider's business to know
+// which backends happen to be safe.
+func validateRegistryPath(path string) error {
+	if strings.HasPrefix(path, "/") {
+		return fmt.Errorf("path %q must be relative to the registry root", path)
+	}
+	clean := stdpath.Clean(path)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("path %q escapes the registry root", path)
+	}
+	return nil
 }
 
 // ProviderName is the name a template references this provider by.
