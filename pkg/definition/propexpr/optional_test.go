@@ -175,3 +175,24 @@ func TestReferenceIsSource(t *testing.T) {
 	require.True(t, srcRef("cfg").IsSource())
 	require.False(t, ctxRef("cluster").IsSource())
 }
+
+// Context reads were judged by path length alone: anything below the first
+// segment was treated as a lookup into an open map and demanded a fallback. But
+// context.clusterVersion is a struct with declared fields, so a read of
+// .major is as certain as a read of context.namespace.
+func TestUndefendedInReadsContextShapeNotPathLength(t *testing.T) {
+	undefended := func(path ...string) bool {
+		out, err := UndefendedIn([]Reference{{Root: "context", Path: path}}, nil)
+		require.NoError(t, err)
+		return len(out) > 0
+	}
+
+	require.False(t, undefended("namespace"), "a plain field is always supplied")
+	require.False(t, undefended("clusterVersion", "major"),
+		"clusterVersion declares its fields, so a read of one is not absent-prone")
+	require.False(t, undefended("clusterVersion", "gitVersion"))
+
+	require.True(t, undefended("appLabels", "team"),
+		"a key of an open map may find nothing")
+	require.True(t, undefended("appAnnotations", "owner"))
+}

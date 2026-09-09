@@ -45,3 +45,39 @@ func TestReferencesReportsBareRoots(t *testing.T) {
 		"a bare source must be refused where the surface offers none")
 	require.NoError(t, ValidateTree("$(source)", "context", "source"))
 }
+
+// A sibling has() was treated as a guard under || as well as &&, but the two are
+// duals and only && absorbs the error:
+//
+//	has(x) && read(x)    has() false -> false, read never evaluated
+//	has(x) || read(x)    has() false -> read evaluated -> "no such key"
+//	!has(x) || read(x)   has() false -> true, read never evaluated
+//
+// So an unsafe read was reported as defaulted, and admission asked for no
+// fallback on an expression that fails at render.
+func TestGuardedDistinguishesAndFromOr(t *testing.T) {
+	env, err := DynEnv()
+	require.NoError(t, err)
+
+	defaulted := func(expr string) bool {
+		refs, err := References(env, expr)
+		require.NoError(t, err)
+		for _, r := range refs {
+			if r.String() == "source.cfg.note" {
+				return r.Defaulted
+			}
+		}
+		t.Fatalf("expression %q made no read of source.cfg.note", expr)
+		return false
+	}
+
+	require.True(t, defaulted(`has(source.cfg.note) && source.cfg.note == "y"`))
+	require.True(t, defaulted(`!has(source.cfg.note) || source.cfg.note == "y"`))
+	require.True(t, defaulted(`has(source.cfg.note) ? source.cfg.note : "x"`))
+
+	require.False(t, defaulted(`has(source.cfg.note) || source.cfg.note == "y"`),
+		"|| with a plain has() does not defend the read")
+	require.False(t, defaulted(`source.cfg.note == "y" || has(source.cfg.note)`))
+	require.False(t, defaulted(`!has(source.cfg.note) && source.cfg.note == "y"`),
+		"&& with a negated has() is the wrong way round too")
+}

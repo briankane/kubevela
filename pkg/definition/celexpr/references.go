@@ -134,8 +134,18 @@ func guarded(e celast.NavigableExpr, root string, path []string) bool {
 					return true
 				}
 			case "_&&_", "_||_":
+				// && and || are duals, and only one absorbs the error each way
+				// round. `has(x) && read(x)` is safe because a false has()
+				// settles the conjunction; `has(x) || read(x)` is not, because
+				// a false has() leaves the read to be evaluated. The guard for
+				// a disjunction is the negation: `!has(x) || read(x)`.
+				wantNegated := call.FunctionName() == "_||_"
 				for _, a := range args {
-					if a.ID() != child.ID() && testsPath(a, root, path) {
+					if a.ID() == child.ID() {
+						continue
+					}
+					test, negated := presenceTest(a)
+					if test != nil && negated == wantNegated && testsPath(test, root, path) {
 						return true
 					}
 				}
@@ -144,6 +154,20 @@ func guarded(e celast.NavigableExpr, root string, path []string) bool {
 		child = p
 	}
 	return false
+}
+
+// presenceTest strips a leading negation, reporting the expression underneath and
+// whether one was there. It is what tells `has(x)` from `!has(x)`, which guard
+// opposite operators.
+func presenceTest(e celast.Expr) (celast.Expr, bool) {
+	if e.Kind() == celast.CallKind {
+		call := e.AsCall()
+		if call.FunctionName() == operators.LogicalNot && len(call.Args()) == 1 {
+			inner, alreadyNegated := presenceTest(call.Args()[0])
+			return inner, !alreadyNegated
+		}
+	}
+	return e, false
 }
 
 // testsPath reports whether an expression contains a presence test for this exact

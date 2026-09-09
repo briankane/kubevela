@@ -66,10 +66,22 @@ func UndefendedIn(refs []Reference, schemas map[string]string) ([]Reference, err
 
 func canBeAbsent(ref Reference, schemas map[string]cue.Value) (bool, error) {
 	if !ref.IsSource() {
-		// Context has no schema. An indexed read - a label or annotation - is a
-		// lookup into an open map and may find nothing; a plain field is always
-		// supplied, even when its value is empty.
-		return len(ref.Path) > 1, nil
+		// A context field is declared by the registry, so the same schema walk a
+		// source gets applies here. Judging by path length instead treated every
+		// nested read as a lookup into an open map, and demanded a fallback for
+		// context.clusterVersion.major - a field the registry declares as
+		// certainly as context.namespace.
+		if len(ref.Path) < 2 {
+			// A plain field is always supplied, even when its value is empty.
+			return false, nil
+		}
+		field, ok := contextField(ref.Path[0])
+		if !ok {
+			// Not a field any surface offers. The read is refused elsewhere, by
+			// whichever surface check owns it.
+			return false, nil
+		}
+		return optionalPath(field, ref.Path[1:])
 	}
 
 	if len(ref.Path) == 0 {
@@ -85,6 +97,18 @@ func canBeAbsent(ref Reference, schemas map[string]cue.Value) (bool, error) {
 		return false, nil
 	}
 	return optionalPath(schema, ref.Path[1:])
+}
+
+// contextField returns the declared value of a context field, from whichever
+// surface offers it. Surfaces differ in which fields they carry, never in what a
+// field is, so the first match is the answer.
+func contextField(name string) (cue.Value, bool) {
+	for _, surface := range SurfaceNames() {
+		if v, ok := ContextFor(surface).FieldValue(name); ok {
+			return v, true
+		}
+	}
+	return cue.Value{}, false
 }
 
 // optionalPath reports whether any segment of a path may be absent at render.
