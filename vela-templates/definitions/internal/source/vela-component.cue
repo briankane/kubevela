@@ -7,7 +7,7 @@ import (
 	type: "source"
 	annotations: {}
 	labels: {}
-	description: "The status of one placement of one component of a KubeVela Application - health, message, details and traits keyed by type. Status only; never its spec."
+	description: "The status of one placement of one component of a KubeVela Application - health, message, details and traits keyed by type, the first of each type where a component carries more than one. Status only; never its spec."
 }
 
 template: {
@@ -89,6 +89,8 @@ template: {
 		{},
 	][0]
 
+	_traits: *_svc.traits | []
+
 	output: {
 		name:            parameter.component
 		healthy:         *_svc.healthy | false
@@ -97,8 +99,12 @@ template: {
 		details: *_svc.details | {}
 		cluster:   _cluster
 		namespace: *_svc.namespace | _ns
+		// Keyed by type, so a component carrying two traits of one type - which
+		// an Application may declare - would unify two different statuses at one
+		// key and fail the source. The first wins instead, and deterministically:
+		// the guard emits an entry only at the first index of its type.
 		traits: {
-			for t in (*_svc.traits | []) {
+			for i, t in _traits if [for j, u in _traits if u.type == t.type {j}][0] == i {
 				"\(t.type)": {
 					healthy: t.healthy
 					pending: *t.pending | false
