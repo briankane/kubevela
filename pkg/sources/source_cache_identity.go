@@ -25,9 +25,14 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 )
 
-// identityHashLen is long enough that a collision is not a practical concern, and
-// short enough to leave the readable prefix visible.
-const identityHashLen = 8
+// identityHashLen is long enough that a collision is not a practical concern,
+// and short enough to leave the readable prefix visible.
+//
+// 64 bits. A collision means one binding served another binding's data, so the
+// margin is worth more than the eight characters of prefix it costs: at 32 bits
+// the birthday bound puts an even chance of one at around 77,000 identities
+// sharing a prefix, which a large platform reaches.
+const identityHashLen = 16
 
 // identityInputs is everything a cache entry's identity depends on.
 //

@@ -110,8 +110,24 @@ func (s *lruSourceCacheStore) Write(ctx context.Context, cacheKey, sourceType st
 	if err := s.delegate.Write(ctx, cacheKey, sourceType, data, meta); err != nil {
 		return err
 	}
-	// A just-written value is fresh for the whole in-memory window.
-	s.store(cacheKey, data, time.Time{}, s.ttl)
+	// A layer that discards writes discards them here too. The LRU sits outside
+	// the read-only wrapper admission uses, so memoising a dropped write would
+	// seed the process-wide cache from a validation - which is what the wrapper
+	// exists to prevent - and let the reconcile that followed serve that entry
+	// instead of writing the persistent one.
+	if ro, ok := s.delegate.(interface{ discardsWrites() bool }); ok && ro.discardsWrites() {
+		return nil
+	}
+	// The value is fresh for the in-memory window or the source's own TTL,
+	// whichever is shorter. Caching it for the full window regardless would serve
+	// it past its persistent expiry, which is precisely what a short storageTTL
+	// asks not to happen. The same TTL gives the persistent deadline a Layer 1
+	// hit reports, so a hit and a miss answer alike.
+	var storeExpiresAt time.Time
+	if meta.TTL > 0 {
+		storeExpiresAt = time.Now().Add(meta.TTL)
+	}
+	s.store(cacheKey, data, storeExpiresAt, s.effectiveTTL(meta.TTL))
 	return nil
 }
 

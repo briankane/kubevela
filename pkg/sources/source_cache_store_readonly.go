@@ -61,6 +61,11 @@ func (s *readOnlySourceCacheStore) Write(_ context.Context, _, _ string, _ map[s
 	return nil
 }
 
+// discardsWrites lets a layer above this one - the process LRU, which wraps it
+// rather than the other way round - see that a write it just forwarded went
+// nowhere, and decline to memoise it.
+func (s *readOnlySourceCacheStore) discardsWrites() bool { return true }
+
 // Touch is a no-op for the same reason: last-accessed drives the GC sweep, and a
 // validation is not a use.
 func (s *readOnlySourceCacheStore) Touch(_ context.Context, _ string) error {

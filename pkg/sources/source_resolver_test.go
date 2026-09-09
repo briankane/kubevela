@@ -72,7 +72,7 @@ func TestResolveChainedSourceProperties(t *testing.T) {
 	}
 	resolver.sourceTemplates = map[string]string{
 		"typeA": `
-$internal: {key: "test-cache-key-1"}
+$internal: {key: "test-cache-key-1", keyInputs: []}
 output: {
   nested: {
     image: {
@@ -87,7 +87,7 @@ parameter: {
 }
 `,
 		"typeB": `
-$internal: {key: "test-cache-key-2"}
+$internal: {key: "test-cache-key-2", keyInputs: []}
 output: {
   resolved: {
     image: "\(parameter.repo):\(parameter.tag)"
@@ -123,6 +123,7 @@ parameter: {
 const resolver_stale_cache_use_template = `
 $internal: {
 	key: "stale-cache-use"
+	keyInputs: []
 }
 storage: {
 	storageTTL: "1ms"
@@ -139,6 +140,7 @@ parameter: {
 const resolver_stale_cache_fail_template = `
 $internal: {
 	key: "stale-cache-fail"
+	keyInputs: []
 }
 storage: {
 	storageTTL: "1ms"
@@ -245,7 +247,7 @@ func TestResolveSourceSchemaMismatchFails(t *testing.T) {
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": `
-$internal: {key: "test-cache-key-3"}
+$internal: {key: "test-cache-key-3", keyInputs: []}
 schema: {
   image: string
 }
@@ -272,7 +274,7 @@ func TestResolveSourceErrsFieldFails(t *testing.T) {
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": `
-$internal: {key: "test-cache-key-4"}
+$internal: {key: "test-cache-key-4", keyInputs: []}
 output: {
   value: parameter.value
 }
@@ -310,7 +312,7 @@ func TestResolveSourceErrsFieldEmptyIsIgnored(t *testing.T) {
 	resolver.sourceTypes = map[string]string{"s": "t"}
 	resolver.sourceTemplates = map[string]string{
 		"t": `
-$internal: {key: "test-cache-key-5"}
+$internal: {key: "test-cache-key-5", keyInputs: []}
 output: {
   value: parameter.value
 }

@@ -271,3 +271,68 @@ func TestLRUStoreDoesNotCacheAFailedWrite(t *testing.T) {
 	assert.False(t, found, "nothing was written, so nothing may be served")
 	assert.Equal(t, 1, delegate.reads, "the read had to go to the store")
 }
+
+// A write cached the value for the fixed in-memory window regardless of the
+// source's own storageTTL, so a source asking to be refreshed every second was
+// served from memory for thirty. Read already capped the window; Write did not.
+func TestLRUSourceCacheWriteHonoursTheSourceTTL(t *testing.T) {
+	sharedSourceLRU.Clear()
+	delegate := &fakeSourceCacheStore{}
+	store := newTestLRUStore(delegate, time.Minute)
+
+	err := store.Write(context.Background(), "key-ttl", "source-x",
+		map[string]interface{}{"region": "eu-west-1"},
+		velaprocess.SourceCacheWriteMeta{TTL: 10 * time.Millisecond})
+	assert.NoError(t, err)
+
+	time.Sleep(30 * time.Millisecond)
+
+	_, _, _, _, err = store.Read(context.Background(), "key-ttl", 10*time.Millisecond)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, delegate.reads, "the in-memory entry must expire with the source's own TTL")
+}
+
+// The write left storeExpiresAt zero, so a Layer 1 hit reported no expiry at all
+// and the resolver cleared the deadline it had just published.
+func TestLRUSourceCacheWriteReportsThePersistentDeadline(t *testing.T) {
+	sharedSourceLRU.Clear()
+	delegate := &fakeSourceCacheStore{}
+	store := newTestLRUStore(delegate, time.Minute)
+
+	before := time.Now()
+	err := store.Write(context.Background(), "key-exp", "source-x",
+		map[string]interface{}{"region": "eu-west-1"},
+		velaprocess.SourceCacheWriteMeta{TTL: time.Hour})
+	assert.NoError(t, err)
+
+	_, _, found, expiresAt, err := store.Read(context.Background(), "key-exp", time.Hour)
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.False(t, expiresAt.IsZero(), "a Layer 1 hit must report the persistent deadline")
+	assert.WithinDuration(t, before.Add(time.Hour), expiresAt, time.Minute)
+}
+
+// Admission resolves through a read-only store, but the LRU is layered outside
+// it, so a discarded write still populated the process-wide cache: a validation
+// left an entry behind after all, and the reconcile that followed served it
+// instead of writing the persistent one.
+func TestLRUSourceCacheDoesNotSeedFromADiscardedWrite(t *testing.T) {
+	sharedSourceLRU.Clear()
+	delegate := &fakeSourceCacheStore{}
+	store := &lruSourceCacheStore{
+		delegate: NewReadOnlySourceCacheStore(delegate),
+		cache:    sharedSourceLRU,
+		ttl:      time.Minute,
+	}
+
+	err := store.Write(context.Background(), "key-ro", "source-x",
+		map[string]interface{}{"region": "eu-west-1"},
+		velaprocess.SourceCacheWriteMeta{TTL: time.Minute})
+	assert.NoError(t, err)
+	assert.Equal(t, 0, delegate.writes, "the read-only layer must not persist")
+
+	_, _, found, _, err := store.Read(context.Background(), "key-ro", time.Minute)
+	assert.NoError(t, err)
+	assert.False(t, found, "a discarded write must not seed the shared LRU")
+	assert.Equal(t, 1, delegate.reads, "the read must fall through")
+}

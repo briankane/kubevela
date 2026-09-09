@@ -155,3 +155,62 @@ func TestPolicyCacheIsUsed(t *testing.T) {
 	assert.Equal(t, afterFirst, spy.called,
 		"repeated resolutions of the same inputs must not compile again")
 }
+
+// A malformed generated block, or a storage field of the wrong type, used to be
+// swallowed and defaulted. Dropping keyInputs is the one that matters: the
+// identity hash loses every context dimension, so two Applications reading the
+// same source in different namespaces share one cache entry.
+func TestResolveCachePolicyRefusesMalformedBlocks(t *testing.T) {
+	for _, tc := range []struct {
+		name, template, wantErr string
+	}{
+		{
+			name: "keyInputs missing",
+			template: `
+schema: {v: string}
+$internal: {key: "policy-\(context.namespace)"}
+parameter: {name: string}
+output: {v: parameter.name}
+`,
+			wantErr: "keyInputs",
+		},
+		{
+			name: "keyInputs of the wrong type",
+			template: `
+schema: {v: string}
+$internal: {key: "policy-x", keyInputs: "namespace"}
+parameter: {name: string}
+output: {v: parameter.name}
+`,
+			wantErr: "keyInputs",
+		},
+		{
+			name: "storageTTL of the wrong type",
+			template: `
+schema: {v: string}
+$internal: {key: "policy-x", keyInputs: []}
+storage: {storageTTL: 7}
+parameter: {name: string}
+output: {v: parameter.name}
+`,
+			wantErr: "storageTTL",
+		},
+		{
+			name: "onStaleFailure of the wrong type",
+			template: `
+schema: {v: string}
+$internal: {key: "policy-x", keyInputs: []}
+storage: {onStaleFailure: true}
+parameter: {name: string}
+output: {v: parameter.name}
+`,
+			wantErr: "onStaleFailure",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := policyResolver(t, "team-a")
+			_, err := r.resolveCachePolicy("a", "pol", tc.template, map[string]interface{}{"name": "alpha"})
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}

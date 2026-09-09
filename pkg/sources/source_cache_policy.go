@@ -95,17 +95,33 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 	}
 	policy.Key = cacheKey
 
+	// Generated alongside the key and equally required: without it the identity
+	// hash loses every context dimension, so two Applications reading the same
+	// source from different namespaces would share one cache entry. Admission
+	// refuses a definition missing it, so reaching here means the block was
+	// edited by hand after it was stamped.
 	var keyInputs []string
-	if err := internal.LookupPath(value.FieldPath(cachekey.KeyInputsField)).Decode(&keyInputs); err == nil {
-		policy.KeyInputs = keyInputs
+	if err := internal.LookupPath(value.FieldPath(cachekey.KeyInputsField)).Decode(&keyInputs); err != nil {
+		return policy, errors.WithMessagef(err, "resolve %s.%s for source %q",
+			cachekey.InternalField, cachekey.KeyInputsField, sourceName)
 	}
+	policy.KeyInputs = keyInputs
 
 	// storage: is authored and entirely optional - a source with no caching
 	// preferences declares nothing.
 	storage := val.LookupPath(value.FieldPath("storage"))
 
+	// A field that is present but of the wrong type is an authoring mistake, not
+	// an absent preference. Defaulting it would quietly change how fresh a source
+	// is, or turn a definition that asked to fail on stale data into one that
+	// serves it.
 	ttlRaw := ""
-	if err := storage.LookupPath(value.FieldPath("storageTTL")).Decode(&ttlRaw); err == nil && ttlRaw != "" {
+	if f := storage.LookupPath(value.FieldPath("storageTTL")); f.Exists() {
+		if err := f.Decode(&ttlRaw); err != nil {
+			return policy, errors.WithMessagef(err, "source %q has an invalid storageTTL", sourceName)
+		}
+	}
+	if ttlRaw != "" {
 		ttl, err := time.ParseDuration(ttlRaw)
 		if err != nil {
 			return policy, fmt.Errorf("source %q has an invalid storageTTL %q: %w", sourceName, ttlRaw, err)
@@ -117,13 +133,16 @@ func (r *sourceResolver) resolveCachePolicy(sourceName, sourceType, sourceTempla
 	}
 
 	onStaleFailure := ""
-	if err := storage.LookupPath(value.FieldPath("onStaleFailure")).Decode(&onStaleFailure); err == nil && onStaleFailure != "" {
+	if f := storage.LookupPath(value.FieldPath("onStaleFailure")); f.Exists() {
+		if err := f.Decode(&onStaleFailure); err != nil {
+			return policy, errors.WithMessagef(err, "source %q has an invalid onStaleFailure", sourceName)
+		}
+	}
+	if onStaleFailure != "" {
 		switch onStaleFailure {
 		case sourceCachePolicyUseStale, sourceCachePolicyFail:
 			policy.OnStaleFailure = onStaleFailure
 		default:
-			// Silently defaulting here would downgrade a definition that asked to
-			// fail on stale data into one that serves it.
 			return policy, fmt.Errorf("source %q has an unknown onStaleFailure %q: expected %q or %q",
 				sourceName, onStaleFailure, sourceCachePolicyUseStale, sourceCachePolicyFail)
 		}

@@ -19,7 +19,6 @@ package sources
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 
 	cueformat "cuelang.org/go/cue/format"
 
@@ -27,6 +26,7 @@ import (
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
 	cueparser "cuelang.org/go/cue/parser"
+	"k8s.io/utils/lru"
 )
 
 func (r *sourceResolver) validateResolvedOutput(sourceType, sourceTemplate string, output map[string]interface{}) error {
@@ -57,13 +57,23 @@ func (r *sourceResolver) validateResolvedOutput(sourceType, sourceTemplate strin
 	return out.Validate(cue.Concrete(true))
 }
 
+// schemaExprCacheSize bounds the number of distinct definition templates kept.
+// Unbounded, every edit to every SourceDefinition would retain another copy of
+// its whole template for the life of the process.
+const schemaExprCacheSize = 512
+
 // schemaExprCache memoises the extracted schema block, which is fixed for the
 // life of a definition. A pure function of the template, so the text is the key.
-var schemaExprCache sync.Map // template -> string
+//
+// Keyed on the text rather than a hash of it, and bounded, for the same reasons
+// policyCache is.
+var schemaExprCache = lru.New(schemaExprCacheSize)
 
 func extractSourceSchemaExpr(template string) (string, error) {
-	if hit, ok := schemaExprCache.Load(template); ok {
-		return hit.(string), nil
+	if hit, ok := schemaExprCache.Get(template); ok {
+		if expr, ok := hit.(string); ok {
+			return expr, nil
+		}
 	}
 	expr, err := parseSourceSchemaExpr(template)
 	if err != nil {
@@ -71,7 +81,7 @@ func extractSourceSchemaExpr(template string) (string, error) {
 		// reporting again rather than remembering.
 		return "", err
 	}
-	schemaExprCache.Store(template, expr)
+	schemaExprCache.Add(template, expr)
 	return expr, nil
 }
 
