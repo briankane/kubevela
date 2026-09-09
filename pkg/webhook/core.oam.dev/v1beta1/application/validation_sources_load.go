@@ -95,14 +95,15 @@ func (h *ValidatingHandler) loadSourceParameter(ctx context.Context, appNamespac
 	if def.Spec.Schematic == nil || def.Spec.Schematic.CUE == nil {
 		return nil, nil
 	}
-	paramExpr, err := extractTopLevelBlock(def.Spec.Schematic.CUE.Template, "parameter")
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(paramExpr) == "" {
+	// The whole reduction, not just the parameter field: a definition may write
+	// `parameter: #Params` against a top-level #Params, and extracting the field
+	// alone left a reference to something that was no longer there. The template
+	// then would not compile and every binding of the source was rejected.
+	src, ok := extractParameterBlock(def.Spec.Schematic.CUE.Template)
+	if !ok || strings.TrimSpace(src) == "" {
 		return nil, nil
 	}
-	v := cuecontext.New().CompileString("parameter: " + paramExpr)
+	v := cuecontext.New().CompileString(src)
 	if v.Err() != nil {
 		return nil, v.Err()
 	}
@@ -119,8 +120,9 @@ func (h *ValidatingHandler) loadSourceParameter(ctx context.Context, appNamespac
 // Best-effort by design: any failure - definition not found, template that does
 // not compile statically, no parameter block - yields nil so validation fails
 // open rather than blocking a legitimate apply. There is no error to return.
-func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespace, kind, defName string) *cueStruct {
-	tmpl, ok := h.getDefinitionTemplate(ctx, appNamespace, kind, defName)
+func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespace, kind, defName string,
+	annotations map[string]string) *cueStruct {
+	tmpl, ok := h.getDefinitionTemplate(ctx, appNamespace, kind, defName, annotations)
 	if !ok || strings.TrimSpace(tmpl) == "" {
 		return nil
 	}
@@ -231,12 +233,18 @@ func extractParameterBlock(tmpl string) (string, bool) {
 
 // getDefinitionTemplate fetches a Component/Trait definition (app namespace with
 // system-namespace fallback) and returns its CUE template string.
-func (h *ValidatingHandler) getDefinitionTemplate(ctx context.Context, appNamespace, kind, defName string) (string, bool) {
+// A version-pinned type - webservice@v1 - names a DefinitionRevision rather than
+// the live definition, so GetCapabilityDefinition is what resolves it, exactly as
+// the render path does. GetDefinition looks for an object literally called
+// "webservice@v1", finds none, and loadTargetParameter then fails open - so the
+// type check was skipped and a mismatched expression reached render.
+func (h *ValidatingHandler) getDefinitionTemplate(ctx context.Context, appNamespace, kind, defName string,
+	annotations map[string]string) (string, bool) {
 	lookupCtx := oamutil.SetNamespaceInCtx(ctx, appNamespace)
 	switch kind {
 	case "component":
 		def := &v1beta1.ComponentDefinition{}
-		if err := oamutil.GetDefinition(lookupCtx, h.Client, def, defName); err != nil {
+		if err := oamutil.GetCapabilityDefinition(lookupCtx, h.Client, def, defName, annotations); err != nil {
 			return "", false
 		}
 		if def.Spec.Schematic == nil || def.Spec.Schematic.CUE == nil {
@@ -245,7 +253,7 @@ func (h *ValidatingHandler) getDefinitionTemplate(ctx context.Context, appNamesp
 		return def.Spec.Schematic.CUE.Template, true
 	case "trait":
 		def := &v1beta1.TraitDefinition{}
-		if err := oamutil.GetDefinition(lookupCtx, h.Client, def, defName); err != nil {
+		if err := oamutil.GetCapabilityDefinition(lookupCtx, h.Client, def, defName, annotations); err != nil {
 			return "", false
 		}
 		if def.Spec.Schematic == nil || def.Spec.Schematic.CUE == nil {
@@ -254,7 +262,7 @@ func (h *ValidatingHandler) getDefinitionTemplate(ctx context.Context, appNamesp
 		return def.Spec.Schematic.CUE.Template, true
 	case "workflowstep":
 		def := &v1beta1.WorkflowStepDefinition{}
-		if err := oamutil.GetDefinition(lookupCtx, h.Client, def, defName); err != nil {
+		if err := oamutil.GetCapabilityDefinition(lookupCtx, h.Client, def, defName, annotations); err != nil {
 			return "", false
 		}
 		if def.Spec.Schematic == nil || def.Spec.Schematic.CUE == nil {
@@ -263,7 +271,7 @@ func (h *ValidatingHandler) getDefinitionTemplate(ctx context.Context, appNamesp
 		return def.Spec.Schematic.CUE.Template, true
 	case "policy":
 		def := &v1beta1.PolicyDefinition{}
-		if err := oamutil.GetDefinition(lookupCtx, h.Client, def, defName); err != nil {
+		if err := oamutil.GetCapabilityDefinition(lookupCtx, h.Client, def, defName, annotations); err != nil {
 			return "", false
 		}
 		if def.Spec.Schematic == nil || def.Spec.Schematic.CUE == nil {

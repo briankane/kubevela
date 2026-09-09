@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 
+	"cuelang.org/go/cue"
+
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,6 +31,7 @@ import (
 
 	oamcommon "github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
 // Reducing a template to its parameter block is what keeps the type check
@@ -209,7 +212,7 @@ func TestGetDefinitionTemplate(t *testing.T) {
 		{"", "anything", "", false},
 	} {
 		t.Run(tc.kind+"/"+tc.name, func(t *testing.T) {
-			got, ok := h.getDefinitionTemplate(ctx, "default", tc.kind, tc.name)
+			got, ok := h.getDefinitionTemplate(ctx, "default", tc.kind, tc.name, nil)
 			require.Equal(t, tc.ok, ok)
 			require.Equal(t, tc.want, got)
 		})
@@ -235,12 +238,92 @@ func TestLoadTargetParameterFailsOpen(t *testing.T) {
 	).Build()}
 	ctx := context.Background()
 
-	param := h.loadTargetParameter(ctx, "default", "component", "webservice")
+	param := h.loadTargetParameter(ctx, "default", "component", "webservice", nil)
 	require.NotNil(t, param)
 	require.True(t, param.requiredAt(segs("image")))
 
-	require.Nil(t, h.loadTargetParameter(ctx, "default", "component", "absent"),
+	require.Nil(t, h.loadTargetParameter(ctx, "default", "component", "absent", nil),
 		"a definition that is not there yet must not block the apply")
-	require.Nil(t, h.loadTargetParameter(ctx, "default", "component", "no-parameter"),
+	require.Nil(t, h.loadTargetParameter(ctx, "default", "component", "no-parameter", nil),
 		"a definition with no parameter block has nothing to check against")
+}
+
+// The source parameter block was extracted on its own, so a definition writing
+// `parameter: #Params` lost the #Params it referenced and would not compile.
+// loadSourceParameter then reported a failure and every binding of that source
+// was rejected. The target-definition extractor already kept them.
+func TestLoadSourceParameterKeepsReferencedDefinitions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1beta1.AddToScheme(scheme))
+
+	def := &v1beta1.SourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-params", Namespace: "vela-system"},
+		Spec: v1beta1.SourceDefinitionSpec{
+			Schematic: &oamcommon.Schematic{CUE: &oamcommon.CUE{Template: `
+#Params: {
+	host: string
+	port: *443 | int
+}
+schema: {url: string}
+$internal: {key: "shared-params", keyInputs: []}
+parameter: #Params
+output: {url: "https://\(parameter.host)"}
+`}},
+		},
+	}
+
+	h := &ValidatingHandler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(def).Build()}
+	param, err := h.loadSourceParameter(context.Background(), "default", "shared-params", nil)
+	require.NoError(t, err)
+	require.NotNil(t, param)
+
+	kind, declared := param.kindAt(segs("host"))
+	require.True(t, declared, "host must resolve through the referenced definition")
+	require.Equal(t, cue.StringKind, kind)
+	require.True(t, param.requiredAt(segs("host")))
+	require.False(t, param.requiredAt(segs("port")), "port has a default")
+}
+
+// A pinned type names a DefinitionRevision, not the live definition, so looking
+// for an object literally called "webservice@v1" found nothing and
+// loadTargetParameter failed open: the type check was skipped and a mismatched
+// expression reached render.
+func TestGetDefinitionTemplateResolvesAPinnedRevision(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1beta1.AddToScheme(scheme))
+
+	const pinned = `parameter: {image: string, replicas: int}`
+	live := &v1beta1.ComponentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "webservice", Namespace: "vela-system"},
+		Spec: v1beta1.ComponentDefinitionSpec{
+			Schematic: &oamcommon.Schematic{CUE: &oamcommon.CUE{Template: `parameter: {image: string}`}},
+		},
+	}
+	rev := &v1beta1.DefinitionRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "webservice-v1", Namespace: "vela-system",
+			Labels: map[string]string{oam.LabelComponentDefinitionName: "webservice"},
+		},
+		Spec: v1beta1.DefinitionRevisionSpec{
+			Revision:       1,
+			DefinitionType: oamcommon.ComponentType,
+			ComponentDefinition: v1beta1.ComponentDefinition{
+				ObjectMeta: metav1.ObjectMeta{Name: "webservice"},
+				Spec: v1beta1.ComponentDefinitionSpec{
+					Schematic: &oamcommon.Schematic{CUE: &oamcommon.CUE{Template: pinned}},
+				},
+			},
+		},
+	}
+
+	h := &ValidatingHandler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(live, rev).Build()}
+
+	tmpl, ok := h.getDefinitionTemplate(context.Background(), "default", "component", "webservice@v1", nil)
+	require.True(t, ok, "the pinned revision must resolve")
+	require.Equal(t, pinned, tmpl)
+
+	param := h.loadTargetParameter(context.Background(), "default", "component", "webservice@v1", nil)
+	require.NotNil(t, param, "a pinned target must still be type-checked")
+	_, declared := param.kindAt(segs("replicas"))
+	require.True(t, declared, "the revision's parameter block is the one that applies")
 }

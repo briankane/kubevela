@@ -130,7 +130,7 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 		if pv, ok := targetParams[key]; ok {
 			return pv
 		}
-		pv := h.loadTargetParameter(ctx, app.Namespace, kind, defType)
+		pv := h.loadTargetParameter(ctx, app.Namespace, kind, defType, app.GetAnnotations())
 		targetParams[key] = pv
 		return pv
 	}
