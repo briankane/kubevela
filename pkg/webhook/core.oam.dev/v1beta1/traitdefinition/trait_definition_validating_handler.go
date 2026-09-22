@@ -33,6 +33,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	controller "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
+	"github.com/oam-dev/kubevela/pkg/definition/inherit"
 	"github.com/oam-dev/kubevela/pkg/logging"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	webhookutils "github.com/oam-dev/kubevela/pkg/webhook/utils"
@@ -49,6 +50,8 @@ var traitDefGVR = v1beta1.TraitDefinitionGVR
 // ValidatingHandler handles validation of trait definition
 type ValidatingHandler struct {
 	Client client.Client
+	// Live reads straight from the API server; see the component handler.
+	Live client.Client
 
 	// Decoder decodes object
 	Decoder admission.Decoder
@@ -80,6 +83,9 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	logger.WithStep("start").Info("Starting admission validation for TraitDefinition resource", "operation", req.Operation, "resourceVersion", req.Kind.Version)
 
 	obj := &v1beta1.TraitDefinition{}
+	// Advisory findings, returned with an accepted definition rather than
+	// refusing it.
+	var warnings []string
 	if req.Resource.String() != traitDefGVR.String() {
 		err := fmt.Errorf("expect resource to be %s", traitDefGVR)
 		logger.WithStep("resource-check").WithError(err).Error(err, "Admission request targets unexpected resource type - rejecting request",
@@ -90,7 +96,6 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	}
 
 	if req.Operation == admissionv1.Create || req.Operation == admissionv1.Update {
-		var warnings []string
 		if err := h.Decoder.Decode(req, obj); err != nil {
 			logger.WithStep("decode").WithError(err).Error(err, "Unable to decode admission request payload into TraitDefinition object - malformed request")
 			return admission.Errored(http.StatusBadRequest, fmt.Errorf("%s (requestUID=%s)", err.Error(), req.UID))
@@ -125,7 +130,25 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 				}
 			}
 
-			if err := webhookutils.ValidateCuexTemplate(ctx, cueTemplate); err != nil {
+			// A trait that extends another is judged against what it extends.
+			// Compiling its template alone would always fail: `$super` is declared
+			// nowhere in it, by design.
+			if obj.Spec.Extends != "" {
+				ancestors, err := appfile.TraitAncestors(ctx, h.definitionReader(), obj)
+				if err != nil {
+					logger.WithStep("validate-extends").WithError(err).Error(err, "TraitDefinition extends a definition that cannot be resolved")
+					return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
+				}
+				warns, err := webhookutils.ValidateInheritedTemplate(
+					ctx, obj.Name, cueTemplate, ancestors, inherit.TraitSurface,
+					webhookutils.StatusSources(obj.Spec.Status)...)
+				if err != nil {
+					logger.WithStep("validate-extends").WithError(err).Error(err, "TraitDefinition does not satisfy the contract of the definition it extends")
+					return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
+				}
+				warnings = append(warnings, warns...)
+				logger.WithStep("validate-extends").WithSuccess(true).Info("TraitDefinition inheritance validated", "extends", obj.Spec.Extends, "chainLength", len(ancestors))
+			} else if err := webhookutils.ValidateCuexTemplate(ctx, cueTemplate); err != nil {
 				logger.WithStep("validate-cue").WithError(err).Error(err, "CUE template contains syntax errors or invalid constructs - template compilation failed")
 				return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 			}
@@ -158,13 +181,12 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 			return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 		}
 		logger.WithStep("complete").WithSuccess(true, startTime).Info("TraitDefinition admission validation completed successfully - resource is valid and will be admitted", "definitionName", obj.Name, "operation", req.Operation)
-		if len(warnings) > 0 {
-			return admission.ValidationResponse(true, "").WithWarnings(warnings...)
-		}
 	} else {
 		logger.WithStep("skip-validation").Info("Skipping TraitDefinition validation - operation does not require validation", "operation", req.Operation, "reason", "only CREATE and UPDATE operations are validated")
 	}
-	return admission.ValidationResponse(true, "")
+	resp := admission.ValidationResponse(true, "")
+	resp.Warnings = warnings
+	return resp
 }
 
 // RegisterValidatingHandler will register TraitDefinition validation to webhook
@@ -172,6 +194,7 @@ func RegisterValidatingHandler(mgr manager.Manager, _ controller.Args) {
 	server := mgr.GetWebhookServer()
 	server.Register("/validating-core-oam-dev-v1beta1-traitdefinitions", &webhook.Admission{Handler: &ValidatingHandler{
 		Client:  mgr.GetClient(),
+		Live:    webhookutils.LiveClient(mgr),
 		Decoder: admission.NewDecoder(mgr.GetScheme()),
 		Validators: []TraitDefValidator{
 			TraitDefValidatorFn(ValidateDefinitionReference),
@@ -201,4 +224,10 @@ func ValidateDefinitionReference(_ context.Context, td v1beta1.TraitDefinition) 
 
 	}
 	return nil
+}
+
+// definitionReader is the client a chain is resolved with: the cache, with the
+// API server behind it for a parent written moments earlier.
+func (h *ValidatingHandler) definitionReader() client.Client {
+	return webhookutils.ReadThroughCache(h.Client, h.Live)
 }

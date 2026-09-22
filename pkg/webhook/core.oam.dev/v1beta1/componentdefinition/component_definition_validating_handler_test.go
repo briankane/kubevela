@@ -27,6 +27,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/stretchr/testify/require"
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -678,3 +679,31 @@ outputs: {}`
 
 	})
 })
+
+// An extending definition with no template has nothing to call its parent from,
+// so it inherits no workload and describes nothing. Admitting it defers the
+// failure to render time, where the message is about a missing `$super` block
+// rather than about the definition being empty.
+func TestExtendingWithNoTemplateIsRefused(t *testing.T) {
+	cd := &v1beta1.ComponentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "empty-child", Namespace: "vela-system"},
+		Spec:       v1beta1.ComponentDefinitionSpec{Extends: "webservice"},
+	}
+
+	err := ValidateWorkload(nil, cd)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no CUE template to call it from")
+}
+
+// With a template it is fine: the workload comes from the parent.
+func TestExtendingWithATemplateInheritsTheWorkload(t *testing.T) {
+	cd := &v1beta1.ComponentDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "child", Namespace: "vela-system"},
+		Spec: v1beta1.ComponentDefinitionSpec{
+			Extends:   "webservice",
+			Schematic: &common.Schematic{CUE: &common.CUE{Template: "$super: properties: {}"}},
+		},
+	}
+
+	require.NoError(t, ValidateWorkload(nil, cd))
+}
