@@ -60,6 +60,18 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 	if !ExpressionsEnabledFor(appAnnotationsFrom(ctx)) {
 		return params, nil
 	}
+	// A validation types expressions from their schemas instead of resolving
+	// them. Admission has no business performing the source's live I/O inside a
+	// webhook timeout, and the type is the only thing it can honestly judge: the
+	// value is re-resolved later and can change with no admission event.
+	if TypeOnly(ctx.GetCtx()) {
+		typed, ok := params.(map[string]interface{})
+		if !ok {
+			return params, nil
+		}
+		return TypedParams(ctx, typed)
+	}
+
 	bt, err := json.Marshal(params)
 	if err != nil {
 		return nil, err

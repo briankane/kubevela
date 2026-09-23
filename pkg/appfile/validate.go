@@ -56,11 +56,11 @@ import (
 
 // ValidateCUESchematicAppfile validates CUE schematic workloads in an Appfile
 func (p *Parser) ValidateCUESchematicAppfile(a *Appfile) error {
-	// This render resolves sources for real - it has to, to type-check the
-	// result against the consuming parameter - but it is a validation, so it
-	// must not leave a cache entry behind. Reads still go through: not reading
-	// would make every admission repeat the source's live I/O, and would have
-	// validation resolve different data than the render that follows it.
+	// Nothing here resolves a source any more - WithTypeOnly below sees to that
+	// - so this store should never be touched. It stays as the guard for the
+	// case it was written for: a render reached from validation that does not
+	// carry the marker would otherwise write cache entries from an apply that
+	// may yet be refused.
 	restore := a.SourceCacheStore
 	a.SourceCacheStore = sources.NewReadOnlySourceCacheStore(sourceCacheStoreFor(a))
 	defer func() { a.SourceCacheStore = restore }()
@@ -79,6 +79,11 @@ func (p *Parser) ValidateCUESchematicAppfile(a *Appfile) error {
 			ctxData.Ctx = context.Background()
 		}
 		ctxData.Ctx = helm.WithDryRun(ctxData.Ctx)
+		// Type source expressions rather than resolving them, for every render
+		// this validation performs: the component's, and each of its traits'.
+		// Set here rather than at each render so a site cannot be forgotten and
+		// quietly perform the live I/O the others avoid.
+		ctxData.Ctx = sources.WithTypeOnly(ctxData.Ctx)
 
 		if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableCueValidation) {
 			err := p.ValidateComponentParams(ctxData, wl, a)
@@ -159,30 +164,37 @@ func (p *Parser) ValidateComponentParams(ctxData velaprocess.ContextData, wl *Co
 		return errors.WithStack(err)
 	}
 
-	// Substitute source and context expressions before validating.
+	// Type source expressions from their schema rather than resolving them.
 	//
-	// These params are the authored ones, so an unresolved $(source...) reaches
-	// CUE as the literal string it is and collides with any non-string
-	// constraint - "conflicting values int and \"$(source.config.replicas)\"".
-	// The render path substitutes before it evaluates; this one has to as well,
-	// or the same Application is accepted at render and refused here.
+	// An unresolved $(source...) reaches CUE as the literal string it is and
+	// collides with any non-string constraint - "conflicting values int and
+	// \"$(source.config.replicas)\"" - so something type-compatible has to take
+	// its place. Resolving for real is one way, and it was the first: it meant
+	// every apply performed the source's live I/O inside the admission webhook's
+	// timeout, against an endpoint that may be slow or unreachable.
 	//
-	// ValidateCUESchematicAppfile installs a read-through, write-discarding cache
-	// store for exactly this: the reads happen, and no entry is left behind by a
-	// validation.
+	// The SourceDefinition's schema already declares the type, and the type is
+	// the only thing this check can honestly judge. The value is re-resolved on
+	// a later reconcile and can change with no admission event to catch it, so
+	// validating the one that happened to be current is a false comfort.
+	//
+	// A type rather than a placeholder value, because CUE takes both and only
+	// one is right: `replicas: int` unifies with `>0 & int`, while a sentinel 0
+	// is refused as out of bound. Validate(Concrete(false)) below is what lets
+	// the non-concrete value through.
 	params, err := sources.ResolveSourceExpressions(ctx, wl.Params, sources.SurfaceComponent)
 	if err != nil {
-		return errors.WithMessagef(err, "component %q: resolve source expressions", wl.Name)
+		return errors.WithMessagef(err, "component %q: type source expressions", wl.Name)
 	}
 	resolvedParams, ok := params.(map[string]interface{})
 	if !ok {
 		resolvedParams = wl.Params
 	}
-
-	paramSnippet, err := cueParamBlock(resolvedParams)
+	paramBody, err := sources.ParamsAsCUE(resolvedParams)
 	if err != nil {
 		return errors.WithMessagef(err, "component %q: invalid params", wl.Name)
 	}
+	paramSnippet := velaprocess.ParameterFieldName + ": " + paramBody
 
 	// Apply the cue compatibility upgrades so that the render path applies
 	templateStr, _ := upgrade.EnsureCueVersionCompatibility(wl.FullTemplate.TemplateStr, wl.Name, upgrade.ComponentKind, upgrade.TemplateAreaMain)

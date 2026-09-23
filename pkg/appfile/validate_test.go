@@ -17,6 +17,7 @@ limitations under the License.
 package appfile
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -30,8 +31,11 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
+	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
 	"github.com/oam-dev/kubevela/pkg/features"
+	"github.com/oam-dev/kubevela/pkg/oam"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 func TestTrait_EvalContext_OutputNameUniqueness(t *testing.T) {
@@ -1684,4 +1688,214 @@ parameter: {
 			assert.NoError(t, (&Parser{}).ValidateComponentParams(ctxData, wl, app))
 		})
 	}
+}
+
+// Admission type-checks an expression-fed parameter from the SourceDefinition's
+// schema, without resolving the source.
+//
+// Resolving to type-check meant every apply did the source's live I/O - an HTTP
+// call, a cluster read - inside the admission webhook's timeout, against an
+// endpoint that may be slow or unreachable. The schema already declares the
+// type, which is the only thing this check can honestly judge: the value is
+// re-resolved later and can change with no admission event to catch it.
+//
+// The source here cannot resolve at all - its template reads a cluster that is
+// not there - so the validation passing is the proof that it never tried.
+func TestValidateComponentParamsTypesFromSchemaWithoutResolving(t *testing.T) {
+	assert.NoError(t, utilfeature.DefaultMutableFeatureGate.Set(
+		string(features.EnableCueValidation)+"=true,"+
+			string(features.EnableCelExpressions)+"=true"))
+	defer func() {
+		_ = utilfeature.DefaultMutableFeatureGate.Set(string(features.EnableCelExpressions) + "=false")
+	}()
+
+	// Reads a ConfigMap through vela/kube: resolving needs a live cluster.
+	const unresolvable = `
+import "vela/kube"
+$internal: {key: "demo", keyInputs: []}
+schema: {replicas: int, image: string}
+parameter: {name: string}
+_cm: kube.#Get & {$params: resource: {apiVersion: "v1", kind: "ConfigMap", metadata: {name: parameter.name, namespace: "default"}}}
+output: {replicas: 3, image: _cm.$returns.data.image}
+`
+	appFor := func(paramType string) (*Appfile, *Component) {
+		af := &Appfile{
+			Name: "myapp", Namespace: "test-ns",
+			AppAnnotations: map[string]string{oam.AnnotationCelExpressions: "true"},
+			Sources: []v1beta1.ApplicationSource{
+				{Name: "cfg", Type: "demo", Properties: &runtime.RawExtension{Raw: []byte(`{"name":"app-config"}`)}},
+			},
+			RelatedSourceDefinitions: map[string]*v1beta1.SourceDefinition{
+				"demo": {Spec: v1beta1.SourceDefinitionSpec{
+					Schematic: &common.Schematic{CUE: &common.CUE{Template: unresolvable}},
+				}},
+			},
+		}
+		wl := &Component{
+			Name: "my-comp", Type: "worker",
+			FullTemplate: &Template{TemplateStr: `
+				parameter: { replicas: ` + paramType + ` }
+				output: { apiVersion: "v1", kind: "ConfigMap" }
+			`},
+			Params: map[string]any{"replicas": "$(source.cfg.replicas)"},
+		}
+		return af, wl
+	}
+
+	t.Run("an int-typed read satisfies an int parameter", func(t *testing.T) {
+		af, wl := appFor("int")
+		ctxData := typeOnlyContextData(af, wl.Name)
+		assert.NoError(t, (&Parser{}).ValidateComponentParams(ctxData, wl, af))
+	})
+
+	// The whole point of typing it: a mismatch is still refused.
+	t.Run("an int-typed read is refused by a string parameter", func(t *testing.T) {
+		af, wl := appFor("string")
+		ctxData := typeOnlyContextData(af, wl.Name)
+		err := (&Parser{}).ValidateComponentParams(ctxData, wl, af)
+		assert.Error(t, err, "an int read feeding a string parameter must not pass")
+	})
+
+	// A value constraint cannot be judged from a type, and must not be guessed
+	// at: a sentinel value of 0 would refuse this outright.
+	t.Run("a value constraint is left to the render", func(t *testing.T) {
+		af, wl := appFor(">0 & int")
+		ctxData := typeOnlyContextData(af, wl.Name)
+		assert.NoError(t, (&Parser{}).ValidateComponentParams(ctxData, wl, af))
+	})
+}
+
+// A struct-valued read has to keep its shape. The required-field check flattens
+// what was provided and looks for "meta.region", so a read of `meta` that
+// arrived as one opaque value would satisfy nothing and every such component
+// would be refused for missing a field it supplies.
+func TestValidateComponentParamsKeepsTheShapeOfAStructRead(t *testing.T) {
+	assert.NoError(t, utilfeature.DefaultMutableFeatureGate.Set(
+		string(features.EnableCueValidation)+"=true,"+
+			string(features.EnableCelExpressions)+"=true"))
+	defer func() {
+		_ = utilfeature.DefaultMutableFeatureGate.Set(string(features.EnableCelExpressions) + "=false")
+	}()
+
+	const template = `
+$internal: {key: "demo", keyInputs: []}
+schema: {meta: {region: string, zone: string}, tags: [...string]}
+parameter: {}
+output: {meta: {region: "eu", zone: "a"}, tags: ["x"]}
+`
+	af := &Appfile{
+		Name: "myapp", Namespace: "test-ns",
+		AppAnnotations: map[string]string{oam.AnnotationCelExpressions: "true"},
+		Sources:        []v1beta1.ApplicationSource{{Name: "cfg", Type: "demo"}},
+		RelatedSourceDefinitions: map[string]*v1beta1.SourceDefinition{
+			"demo": {Spec: v1beta1.SourceDefinitionSpec{
+				Schematic: &common.Schematic{CUE: &common.CUE{Template: template}},
+			}},
+		},
+	}
+	wl := &Component{
+		Name: "my-comp", Type: "worker",
+		FullTemplate: &Template{TemplateStr: `
+			parameter: {
+				meta: {region: string, zone: string}
+				tags: [...string]
+			}
+			output: { apiVersion: "v1", kind: "ConfigMap" }
+		`},
+		Params: map[string]any{
+			"meta": "$(source.cfg.meta)",
+			"tags": "$(source.cfg.tags)",
+		},
+	}
+	ctxData := typeOnlyContextData(af, wl.Name)
+	assert.NoError(t, (&Parser{}).ValidateComponentParams(ctxData, wl, af),
+		"a struct read must satisfy the required fields its schema declares")
+
+	// And the shape is what reaches the required-field check, not one opaque key.
+	pCtx := velaprocess.NewContext(ctxData)
+	typed, err := sources.TypedParams(pCtx, wl.Params)
+	assert.NoError(t, err)
+	meta, ok := typed["meta"].(map[string]any)
+	assert.True(t, ok, "a struct read expands to its fields, got %T", typed["meta"])
+	assert.Contains(t, meta, "region")
+	assert.Contains(t, meta, "zone")
+	assert.Equal(t, sources.CUEType("[...string]"), typed["tags"], "a list keeps its element type")
+}
+
+// The whole validation, not just the parameter check: the component and its
+// traits are rendered too, and those renders resolved sources as well.
+//
+// The source here cannot resolve - its template reads a cluster that is not
+// there - so this passing is the proof that admission performs no source I/O at
+// all, which is what the KEP promised: "no data is fetched at this point".
+func TestValidateCUESchematicAppfileDoesNoSourceIO(t *testing.T) {
+	assert.NoError(t, utilfeature.DefaultMutableFeatureGate.Set(
+		string(features.EnableCueValidation)+"=true,"+
+			string(features.EnableCelExpressions)+"=true"))
+	t.Cleanup(func() {
+		assert.NoError(t, utilfeature.DefaultMutableFeatureGate.Set(
+			string(features.EnableCueValidation)+"=false,"+
+				string(features.EnableCelExpressions)+"=false"))
+	})
+
+	const unresolvable = `
+import "vela/kube"
+$internal: {key: "demo", keyInputs: []}
+schema: {image: string, domain: string}
+parameter: {name: string}
+_cm: kube.#Get & {$params: resource: {apiVersion: "v1", kind: "ConfigMap", metadata: {name: parameter.name, namespace: "default"}}}
+output: {image: _cm.$returns.data.image, domain: _cm.$returns.data.domain}
+`
+	af := &Appfile{
+		Name: "test-app", Namespace: "test-ns",
+		AppAnnotations: map[string]string{oam.AnnotationCelExpressions: "true"},
+		Sources: []v1beta1.ApplicationSource{
+			{Name: "cfg", Type: "demo", Properties: &runtime.RawExtension{Raw: []byte(`{"name":"app-config"}`)}},
+		},
+		RelatedSourceDefinitions: map[string]*v1beta1.SourceDefinition{
+			"demo": {Spec: v1beta1.SourceDefinitionSpec{
+				Schematic: &common.Schematic{CUE: &common.CUE{Template: unresolvable}},
+			}},
+		},
+		ParsedComponents: []*Component{{
+			Name: "my-comp", Type: "worker",
+			CapabilityCategory: types.CUECategory,
+			Params:             map[string]any{"image": "$(source.cfg.image)"},
+			FullTemplate: &Template{TemplateStr: `
+				parameter: { image: string }
+				output: {
+					apiVersion: "apps/v1"
+					kind: "Deployment"
+					spec: template: spec: containers: [{name: "c", image: parameter.image}]
+				}
+			`},
+			engine: definition.NewWorkloadAbstractEngine("my-comp"),
+			Traits: []*Trait{{
+				Name:               "my-trait",
+				CapabilityCategory: types.CUECategory,
+				Params:             map[string]any{"domain": "$(source.cfg.domain)"},
+				Template: `
+					parameter: { domain: string }
+					patch: {}
+				`,
+				engine: definition.NewTraitAbstractEngine("my-trait"),
+			}},
+		}},
+	}
+
+	assert.NoError(t, (&Parser{}).ValidateCUESchematicAppfile(af),
+		"validation must type from the schema rather than resolve the source")
+}
+
+// typeOnlyContextData is what ValidateCUESchematicAppfile hands each component:
+// a context marked as validating, so expressions are typed rather than resolved.
+// A test calling ValidateComponentParams directly has to mark it the same way or
+// it exercises the render path instead.
+func typeOnlyContextData(af *Appfile, compName string) velaprocess.ContextData {
+	ctxData := GenerateContextDataFromAppFile(af, compName)
+	if ctxData.Ctx == nil {
+		ctxData.Ctx = context.Background()
+	}
+	ctxData.Ctx = sources.WithTypeOnly(ctxData.Ctx)
+	return ctxData
 }

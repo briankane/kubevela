@@ -149,15 +149,12 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		if err != nil {
 			return errors.WithMessagef(err, "resolve source expressions for %s %s", surface, wd.name)
 		}
-		bt, err := json.Marshal(params)
-		if resolved != nil {
-			bt, err = json.Marshal(resolved)
-		}
+		bt, err := renderParams(params, resolved)
 		if err != nil {
 			return errors.WithMessagef(err, "marshal parameter of workload %s", wd.name)
 		}
-		if string(bt) != "null" {
-			paramFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, string(bt))
+		if bt != "null" {
+			paramFile = fmt.Sprintf("%s: %s", velaprocess.ParameterFieldName, bt)
 		}
 	}
 
@@ -201,6 +198,13 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 		return errors.New(strings.TrimRight(result.String(), "\n"))
 	}
 	output := val.LookupPath(value.FieldPath(OutputFieldName))
+	// A validation types its parameters, so whatever they feed is non-concrete.
+	// The trait renders against this output and the engine hands it over as
+	// JSON, which cannot spell an incomplete value - so fill it here, where
+	// nothing checks it, rather than in the parameters, where something does.
+	if sources.TypeOnly(ctx.GetCtx()) {
+		output, _ = sources.ConcreteForValidation(output)
+	}
 
 	base, err := model.NewBase(output)
 	if err != nil {
@@ -211,7 +215,13 @@ func (wd *workloadDef) Complete(ctx process.Context, abstractTemplate string, pa
 	}
 
 	// Store template for error context (use workload-specific key to avoid pollution)
-	ctx.PushData(GetWorkloadTemplateKey(wd.name), val)
+	// Not during a validation: this is pushed for error context on the render
+	// path, which falls back to the base when it is absent, and the whole value
+	// is marshalled into every later template's context - which a typed
+	// parameter cannot survive.
+	if !sources.TypeOnly(ctx.GetCtx()) {
+		ctx.PushData(GetWorkloadTemplateKey(wd.name), val)
+	}
 
 	// we will support outputs for workload composition, and it will become trait in AppConfig.
 	outputs := val.LookupPath(value.FieldPath(OutputsFieldName))
@@ -335,15 +345,12 @@ func (td *traitDef) Complete(ctx process.Context, abstractTemplate string, param
 		if err != nil {
 			return errors.WithMessagef(err, "resolve source expressions for trait %s", td.name)
 		}
-		bt, err := json.Marshal(params)
-		if resolved != nil {
-			bt, err = json.Marshal(resolved)
-		}
+		bt, err := renderParams(params, resolved)
 		if err != nil {
 			return errors.WithMessagef(err, "marshal parameter of trait %s", td.name)
 		}
-		if string(bt) != "null" {
-			buff += fmt.Sprintf("%s: %s\n", velaprocess.ParameterFieldName, string(bt))
+		if bt != "null" {
+			buff += fmt.Sprintf("%s: %s\n", velaprocess.ParameterFieldName, bt)
 		}
 	}
 
@@ -671,4 +678,24 @@ func FormatCUEError(err error, messagePrefix string, entityType, entityName stri
 	}
 
 	return fmt.Errorf("%s", strings.TrimRight(result.String(), "\n"))
+}
+
+// renderParams writes a component or trait's properties as CUE.
+//
+// A validation renders types rather than values - `replicas: int` - and a type
+// cannot survive json.Marshal, so both cases share one renderer that falls back
+// to JSON when there is nothing but values.
+func renderParams(params, resolved interface{}) (string, error) {
+	chosen := params
+	if resolved != nil {
+		chosen = resolved
+	}
+	if typed, ok := chosen.(map[string]interface{}); ok {
+		return sources.ParamsAsCUE(typed)
+	}
+	raw, err := json.Marshal(chosen)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
