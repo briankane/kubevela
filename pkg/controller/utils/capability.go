@@ -596,7 +596,7 @@ func GetGitSSHPublicKey(ctx context.Context, k8sClient client.Client, gitCredent
 
 // StoreOpenAPISchema stores OpenAPI v3 schema in ConfigMap from WorkloadDefinition
 func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name, revName string) (string, error) {
-	var jsonSchema []byte
+	var jsonSchema, uiSchema []byte
 	var err error
 	switch def.WorkloadType {
 	case util.TerraformDef:
@@ -623,9 +623,9 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 	default:
 		switch {
 		case def.ComponentDefinition.Spec.Extends == "":
-			jsonSchema, def.defaultUISchema, err = def.parameterSchemas(ctx, name)
+			jsonSchema, uiSchema, err = def.parameterSchemas(ctx, name)
 		case def.ComponentDefinition.Spec.Schematic != nil && def.ComponentDefinition.Spec.Schematic.CUE != nil:
-			jsonSchema, def.defaultUISchema, err = inheritedSchemas(ctx, def.ComponentDefinition.Name,
+			jsonSchema, uiSchema, err = inheritedSchemas(ctx, def.ComponentDefinition.Name,
 				def.ComponentDefinition.Spec.Schematic.CUE.Template, inherit.ComponentSurface)
 		default:
 			// Admission refuses this combination, so it can only reach here from
@@ -648,7 +648,7 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, componentDefinition.Name, typeComponentDefinition, componentDefinition.Labels, nil, jsonSchema, ownerReference)
+	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, componentDefinition.Name, typeComponentDefinition, componentDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -666,7 +666,7 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeComponentDefinition, defRev.Spec.ComponentDefinition.Labels, nil, jsonSchema, ownerReference)
+	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeComponentDefinition, defRev.Spec.ComponentDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -708,14 +708,14 @@ func (def *CapabilityTraitDefinition) parameterSchemas(ctx context.Context, name
 
 // StoreOpenAPISchema stores OpenAPI v3 schema from TraitDefinition in ConfigMap
 func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string, revName string) (string, error) {
-	var jsonSchema []byte
+	var jsonSchema, uiSchema []byte
 	var err error
 	if def.TraitDefinition.Spec.Extends != "" &&
 		def.TraitDefinition.Spec.Schematic != nil && def.TraitDefinition.Spec.Schematic.CUE != nil {
-		jsonSchema, def.defaultUISchema, err = inheritedSchemas(ctx, def.TraitDefinition.Name,
+		jsonSchema, uiSchema, err = inheritedSchemas(ctx, def.TraitDefinition.Name,
 			def.TraitDefinition.Spec.Schematic.CUE.Template, inherit.TraitSurface)
 	} else {
-		jsonSchema, def.defaultUISchema, err = def.parameterSchemas(ctx, name)
+		jsonSchema, uiSchema, err = def.parameterSchemas(ctx, name)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
@@ -730,7 +730,7 @@ func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, traitDefinition.Name, typeTraitDefinition, traitDefinition.Labels, traitDefinition.Spec.AppliesToWorkloads, jsonSchema, ownerReference)
+	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, traitDefinition.Name, typeTraitDefinition, traitDefinition.Labels, traitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -748,7 +748,7 @@ func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeTraitDefinition, defRev.Spec.TraitDefinition.Labels, defRev.Spec.TraitDefinition.Spec.AppliesToWorkloads, jsonSchema, ownerReference)
+	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeTraitDefinition, defRev.Spec.TraitDefinition.Labels, defRev.Spec.TraitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -789,7 +789,6 @@ func (def *CapabilityStepDefinition) parameterSchemas(ctx context.Context, name 
 // StoreOpenAPISchema stores OpenAPI v3 schema from StepDefinition in ConfigMap
 func (def *CapabilityStepDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string, revName string) (string, error) {
 	jsonSchema, uiSchema, err := def.parameterSchemas(ctx, name)
-	def.defaultUISchema = uiSchema
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
 	}
@@ -803,7 +802,7 @@ func (def *CapabilityStepDefinition) StoreOpenAPISchema(ctx context.Context, k8s
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, stepDefinition.Name, typeWorkflowStepDefinition, stepDefinition.Labels, nil, jsonSchema, ownerReference)
+	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, stepDefinition.Name, typeWorkflowStepDefinition, stepDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -821,7 +820,7 @@ func (def *CapabilityStepDefinition) StoreOpenAPISchema(ctx context.Context, k8s
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeWorkflowStepDefinition, defRev.Spec.WorkflowStepDefinition.Labels, nil, jsonSchema, ownerReference)
+	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeWorkflowStepDefinition, defRev.Spec.WorkflowStepDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -862,7 +861,6 @@ func (def *CapabilityPolicyDefinition) parameterSchemas(ctx context.Context, nam
 // StoreOpenAPISchema stores OpenAPI v3 schema from StepDefinition in ConfigMap
 func (def *CapabilityPolicyDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name, revName string) (string, error) {
 	jsonSchema, uiSchema, err := def.parameterSchemas(ctx, name)
-	def.defaultUISchema = uiSchema
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
 	}
@@ -876,7 +874,7 @@ func (def *CapabilityPolicyDefinition) StoreOpenAPISchema(ctx context.Context, k
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, policyDefinition.Name, typePolicyStepDefinition, policyDefinition.Labels, nil, jsonSchema, ownerReference)
+	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, policyDefinition.Name, typePolicyStepDefinition, policyDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -894,7 +892,7 @@ func (def *CapabilityPolicyDefinition) StoreOpenAPISchema(ctx context.Context, k
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typePolicyStepDefinition, defRev.Spec.PolicyDefinition.Labels, nil, jsonSchema, ownerReference)
+	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typePolicyStepDefinition, defRev.Spec.PolicyDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -903,21 +901,18 @@ func (def *CapabilityPolicyDefinition) StoreOpenAPISchema(ctx context.Context, k
 
 // CapabilityBaseDefinition is the base struct for CapabilityWorkloadDefinition and CapabilityTraitDefinition
 type CapabilityBaseDefinition struct {
-	// defaultUISchema is the form generated from the definition's parameter,
-	// stored beside its OpenAPI schema when set.
-	defaultUISchema []byte
 }
 
 // CreateOrUpdateConfigMap creates ConfigMap to store OpenAPI v3 schema or or updates data in ConfigMap
 func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context, k8sClient client.Client, namespace,
-	definitionName, definitionType string, labels map[string]string, appliedWorkloads []string, jsonSchema []byte, ownerReferences []metav1.OwnerReference) (string, error) {
+	definitionName, definitionType string, labels map[string]string, appliedWorkloads []string, jsonSchema, uiSchema []byte, ownerReferences []metav1.OwnerReference) (string, error) {
 	cmName := fmt.Sprintf("%s-%s%s", definitionType, types.CapabilityConfigMapNamePrefix, definitionName)
 	var cm v1.ConfigMap
 	var data = map[string]string{
 		types.OpenapiV3JSONSchema: string(jsonSchema),
 	}
-	if len(def.defaultUISchema) > 0 {
-		data[types.DefaultUISchema] = string(def.defaultUISchema)
+	if len(uiSchema) > 0 {
+		data[types.DefaultUISchema] = string(uiSchema)
 	}
 	if labels == nil {
 		labels = make(map[string]string)
