@@ -221,3 +221,8 @@ func TestGenerateConditionalFieldOrder(t *testing.T) {
 	}
 	assert.Equal(t, []string{"kind", "size", "class", "zone"}, keys)
 }
+
+func TestGenerateRejectsInvalidParameter(t *testing.T) {
+	_, err := GenerateParameterSchemas(context.Background(), `parameter: example: *"default"`)
+	assert.Error(t, err)
+}

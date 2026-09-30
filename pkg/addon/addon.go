@@ -615,6 +615,10 @@ func unmarshalToContent(content []byte) (fileContent *github.RepositoryContent, 
 }
 
 func genAddonAPISchema(addonRes *UIData) error {
+	if ps, err := schema.GenerateParameterSchemas(context.Background(), addonRes.Parameters); err == nil {
+		addonRes.APISchema, addonRes.DefaultUISchema = ps.OpenAPI, ps.UI
+		return nil
+	}
 	s, err := schema.ParsePropertiesToSchema(context.Background(), addonRes.Parameters)
 	if err != nil {
 		return err

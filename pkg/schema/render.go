@@ -22,6 +22,7 @@ import (
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
+	"cuelang.org/go/cue/parser"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/kubevela/pkg/cue/cuex"
 
@@ -79,8 +80,10 @@ func GenerateParameterSchemas(ctx context.Context, template string) (*ParameterS
 	}
 	full := src + "\n" + schemaContext
 	val := cuecontext.New().CompileString(full)
-	if val.Err() != nil {
-		var err error
+	if err := val.Err(); err != nil {
+		if !needsCuex(src) {
+			return nil, err
+		}
 		val, err = providers.DefaultCompiler.Get().CompileStringWithOptions(ctx, full, cuex.DisableResolveProviderFunctions{})
 		if err != nil {
 			return nil, err
@@ -95,6 +98,11 @@ func GenerateParameterSchemasFromValue(val cue.Value, src string) (*ParameterSch
 	param := val.LookupPath(cue.ParsePath(process.ParameterFieldName))
 	model := &Field{Kind: KindObject}
 	if param.Exists() {
+		// An error in a field surfaces only when the field is evaluated, so
+		// the walk alone would read past it.
+		if err := param.Validate(); err != nil {
+			return nil, err
+		}
 		var err error
 		if model, err = BuildParameter(param, src); err != nil {
 			return nil, err
@@ -434,4 +442,22 @@ func (c Condition) ui() uischema.Condition {
 		return uischema.Condition{JSONKey: c.Ref, Value: c.Values[0]}
 	}
 	return uischema.Condition{JSONKey: c.Ref, Op: "in", Value: c.Values}
+}
+
+// needsCuex reports whether a template imports a package plain CUE lacks, such
+// as a vela/ provider or an external package, so only the cuex compiler can
+// read it.
+func needsCuex(src string) bool {
+	f, err := parser.ParseFile("template", src, parser.ImportsOnly)
+	if err != nil {
+		return false
+	}
+	ctx := cuecontext.New()
+	for _, spec := range f.Imports {
+		probe := fmt.Sprintf("import p %s\n_probe: p", spec.Path.Value)
+		if ctx.CompileString(probe).Err() != nil {
+			return true
+		}
+	}
+	return false
 }
