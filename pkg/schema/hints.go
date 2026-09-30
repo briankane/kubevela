@@ -53,9 +53,12 @@ type UIHints struct {
 	Section string `json:"section,omitempty"`
 	// OptionsFrom names where the parameter's choices are read when the form
 	// opens: configs:<template>, clusters or envs.
-	OptionsFrom string   `json:"optionsFrom,omitempty"`
-	Suggest     []string `json:"suggest,omitempty"`
-	ColSpan     int      `json:"colSpan,omitempty"`
+	OptionsFrom string `json:"optionsFrom,omitempty"`
+	// Expression is `never` for a parameter that must be written as a
+	// literal, even in an Application that reads $( ) expressions.
+	Expression string   `json:"expression,omitempty"`
+	Suggest    []string `json:"suggest,omitempty"`
+	ColSpan    int      `json:"colSpan,omitempty"`
 	// Order places the parameter among its siblings, ahead of declaration
 	// order.
 	Order *int `json:"order,omitempty"`
@@ -66,7 +69,7 @@ type UIHints struct {
 
 func (h UIHints) empty() bool {
 	return h.Type == "" && h.Format == "" && h.RowKey == "" && h.ItemLabel == "" && h.Label == "" &&
-		h.Placeholder == "" && h.Error == "" && h.Section == "" && h.OptionsFrom == "" &&
+		h.Placeholder == "" && h.Error == "" && h.Section == "" && h.OptionsFrom == "" && h.Expression == "" &&
 		len(h.Suggest) == 0 && h.ColSpan == 0 && h.Order == nil && !h.Advanced && !h.Hidden
 }
 
@@ -137,6 +140,8 @@ func (h *UIHints) set(hint string) {
 		h.Section = value
 	case "optionsFrom":
 		h.OptionsFrom = value
+	case "expression":
+		h.Expression = value
 	case "suggest":
 		for _, s := range strings.Split(value, ",") {
 			if s = strings.TrimSpace(s); s != "" {

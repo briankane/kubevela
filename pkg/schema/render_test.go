@@ -395,6 +395,8 @@ func TestGenerateErrorSectionOptionsFrom(t *testing.T) {
 	// +ui:section=Networking
 	// +ui:optionsFrom=configs:image-registry
 	registry?: string
+	// +ui:expression=never
+	literal?: string
 }`)
 	name := uiParam(t, ps.UI, "name")
 	assert.Equal(t, "Lowercase letters and dashes only", name.Validate.Message)
@@ -402,4 +404,5 @@ func TestGenerateErrorSectionOptionsFrom(t *testing.T) {
 	assert.Equal(t, "Networking", uiParam(t, ps.UI, "port").Style.Section)
 	registry := uiParam(t, ps.UI, "registry")
 	assert.Equal(t, &uischema.Style{Section: "Networking", OptionsFrom: "configs:image-registry"}, registry.Style)
+	assert.Equal(t, "never", uiParam(t, ps.UI, "literal").Style.Expression)
 }

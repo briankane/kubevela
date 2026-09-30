@@ -544,6 +544,7 @@ func (h UIHints) applyTo(p *uischema.UIParameter) {
 		Advanced:    h.Advanced,
 		Section:     h.Section,
 		OptionsFrom: h.OptionsFrom,
+		Expression:  h.Expression,
 	}
 	if style != (uischema.Style{}) {
 		p.Style = &style

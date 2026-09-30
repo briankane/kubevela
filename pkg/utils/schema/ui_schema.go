@@ -113,6 +113,9 @@ type Style struct {
 	// OptionsFrom names where the parameter's choices are read when the form
 	// opens: configs:<template>, clusters or envs.
 	OptionsFrom string `json:"optionsFrom,omitempty"`
+	// Expression is `never` for a parameter that must be written as a
+	// literal rather than a $( ) expression.
+	Expression string `json:"expression,omitempty"`
 }
 
 // GroupOption define multiple data structure composition options.
