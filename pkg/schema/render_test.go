@@ -319,7 +319,7 @@ func TestGenerateStructMap(t *testing.T) {
 func TestGenerateConditionsAcrossCollections(t *testing.T) {
 	ps := generate(t, `parameter: {
 	mode: "simple" | "advanced"
-	ports: [...{port: int, if mode == "advanced" {appProtocol?: string}}]
+	ports: *[{port: 80}] | [...{port: int, if mode == "advanced" {appProtocol?: string}}]
 	deep: {a: {b: {kind: "x" | "y"}}}
 	if deep.a.b.kind == "x" {note: string}
 }`)
@@ -356,4 +356,9 @@ func TestPlaceByOrder(t *testing.T) {
 		names = append(names, f.Name)
 	}
 	assert.Equal(t, []string{"d", "a", "b", "c", "e"}, names)
+}
+
+func TestGenerateConditionInsideDefaultedList(t *testing.T) {
+	ps := generate(t, `parameter: ports: *[{type: "a", x: "1"}] | [...{type: "a" | "b", if type == "a" {x: string}, if type == "b" {y: int}}]`)
+	assert.Equal(t, []uischema.Condition{{JSONKey: "type", Value: "b"}}, conditionsOf(t, ps.UI, "ports", "y"))
 }

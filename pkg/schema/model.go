@@ -580,13 +580,45 @@ func sameScalarKind(vs []cue.Value) (Kind, bool) {
 	return KindUnknown, false
 }
 
-// listElem is an open list's element type. A list with a default resolves to
-// the default when looked into, so the element is read from beneath it.
+// listElem is an open list's element type. A list with a default resolves
+// to the default when looked into, so its open branch is preferred. Only a
+// disjunction's: the parts of any other value leave out what was filled into
+// it.
 func listElem(v cue.Value) (cue.Value, bool) {
+	op, args := unwrap(v)
+	if op == cue.AndOp {
+		// A value filled into a list with a default: the element is the open
+		// branch's and the fill's together.
+		var elem cue.Value
+		found := false
+		for _, part := range flattenAnd(args) {
+			e, ok := listElem(part)
+			if !ok {
+				continue
+			}
+			if found {
+				elem = elem.Unify(e)
+			} else {
+				elem, found = e, true
+			}
+		}
+		if found {
+			return elem, true
+		}
+	}
+	if op == cue.OrOp {
+		for _, a := range args {
+			if a.Len().IsConcrete() {
+				continue
+			}
+			if e := a.LookupPath(cue.MakePath(cue.AnyIndex)); e.Exists() {
+				return e, true
+			}
+		}
+	}
 	if e := v.LookupPath(cue.MakePath(cue.AnyIndex)); e.Exists() {
 		return e, true
 	}
-	_, args := unwrap(v)
 	for _, a := range args {
 		if e := a.LookupPath(cue.MakePath(cue.AnyIndex)); e.Exists() {
 			return e, true

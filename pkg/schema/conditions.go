@@ -211,7 +211,7 @@ func (w *walker) branch(d *discriminator, fields []*Field, path cue.Path, refs [
 	var order []string
 	variants := map[string]*variant{}
 	for _, o := range outcomes {
-		sub := w.evaluate(d, o).LookupPath(path)
+		sub := lookupShape(w.evaluate(d, o), path)
 		it, err := sub.Fields(cue.Optional(true))
 		if err != nil {
 			continue
@@ -614,4 +614,25 @@ func scanSource(src string) (map[string]bool, map[string]clause) {
 		return true
 	}, nil)
 	return names, clauses
+}
+
+// lookupShape looks path up in v, reading a list's element or a map's value
+// from beneath a default: looked into directly, `*[...] | [...T]` resolves to
+// the default's entries rather than T.
+func lookupShape(v cue.Value, path cue.Path) cue.Value {
+	for _, sel := range path.Selectors() {
+		switch {
+		case sel == cue.AnyIndex:
+			elem, ok := listElem(v)
+			if !ok {
+				return cue.Value{}
+			}
+			v = elem
+		case sel == cue.AnyString:
+			v = v.LookupPath(cue.MakePath(cue.AnyString))
+		default:
+			v = v.LookupPath(cue.MakePath(sel))
+		}
+	}
+	return v
 }
