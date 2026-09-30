@@ -151,10 +151,9 @@ func (f *Field) OpenAPI() *openapi3.Schema {
 		case f.Open:
 			s.AdditionalProperties = openapi3.AdditionalProperties{Schema: openapi3.NewSchemaRef("", &openapi3.Schema{})}
 		}
-		s.Properties = openapi3.Schemas{}
+		s.Properties = properties(f.Fields)
 		for _, c := range f.Fields {
-			s.Properties[c.Name] = openapi3.NewSchemaRef("", c.OpenAPI())
-			if !c.Optional && c.Condition == nil {
+			if !c.Optional && len(c.Conditions) == 0 {
 				s.Required = append(s.Required, c.Name)
 			}
 		}
@@ -176,14 +175,11 @@ func (f *Field) OpenAPI() *openapi3.Schema {
 			// expect: every property at the top, each branch naming the ones
 			// it requires.
 			s.Type = &openapi3.Types{openapi3.TypeObject}
-			s.Properties = openapi3.Schemas{}
-			for _, c := range f.formFields() {
-				s.Properties[c.Name] = openapi3.NewSchemaRef("", c.OpenAPI())
-			}
+			s.Properties = properties(f.formFields())
 			for _, v := range f.Variants {
 				b := &openapi3.Schema{}
 				for _, c := range v.Fields {
-					if !c.Optional && c.Condition == nil {
+					if !c.Optional && len(c.Conditions) == 0 {
 						b.Required = append(b.Required, c.Name)
 					}
 				}
@@ -242,8 +238,10 @@ func (f *Field) branches(name string) openapi3.SchemaRefs {
 			name: openapi3.NewSchemaRef("", &openapi3.Schema{Enum: []any{v}}),
 		}}
 		for _, c := range f.Fields {
-			if c.Condition != nil && c.Condition.Field == name && !c.Optional && containsValue(c.Condition.Values, v) {
-				b.Required = append(b.Required, c.Name)
+			for _, cond := range c.Conditions {
+				if cond.Ref == name && !c.Optional && containsValue(cond.Values, v) {
+					b.Required = append(b.Required, c.Name)
+				}
 			}
 		}
 		out = append(out, openapi3.NewSchemaRef("", b))
@@ -284,12 +282,8 @@ func (f *Field) uiParameter() *uischema.UIParameter {
 	for _, e := range f.Enum {
 		p.Validate.Options = append(p.Validate.Options, uischema.Option{Label: optionLabel(e), Value: e})
 	}
-	if c := f.Condition; c != nil {
-		cond := uischema.Condition{JSONKey: c.Field, Value: c.Values[0]}
-		if len(c.Values) > 1 {
-			cond.Op, cond.Value = "in", c.Values
-		}
-		p.Conditions = []uischema.Condition{cond}
+	for _, c := range f.Conditions {
+		p.Conditions = append(p.Conditions, c.ui())
 	}
 
 	switch f.Kind {
@@ -384,4 +378,60 @@ func (f *Field) allObjects() bool {
 		}
 	}
 	return len(f.Variants) > 0
+}
+
+// properties renders an object's fields. Fields that share a name, because
+// the name takes a different shape under different conditions, become one
+// property that is one of those shapes.
+func properties(fields []*Field) openapi3.Schemas {
+	out := openapi3.Schemas{}
+	for _, c := range fields {
+		s := c.OpenAPI()
+		if len(c.Conditions) > 0 {
+			if s.Extensions == nil {
+				s.Extensions = map[string]any{}
+			}
+			var conds []map[string]any
+			for _, cond := range c.Conditions {
+				u := cond.ui()
+				m := map[string]any{"field": u.JSONKey, "value": u.Value}
+				if u.Op != "" {
+					m["op"] = u.Op
+				}
+				conds = append(conds, m)
+			}
+			s.Extensions[ExtensionConditions] = conds
+		}
+		prior, ok := out[c.Name]
+		if !ok {
+			out[c.Name] = openapi3.NewSchemaRef("", s)
+			continue
+		}
+		if len(prior.Value.OneOf) == 0 || prior.Value.Title != "" {
+			first := prior.Value
+			prior = openapi3.NewSchemaRef("", &openapi3.Schema{OneOf: openapi3.SchemaRefs{openapi3.NewSchemaRef("", first)}})
+			out[c.Name] = prior
+		}
+		prior.Value.OneOf = append(prior.Value.OneOf, openapi3.NewSchemaRef("", s))
+	}
+	return out
+}
+
+// ExtensionConditions is the OpenAPI extension listing the conditions under
+// which a property exists, in the form VelaUX's ui-schema conditions take.
+const ExtensionConditions = "x-vela-conditions"
+
+// ui renders the condition as VelaUX evaluates it. A presence condition
+// compares with null, which VelaUX's loose comparison also matches for an
+// unset field.
+func (c Condition) ui() uischema.Condition {
+	switch {
+	case c.Exists != nil && *c.Exists:
+		return uischema.Condition{JSONKey: c.Ref, Op: "!=", Value: nil}
+	case c.Exists != nil:
+		return uischema.Condition{JSONKey: c.Ref, Op: "==", Value: nil}
+	case len(c.Values) == 1:
+		return uischema.Condition{JSONKey: c.Ref, Value: c.Values[0]}
+	}
+	return uischema.Condition{JSONKey: c.Ref, Op: "in", Value: c.Values}
 }

@@ -19,12 +19,10 @@ package schema
 import (
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
-	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
 
 	"github.com/oam-dev/kubevela/pkg/appfile"
@@ -89,26 +87,21 @@ type Field struct {
 	Open bool
 	// Recursive marks an object cut short where its type refers to itself.
 	Recursive bool
-	// Condition is set on a field that exists only for some values of a
-	// sibling.
-	Condition *Condition
+	// Conditions are set on a field that exists only for some values of
+	// other fields; all of them must hold.
+	Conditions []Condition
 	// pos is where the field is declared, which orders a form.
 	pos token.Pos
-	// Discriminators name the siblings that decide which conditional fields
-	// of this object exist.
+	// Discriminators name the siblings whose values decide which conditional
+	// fields of this object exist.
 	Discriminators []string
-}
-
-// Condition limits a field to some values of a sibling field.
-type Condition struct {
-	Field  string
-	Values []any
 }
 
 // BuildParameter reads the parameter value of a compiled template. src is the
 // template's source, used only to find which fields an `if` reads.
 func BuildParameter(param cue.Value, src string) (*Field, error) {
-	w := &walker{root: param, condNames: conditionNames(src)}
+	w := &walker{root: param}
+	w.condNames, w.clauseLabels = scanSource(src)
 	f := w.field("", param, cue.Path{}, nil, 0)
 	if w.err != nil {
 		return nil, w.err
@@ -119,7 +112,14 @@ func BuildParameter(param cue.Value, src string) (*Field, error) {
 type walker struct {
 	root      cue.Value
 	condNames map[string]bool
-	err       error
+	// clauseLabels are the field labels each `if` body declares, in order,
+	// keyed by the clause's offset, since CUE gives every field the clause
+	// adds the clause's position.
+	clauseLabels map[int][]string
+	// scopes are the discriminators of the objects enclosing the one being
+	// walked, innermost last.
+	scopes []scope
+	err    error
 }
 
 func (w *walker) fail(format string, args ...any) {
@@ -184,7 +184,9 @@ func (w *walker) field(name string, v cue.Value, path cue.Path, refs []string, d
 	case cue.ListKind:
 		f.Kind = KindArray
 		if elem, ok := listElem(shape); ok {
-			f.Items = w.field("", elem, appendPath(path, cue.AnyIndex), refs, depth+1)
+			f.Items = w.detached(func() *Field {
+				return w.field("", elem, appendPath(path, cue.AnyIndex), refs, depth+1)
+			})
 		} else if it, err := shape.List(); err == nil && it.Next() {
 			// A closed list reads its element's shape from the first entry,
 			// but not that entry's value.
@@ -294,113 +296,6 @@ func (w *walker) disjunction(f *Field, v cue.Value, args []cue.Value, path cue.P
 	for _, b := range branches {
 		f.Variants = append(f.Variants, w.field("", b, path, refs, depth+1))
 	}
-}
-
-// object reads a struct's fields, and the conditional fields an `if` adds for
-// each value of a finite sibling.
-func (w *walker) object(f *Field, v cue.Value, path cue.Path, refs []string, depth int) {
-	f.Kind = KindObject
-	base := w.fields(v, path, refs, depth)
-	if pv := v.LookupPath(cue.MakePath(cue.AnyString)); pv.Exists() {
-		// `...` reads as a `_` pattern: an open struct, not a map, unless it
-		// declares nothing else.
-		switch {
-		case len(base) == 0:
-			f.Kind = KindMap
-			f.Values = w.field("", pv, appendPath(path, cue.AnyString), refs, depth+1)
-		case pv.IncompleteKind() == cue.TopKind:
-			f.Open = true
-		default:
-			f.Values = w.field("", pv, appendPath(path, cue.AnyString), refs, depth+1)
-		}
-	}
-
-	fields := base
-	for _, c := range base {
-		if !w.condNames[c.Name] || (c.Kind != KindBool && len(c.Enum) < 2) {
-			continue
-		}
-		var conditional bool
-		fields, conditional = w.branch(c, fields, path, refs, depth)
-		if conditional {
-			f.Discriminators = append(f.Discriminators, c.Name)
-		}
-	}
-	f.Fields = sortBySource(fields)
-}
-
-// branch evaluates the object once for each value of a candidate
-// discriminator. A field present for only some values becomes conditional on
-// it; a field present for all is not, even if the unfilled read (which takes
-// the discriminator's default) lacked it or had it.
-func (w *walker) branch(disc *Field, fields []*Field, path cue.Path, refs []string, depth int) ([]*Field, bool) {
-	values := disc.Enum
-	if disc.Kind == KindBool {
-		values = []any{true, false}
-	}
-	byName := map[string]*Field{}
-	for _, fl := range fields {
-		byName[fl.Name] = fl
-	}
-	presence := map[string][]any{}
-	for _, val := range values {
-		sub := w.root.FillPath(pathJoin(path, disc.Name), val).LookupPath(path)
-		prev := ""
-		for _, fl := range w.fields(sub, path, refs, depth) {
-			if fl.Name == disc.Name {
-				prev = fl.Name
-				continue
-			}
-			presence[fl.Name] = append(presence[fl.Name], val)
-			if _, ok := byName[fl.Name]; !ok {
-				byName[fl.Name] = fl
-				fields = insertAfter(fields, fl, prev)
-			}
-			prev = fl.Name
-		}
-	}
-	conditional := false
-	for _, fl := range fields {
-		vals, seen := presence[fl.Name]
-		if fl.Name == disc.Name || !seen || fl.Condition != nil || len(vals) == len(values) {
-			continue
-		}
-		fl.Condition = &Condition{Field: disc.Name, Values: vals}
-		conditional = true
-	}
-	return fields, conditional
-}
-
-// insertAfter places fl after the field named prev, or first when prev is
-// empty or absent, so a conditional field keeps its place among its siblings.
-// sortBySource orders fields as the template declares them. The value lists a
-// field an `if` adds before the struct's own, so its order is not the author's.
-func sortBySource(fields []*Field) []*Field {
-	for _, f := range fields {
-		if !f.pos.IsValid() {
-			return fields
-		}
-	}
-	sort.SliceStable(fields, func(i, j int) bool {
-		a, b := fields[i].pos.Position(), fields[j].pos.Position()
-		if a.Filename != b.Filename {
-			return false
-		}
-		return a.Offset < b.Offset
-	})
-	return fields
-}
-
-func insertAfter(fields []*Field, fl *Field, prev string) []*Field {
-	at := 0
-	for i, x := range fields {
-		if x.Name == prev {
-			at = i + 1
-		}
-	}
-	out := append([]*Field(nil), fields[:at]...)
-	out = append(out, fl)
-	return append(out, fields[at:]...)
 }
 
 func (w *walker) fields(v cue.Value, path cue.Path, refs []string, depth int) []*Field {
@@ -627,39 +522,6 @@ func describe(v cue.Value) (string, bool) {
 		d = strings.Split(d, appfile.ShortTag)[0]
 	}
 	return strings.TrimSpace(d), immutable
-}
-
-// conditionNames collects every identifier read in an `if` clause, which
-// bounds the fields worth evaluating as discriminators.
-func conditionNames(src string) map[string]bool {
-	names := map[string]bool{}
-	f, err := parser.ParseFile("template", src)
-	if err != nil {
-		return names
-	}
-	ast.Walk(f, func(n ast.Node) bool {
-		if c, ok := n.(*ast.IfClause); ok {
-			ast.Walk(c.Condition, func(n ast.Node) bool {
-				switch n := n.(type) {
-				case *ast.Ident:
-					names[n.Name] = true
-				case *ast.SelectorExpr:
-					if name, _, err := ast.LabelName(n.Sel); err == nil {
-						names[name] = true
-					}
-				case *ast.IndexExpr:
-					if lit, ok := n.Index.(*ast.BasicLit); ok {
-						if s, err := literalString(lit); err == nil {
-							names[s] = true
-						}
-					}
-				}
-				return true
-			}, nil)
-		}
-		return true
-	}, nil)
-	return names
 }
 
 func literalString(lit *ast.BasicLit) (string, error) {

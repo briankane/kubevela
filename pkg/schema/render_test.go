@@ -147,3 +147,77 @@ func TestGenerateDefaultedAndMultipleDiscriminators(t *testing.T) {
 	assert.Equal(t, []uischema.Condition{{JSONKey: "metrics", Value: true}}, uiParam(t, ps.UI, "metricsPort").Conditions)
 	assert.Len(t, ps.OpenAPI.AllOf, 2)
 }
+
+func conditionsOf(t *testing.T, ps uischema.UISchema, path ...string) []uischema.Condition {
+	t.Helper()
+	p := uiParam(t, ps, path[0])
+	for _, key := range path[1:] {
+		p = uiParam(t, p.SubParameters, key)
+	}
+	return p.Conditions
+}
+
+func TestGenerateNestedConditions(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		path []string
+		want []uischema.Condition
+	}{
+		"inside a list item": {
+			src:  `parameter: ports: [...{type: "a" | "b", if type == "a" {x: string}}]`,
+			path: []string{"ports", "x"},
+			want: []uischema.Condition{{JSONKey: "type", Value: "a"}},
+		},
+		"on a field of the enclosing object": {
+			src:  `parameter: {mode: "simple" | "advanced", storage: {size: string, if mode == "advanced" {iops: int}}}`,
+			path: []string{"storage", "iops"},
+			want: []uischema.Condition{{JSONKey: "../mode", Value: "advanced"}},
+		},
+		"on a field of a child object": {
+			src:  `parameter: {storage: {kind: "pvc" | "emptyDir"}, if storage.kind == "pvc" {pvcName: string}}`,
+			path: []string{"pvcName"},
+			want: []uischema.Condition{{JSONKey: "storage.kind", Value: "pvc"}},
+		},
+		"inside another condition": {
+			src:  `parameter: {type: "x" | "y", if type == "x" {mode: "a" | "b", if mode == "a" {deep: string}}}`,
+			path: []string{"deep"},
+			want: []uischema.Condition{{JSONKey: "type", Value: "x"}, {JSONKey: "mode", Value: "a"}},
+		},
+		"on a field being set": {
+			src:  `parameter: {tls?: {secret: string}, if tls != _|_ {port: *443 | int}}`,
+			path: []string{"port"},
+			want: []uischema.Condition{{JSONKey: "tls", Op: "!=", Value: nil}},
+		},
+		"in a definition used as a field": {
+			src:  "#S: {kind: \"pvc\" | \"e\", if kind == \"pvc\" {size: string}}\nparameter: primary: #S",
+			path: []string{"primary", "size"},
+			want: []uischema.Condition{{JSONKey: "kind", Value: "pvc"}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, conditionsOf(t, generate(t, tc.src).UI, tc.path...))
+		})
+	}
+}
+
+func TestGenerateSameNameDifferentShapes(t *testing.T) {
+	ps := generate(t, `parameter: {type: "a" | "b", if type == "a" {v: string}, if type == "b" {v: int}}`)
+	var shapes []string
+	for _, p := range ps.UI {
+		if p.JSONKey == "v" {
+			shapes = append(shapes, p.UIType)
+		}
+	}
+	assert.Equal(t, []string{"Input", "Number"}, shapes)
+	assert.Len(t, ps.OpenAPI.Properties["v"].Value.OneOf, 2)
+}
+
+func TestGenerateConditionalFieldOrder(t *testing.T) {
+	ps := generate(t, `parameter: {kind: "pvc" | "e", if kind == "pvc" {size: string, class?: string, zone?: string}}`)
+	var keys []string
+	for _, p := range ps.UI {
+		keys = append(keys, p.JSONKey)
+	}
+	assert.Equal(t, []string{"kind", "size", "class", "zone"}, keys)
+}
