@@ -100,16 +100,12 @@ type Field struct {
 	Discriminators []string
 }
 
-// BuildParameter reads the parameter value of a compiled template. src is the
-// template's source, used only to find which fields an `if` reads.
-func BuildParameter(param cue.Value, src string) (*Field, error) {
-	w := &walker{root: param}
+// BuildField reads a value of a compiled template, such as its parameter. src
+// is the template's source, used only to find which fields an `if` reads.
+func BuildField(v cue.Value, src string) *Field {
+	w := &walker{root: v}
 	w.condNames, w.clauses = scanSource(src)
-	f := w.field("", param, cue.Path{}, nil, 0)
-	if w.err != nil {
-		return nil, w.err
-	}
-	return f, nil
+	return w.field("", v, cue.Path{}, nil, 0)
 }
 
 type walker struct {
@@ -121,13 +117,6 @@ type walker struct {
 	// scopes are the discriminators of the objects enclosing the one being
 	// walked, innermost last.
 	scopes []scope
-	err    error
-}
-
-func (w *walker) fail(format string, args ...any) {
-	if w.err == nil {
-		w.err = fmt.Errorf(format, args...)
-	}
 }
 
 func (w *walker) field(name string, v cue.Value, path cue.Path, refs []string, depth int) *Field {

@@ -60,6 +60,9 @@ const (
 	UISchema string = "ui-schema"
 	// DefaultUISchema is the key to store the ui schema generated from a definition's parameter
 	DefaultUISchema string = "default-ui-schema"
+	// SourceOutputSchema is the key to store the OpenAPI schema of a SourceDefinition's `schema`,
+	// the value an Application reads with $(source.<name>)
+	SourceOutputSchema string = "source-output-schema"
 	// VelaQLConfigmapKey is the key to store velaql view
 	VelaQLConfigmapKey string = "template"
 )

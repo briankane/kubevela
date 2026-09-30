@@ -18,6 +18,7 @@ package schema
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -405,4 +406,62 @@ func TestGenerateErrorSectionOptionsFrom(t *testing.T) {
 	registry := uiParam(t, ps.UI, "registry")
 	assert.Equal(t, &uischema.Style{Section: "Networking", OptionsFrom: "configs:image-registry"}, registry.Style)
 	assert.Equal(t, "never", uiParam(t, ps.UI, "literal").Style.Expression)
+}
+
+func TestGenerateSourceSchemas(t *testing.T) {
+	ss, err := GenerateSourceSchemas(context.Background(), `
+import "vela/kube"
+
+#Endpoint: {
+	host: string
+	port: int & >0 & <65536
+}
+
+parameter: {
+	// +usage=Secret the database details are read from
+	secret: string
+	kind: *"postgres" | "mysql"
+	if kind == "mysql" {
+		// +usage=Character set of the connection
+		charset: *"utf8mb4" | string
+	}
+}
+
+// Every field is read by $(source.<name>.<field>).
+schema: {
+	// +usage=Where the database listens
+	endpoint: #Endpoint
+	replicas?: [...#Endpoint]
+	tls: bool
+}
+
+secret: kube.#Read & {$params: resource: {apiVersion: "v1", kind: "Secret", metadata: name: parameter.secret}}
+output: endpoint: host: secret.$returns.value.data.host
+`)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"secret"}, sortedRequired(ss.Parameter.OpenAPI.Required))
+	assert.Equal(t, []uischema.Condition{{JSONKey: "kind", Value: "mysql"}}, uiParam(t, ss.Parameter.UI, "charset").Conditions)
+
+	out := ss.Output
+	require.NotNil(t, out)
+	assert.Equal(t, []string{"endpoint", "tls"}, sortedRequired(out.Required))
+	endpoint := out.Properties["endpoint"].Value
+	assert.Equal(t, "Where the database listens", endpoint.Description)
+	assert.True(t, endpoint.Properties["port"].Value.Type.Is("integer"))
+	assert.True(t, out.Properties["replicas"].Value.Items.Value.Properties["host"].Value.Type.Is("string"))
+}
+
+func TestGenerateSourceSchemasWithoutSchema(t *testing.T) {
+	ss, err := GenerateSourceSchemas(context.Background(), `parameter: name: string
+output: name: parameter.name`)
+	require.NoError(t, err)
+	assert.Nil(t, ss.Output, "a source without a schema declares no output shape")
+	assert.NotNil(t, ss.Parameter.OpenAPI.Properties["name"])
+}
+
+func sortedRequired(r []string) []string {
+	out := append([]string(nil), r...)
+	sort.Strings(out)
+	return out
 }

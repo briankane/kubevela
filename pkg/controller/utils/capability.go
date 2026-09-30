@@ -73,6 +73,7 @@ const (
 	typeComponentDefinition    = "component"
 	typeWorkflowStepDefinition = "workflowstep"
 	typePolicyStepDefinition   = "policy"
+	typeSourceDefinition       = "source"
 )
 
 const (
@@ -906,14 +907,20 @@ type CapabilityBaseDefinition struct {
 // CreateOrUpdateConfigMap creates ConfigMap to store OpenAPI v3 schema or or updates data in ConfigMap
 func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context, k8sClient client.Client, namespace,
 	definitionName, definitionType string, labels map[string]string, appliedWorkloads []string, jsonSchema, uiSchema []byte, ownerReferences []metav1.OwnerReference) (string, error) {
-	cmName := fmt.Sprintf("%s-%s%s", definitionType, types.CapabilityConfigMapNamePrefix, definitionName)
-	var cm v1.ConfigMap
 	var data = map[string]string{
 		types.OpenapiV3JSONSchema: string(jsonSchema),
 	}
 	if len(uiSchema) > 0 {
 		data[types.DefaultUISchema] = string(uiSchema)
 	}
+	return def.storeSchemaConfigMap(ctx, k8sClient, namespace, definitionName, definitionType, labels, appliedWorkloads, data, ownerReferences)
+}
+
+// storeSchemaConfigMap creates or replaces the data of a definition's schema ConfigMap.
+func (def *CapabilityBaseDefinition) storeSchemaConfigMap(ctx context.Context, k8sClient client.Client, namespace,
+	definitionName, definitionType string, labels map[string]string, appliedWorkloads []string, data map[string]string, ownerReferences []metav1.OwnerReference) (string, error) {
+	cmName := fmt.Sprintf("%s-%s%s", definitionType, types.CapabilityConfigMapNamePrefix, definitionName)
+	var cm v1.ConfigMap
 	if labels == nil {
 		labels = make(map[string]string)
 	}

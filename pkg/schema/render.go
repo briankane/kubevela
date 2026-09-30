@@ -75,8 +75,54 @@ type ParameterSchemas struct {
 // GenerateParameterSchemas reads a template's `parameter` into both its
 // OpenAPI schema and the default UI schema VelaUX renders a form from.
 func GenerateParameterSchemas(ctx context.Context, template string) (*ParameterSchemas, error) {
+	val, src, err := compilePruned(ctx, template, process.ParameterFieldName)
+	if err != nil {
+		return nil, err
+	}
+	return GenerateParameterSchemasFromValue(val, src)
+}
+
+// SourceFieldName is the block of a SourceDefinition declaring the value it
+// resolves to.
+const SourceFieldName = "schema"
+
+// SourceSchemas are the schemas generated from a SourceDefinition template.
+type SourceSchemas struct {
+	Parameter *ParameterSchemas
+	// Output is the OpenAPI schema of the template's `schema`, the value an
+	// Application reads with $(source.<name>); nil when there is none.
+	Output *openapi3.Schema
+}
+
+// GenerateSourceSchemas reads a SourceDefinition template's `parameter` and
+// `schema` from one compile.
+func GenerateSourceSchemas(ctx context.Context, template string) (*SourceSchemas, error) {
+	val, src, err := compilePruned(ctx, template, process.ParameterFieldName, SourceFieldName)
+	if err != nil {
+		return nil, err
+	}
+	param, err := GenerateParameterSchemasFromValue(val, src)
+	if err != nil {
+		return nil, err
+	}
+	ss := &SourceSchemas{Parameter: param}
+	out := val.LookupPath(cue.ParsePath(SourceFieldName))
+	if !out.Exists() {
+		return ss, nil
+	}
+	if err := out.Validate(); err != nil {
+		return nil, err
+	}
+	ss.Output = BuildField(out, src).OpenAPI()
+	return ss, nil
+}
+
+// compilePruned compiles a template reduced to the named top-level fields, with
+// the context stub their defaults may read. Plain CUE compiles it unless an
+// import needs the providers.
+func compilePruned(ctx context.Context, template string, fields ...string) (cue.Value, string, error) {
 	src := template
-	if pruned, err := PruneToParameter(template); err == nil {
+	if pruned, err := PruneTo(template, fields...); err == nil {
 		src = pruned
 	}
 	src = InstrumentClauses(src)
@@ -84,14 +130,13 @@ func GenerateParameterSchemas(ctx context.Context, template string) (*ParameterS
 	val := cuecontext.New().CompileString(full)
 	if err := val.Err(); err != nil {
 		if !needsCuex(src) {
-			return nil, err
+			return cue.Value{}, "", err
 		}
-		val, err = providers.DefaultCompiler.Get().CompileStringWithOptions(ctx, full, cuex.DisableResolveProviderFunctions{})
-		if err != nil {
-			return nil, err
+		if val, err = providers.DefaultCompiler.Get().CompileStringWithOptions(ctx, full, cuex.DisableResolveProviderFunctions{}); err != nil {
+			return cue.Value{}, "", err
 		}
 	}
-	return GenerateParameterSchemasFromValue(val, src)
+	return val, src, nil
 }
 
 // GenerateParameterSchemasAt is GenerateParameterSchemas for a template whose
@@ -123,10 +168,7 @@ func GenerateParameterSchemasFromValue(val cue.Value, src string) (*ParameterSch
 		if err := param.Validate(); err != nil {
 			return nil, err
 		}
-		var err error
-		if model, err = BuildParameter(param, src); err != nil {
-			return nil, err
-		}
+		model = BuildField(param, src)
 	}
 	return &ParameterSchemas{OpenAPI: model.OpenAPI(), UI: model.UIParameters()}, nil
 }

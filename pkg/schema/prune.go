@@ -44,6 +44,16 @@ var ErrUnprunable = errors.New("parameter cannot be pruned from template")
 // dropped, so it cannot fail the compile that reads the parameter schema.
 // Comments stay attached, since the schema's descriptions come from them.
 func PruneToParameter(src string) (string, error) {
+	return PruneTo(src, process.ParameterFieldName)
+}
+
+// PruneTo is PruneToParameter keeping the named top-level fields, such as a
+// SourceDefinition's `parameter` and `schema`.
+func PruneTo(src string, fields ...string) (string, error) {
+	keep := map[string]bool{}
+	for _, name := range fields {
+		keep[name] = true
+	}
 	f, err := parser.ParseFile("template", src, parser.ParseComments)
 	if err != nil {
 		return "", err
@@ -61,10 +71,10 @@ func PruneToParameter(src string) (string, error) {
 		case *ast.Field:
 			name, _, err := ast.LabelName(fieldLabel(d.Label))
 			if err != nil {
-				// A dynamic label could name `parameter`.
+				// A dynamic label could name a kept field.
 				return "", fmt.Errorf("%w: dynamic top-level label", ErrUnprunable)
 			}
-			if name == process.ParameterFieldName {
+			if keep[name] {
 				roots = append(roots, d)
 			}
 			named[name] = append(named[name], d)
@@ -76,8 +86,8 @@ func PruneToParameter(src string) (string, error) {
 		case *ast.Alias:
 			named[d.Ident.Name] = append(named[d.Ident.Name], d)
 		case *ast.Comprehension:
-			if declaresParameter(d.Value) {
-				return "", fmt.Errorf("%w: parameter declared inside a comprehension", ErrUnprunable)
+			if declaresAny(d.Value, keep) {
+				return "", fmt.Errorf("%w: kept field declared inside a comprehension", ErrUnprunable)
 			}
 		case *ast.EmbedDecl:
 			return "", fmt.Errorf("%w: top-level embedding", ErrUnprunable)
@@ -158,9 +168,9 @@ func references(n ast.Node) map[string]bool {
 	return refs
 }
 
-// declaresParameter reports whether a comprehension body declares `parameter`
-// at the level it is embedded, including through nested comprehensions.
-func declaresParameter(e ast.Expr) bool {
+// declaresAny reports whether a comprehension body declares one of the kept
+// fields at the level it is embedded, including through nested comprehensions.
+func declaresAny(e ast.Expr, keep map[string]bool) bool {
 	s, ok := e.(*ast.StructLit)
 	if !ok {
 		return true
@@ -169,11 +179,11 @@ func declaresParameter(e ast.Expr) bool {
 		switch el := el.(type) {
 		case *ast.Field:
 			name, _, err := ast.LabelName(fieldLabel(el.Label))
-			if err != nil || name == process.ParameterFieldName {
+			if err != nil || keep[name] {
 				return true
 			}
 		case *ast.Comprehension:
-			if declaresParameter(el.Value) {
+			if declaresAny(el.Value, keep) {
 				return true
 			}
 		case *ast.EmbedDecl:
