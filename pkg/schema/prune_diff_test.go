@@ -31,6 +31,7 @@ import (
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -161,4 +162,130 @@ func sameJSON(t *testing.T, a, b any) bool {
 		require.NoError(t, json.Unmarshal(raw, p.out))
 	}
 	return reflect.DeepEqual(x, y)
+}
+
+// TestGeneratorDiff runs GenerateParameterSchemas over the same directories
+// and reports, per kind of difference, how its OpenAPI differs from
+// ParsePropertiesToSchema's.
+func TestGeneratorDiff(t *testing.T) {
+	dirs := os.Getenv("PARAMETER_SCHEMA_DIFF_DIRS")
+	if dirs == "" {
+		t.Skip("PARAMETER_SCHEMA_DIFF_DIRS not set")
+	}
+	ctx := context.Background()
+	kinds := map[string]int{}
+	examples := map[string]string{}
+	var failed []string
+	total := 0
+	for _, dir := range strings.Split(dirs, ":") {
+		require.NoError(t, filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".cue") {
+				return err
+			}
+			b, err := os.ReadFile(filepath.Clean(p))
+			if err != nil {
+				return err
+			}
+			tmpl, ok, err := definitionTemplate(string(b))
+			if err != nil || !ok {
+				return nil
+			}
+			total++
+			oldS, oldErr := ParsePropertiesToSchema(ctx, tmpl)
+			ps, newErr := GenerateParameterSchemas(ctx, tmpl)
+			if newErr != nil {
+				failed = append(failed, fmt.Sprintf("%s: %v", p, newErr))
+				return nil
+			}
+			if oldErr != nil {
+				kinds["old failed, new ok"]++
+				return nil
+			}
+			var o, n any
+			for _, x := range []struct {
+				in  any
+				out *any
+			}{{oldS, &o}, {ps.OpenAPI, &n}} {
+				raw, _ := json.Marshal(x.in)
+				_ = json.Unmarshal(raw, x.out)
+			}
+			for _, k := range jsonDiff("", o, n) {
+				kinds[k.kind]++
+				if _, ok := examples[k.kind]; !ok {
+					examples[k.kind] = filepath.Base(p) + " " + k.path
+				}
+			}
+			return nil
+		}))
+	}
+	var keys []string
+	for k := range kinds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out strings.Builder
+	fmt.Fprintf(&out, "%d definitions, %d failed with the new generator\n", total, len(failed))
+	for _, f := range failed {
+		fmt.Fprintf(&out, "  FAIL %s\n", f)
+	}
+	for _, k := range keys {
+		fmt.Fprintf(&out, "%5d  %-40s e.g. %s\n", kinds[k], k, examples[k])
+	}
+	if o := os.Getenv("PARAMETER_SCHEMA_DIFF_OUT"); o != "" {
+		require.NoError(t, os.WriteFile(o, []byte(out.String()), 0600))
+	}
+	assert.Empty(t, failed)
+}
+
+type diffEntry struct{ kind, path string }
+
+// jsonDiff lists where two decoded JSON documents differ, named by the key
+// that differs and whether it was added, removed or changed.
+func jsonDiff(path string, a, b any) []diffEntry {
+	am, aok := a.(map[string]any)
+	bm, bok := b.(map[string]any)
+	if aok && bok {
+		var out []diffEntry
+		for k, av := range am {
+			bv, ok := bm[k]
+			switch {
+			case !ok:
+				out = append(out, diffEntry{"removed " + k, path + "/" + k})
+			case k == "properties":
+				out = append(out, propsDiff(path+"/properties", av, bv)...)
+			default:
+				out = append(out, jsonDiff(path+"/"+k, av, bv)...)
+			}
+		}
+		for k := range bm {
+			if _, ok := am[k]; !ok {
+				out = append(out, diffEntry{"added " + k, path + "/" + k})
+			}
+		}
+		return out
+	}
+	if reflect.DeepEqual(a, b) {
+		return nil
+	}
+	key := path[strings.LastIndex(path, "/")+1:]
+	return []diffEntry{{"changed " + key, path}}
+}
+
+func propsDiff(path string, a, b any) []diffEntry {
+	am, _ := a.(map[string]any)
+	bm, _ := b.(map[string]any)
+	var out []diffEntry
+	for k, av := range am {
+		if bv, ok := bm[k]; ok {
+			out = append(out, jsonDiff(path+"/"+k, av, bv)...)
+		} else {
+			out = append(out, diffEntry{"property removed", path + "/" + k})
+		}
+	}
+	for k := range bm {
+		if _, ok := am[k]; !ok {
+			out = append(out, diffEntry{"property added", path + "/" + k})
+		}
+	}
+	return out
 }
