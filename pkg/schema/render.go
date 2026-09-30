@@ -158,9 +158,17 @@ func (f *Field) OpenAPI() *openapi3.Schema {
 				s.Required = append(s.Required, c.Name)
 			}
 		}
-		if f.Discriminator != "" {
-			s.OneOf = f.branches()
-			s.Discriminator = &openapi3.Discriminator{PropertyName: f.Discriminator}
+		switch len(f.Discriminators) {
+		case 0:
+		case 1:
+			s.OneOf = f.branches(f.Discriminators[0])
+			s.Discriminator = &openapi3.Discriminator{PropertyName: f.Discriminators[0]}
+		default:
+			// A schema has one oneOf and one discriminator, so each further
+			// discriminator's branches go in an allOf entry of their own.
+			for _, d := range f.Discriminators {
+				s.AllOf = append(s.AllOf, openapi3.NewSchemaRef("", &openapi3.Schema{OneOf: f.branches(d)}))
+			}
 		}
 	case KindOneOf:
 		if f.allObjects() {
@@ -214,10 +222,10 @@ func (f *Field) OpenAPI() *openapi3.Schema {
 
 // branches renders one oneOf entry per discriminator value, pinning the value
 // and requiring the conditional fields that value brings.
-func (f *Field) branches() openapi3.SchemaRefs {
+func (f *Field) branches(name string) openapi3.SchemaRefs {
 	var disc *Field
 	for _, c := range f.Fields {
-		if c.Name == f.Discriminator {
+		if c.Name == name {
 			disc = c
 		}
 	}
@@ -231,10 +239,10 @@ func (f *Field) branches() openapi3.SchemaRefs {
 	var out openapi3.SchemaRefs
 	for _, v := range values {
 		b := &openapi3.Schema{Properties: openapi3.Schemas{
-			f.Discriminator: openapi3.NewSchemaRef("", &openapi3.Schema{Enum: []any{v}}),
+			name: openapi3.NewSchemaRef("", &openapi3.Schema{Enum: []any{v}}),
 		}}
 		for _, c := range f.Fields {
-			if c.Condition != nil && !c.Optional && containsValue(c.Condition.Values, v) {
+			if c.Condition != nil && c.Condition.Field == name && !c.Optional && containsValue(c.Condition.Values, v) {
 				b.Required = append(b.Required, c.Name)
 			}
 		}

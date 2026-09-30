@@ -19,11 +19,13 @@ package schema
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/parser"
+	"cuelang.org/go/cue/token"
 
 	"github.com/oam-dev/kubevela/pkg/appfile"
 )
@@ -90,9 +92,11 @@ type Field struct {
 	// Condition is set on a field that exists only for some values of a
 	// sibling.
 	Condition *Condition
-	// Discriminator names the sibling that decides which conditional fields
+	// pos is where the field is declared, which orders a form.
+	pos token.Pos
+	// Discriminators name the siblings that decide which conditional fields
 	// of this object exist.
-	Discriminator string
+	Discriminators []string
 }
 
 // Condition limits a field to some values of a sibling field.
@@ -311,75 +315,92 @@ func (w *walker) object(f *Field, v cue.Value, path cue.Path, refs []string, dep
 		}
 	}
 
+	fields := base
 	for _, c := range base {
 		if !w.condNames[c.Name] || (c.Kind != KindBool && len(c.Enum) < 2) {
 			continue
 		}
-		if w.branch(f, c, base, path, refs, depth) {
-			return
+		var conditional bool
+		fields, conditional = w.branch(c, fields, path, refs, depth)
+		if conditional {
+			f.Discriminators = append(f.Discriminators, c.Name)
 		}
 	}
-	f.Fields = base
+	f.Fields = sortBySource(fields)
 }
 
-// branch evaluates the object once for each value of the candidate
-// discriminator. A field present for only some values becomes conditional.
-func (w *walker) branch(f *Field, disc *Field, base []*Field, path cue.Path, refs []string, depth int) bool {
+// branch evaluates the object once for each value of a candidate
+// discriminator. A field present for only some values becomes conditional on
+// it; a field present for all is not, even if the unfilled read (which takes
+// the discriminator's default) lacked it or had it.
+func (w *walker) branch(disc *Field, fields []*Field, path cue.Path, refs []string, depth int) ([]*Field, bool) {
 	values := disc.Enum
 	if disc.Kind == KindBool {
 		values = []any{true, false}
 	}
-	type seen struct {
-		field  *Field
-		values []any
+	byName := map[string]*Field{}
+	for _, fl := range fields {
+		byName[fl.Name] = fl
 	}
-	var order []string
-	found := map[string]*seen{}
-	add := func(fl *Field, val any) {
-		s, ok := found[fl.Name]
-		if !ok {
-			s = &seen{field: fl}
-			found[fl.Name] = s
-			order = append(order, fl.Name)
-		}
-		s.values = append(s.values, val)
-	}
-	for _, fl := range base {
-		found[fl.Name] = &seen{field: fl}
-		order = append(order, fl.Name)
-	}
+	presence := map[string][]any{}
 	for _, val := range values {
-		filled := w.root.FillPath(pathJoin(path, disc.Name), val)
-		sub := filled.LookupPath(path)
+		sub := w.root.FillPath(pathJoin(path, disc.Name), val).LookupPath(path)
+		prev := ""
 		for _, fl := range w.fields(sub, path, refs, depth) {
 			if fl.Name == disc.Name {
+				prev = fl.Name
 				continue
 			}
-			add(fl, val)
+			presence[fl.Name] = append(presence[fl.Name], val)
+			if _, ok := byName[fl.Name]; !ok {
+				byName[fl.Name] = fl
+				fields = insertAfter(fields, fl, prev)
+			}
+			prev = fl.Name
 		}
 	}
 	conditional := false
-	var out []*Field
-	for _, name := range order {
-		s := found[name]
-		fl := s.field
-		if fl.Name == disc.Name {
-			// Keep the discriminator's enum and default from the unfilled read.
-			out = append(out, fl)
+	for _, fl := range fields {
+		vals, seen := presence[fl.Name]
+		if fl.Name == disc.Name || !seen || fl.Condition != nil || len(vals) == len(values) {
 			continue
 		}
-		if len(s.values) > 0 && len(s.values) < len(values) && !inBase(base, name) {
-			fl.Condition = &Condition{Field: disc.Name, Values: s.values}
-			conditional = true
+		fl.Condition = &Condition{Field: disc.Name, Values: vals}
+		conditional = true
+	}
+	return fields, conditional
+}
+
+// insertAfter places fl after the field named prev, or first when prev is
+// empty or absent, so a conditional field keeps its place among its siblings.
+// sortBySource orders fields as the template declares them. The value lists a
+// field an `if` adds before the struct's own, so its order is not the author's.
+func sortBySource(fields []*Field) []*Field {
+	for _, f := range fields {
+		if !f.pos.IsValid() {
+			return fields
 		}
-		out = append(out, fl)
 	}
-	if !conditional {
-		return false
+	sort.SliceStable(fields, func(i, j int) bool {
+		a, b := fields[i].pos.Position(), fields[j].pos.Position()
+		if a.Filename != b.Filename {
+			return false
+		}
+		return a.Offset < b.Offset
+	})
+	return fields
+}
+
+func insertAfter(fields []*Field, fl *Field, prev string) []*Field {
+	at := 0
+	for i, x := range fields {
+		if x.Name == prev {
+			at = i + 1
+		}
 	}
-	f.Fields = out
-	f.Discriminator = disc.Name
-	return true
+	out := append([]*Field(nil), fields[:at]...)
+	out = append(out, fl)
+	return append(out, fields[at:]...)
 }
 
 func (w *walker) fields(v cue.Value, path cue.Path, refs []string, depth int) []*Field {
@@ -392,6 +413,7 @@ func (w *walker) fields(v cue.Value, path cue.Path, refs []string, depth int) []
 		sel := it.Selector()
 		name := labelName(sel)
 		child := w.field(name, it.Value(), appendPath(path, sel), refs, depth+1)
+		child.pos = it.Value().Pos()
 		if sel.ConstraintType() == cue.OptionalConstraint || child.HasDefault {
 			child.Optional = true
 		}
@@ -568,15 +590,6 @@ func kindOf(kinds []cue.Kind) Kind {
 func containsValue(list []any, x any) bool {
 	for _, y := range list {
 		if reflect.DeepEqual(x, y) {
-			return true
-		}
-	}
-	return false
-}
-
-func inBase(base []*Field, name string) bool {
-	for _, f := range base {
-		if f.Name == name {
 			return true
 		}
 	}

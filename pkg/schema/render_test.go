@@ -126,3 +126,24 @@ func TestGenerateDeclarationOrder(t *testing.T) {
 	}
 	assert.Equal(t, []string{"zeta", "alpha", "mid"}, keys)
 }
+
+func TestGenerateDefaultedAndMultipleDiscriminators(t *testing.T) {
+	ps := generate(t, `parameter: {
+	image: string
+	type: *"something" | "other" | "third"
+	if type == "something" { key: string }
+	if type != "something" { aDifferentKey: string }
+	metrics: *false | bool
+	if metrics { metricsPort: *9090 | int }
+	ports: [...int]
+}`)
+	var keys []string
+	for _, p := range ps.UI {
+		keys = append(keys, p.JSONKey)
+	}
+	assert.Equal(t, []string{"image", "type", "key", "aDifferentKey", "metrics", "metricsPort", "ports"}, keys)
+	assert.Equal(t, []uischema.Condition{{JSONKey: "type", Value: "something"}}, uiParam(t, ps.UI, "key").Conditions,
+		"a field of the default branch is still conditional")
+	assert.Equal(t, []uischema.Condition{{JSONKey: "metrics", Value: true}}, uiParam(t, ps.UI, "metricsPort").Conditions)
+	assert.Len(t, ps.OpenAPI.AllOf, 2)
+}
