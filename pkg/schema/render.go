@@ -532,6 +532,9 @@ func (h UIHints) applyTo(p *uischema.UIParameter) {
 		hidden := true
 		p.Disable = &hidden
 	}
+	if h.Error != "" && p.Validate != nil {
+		p.Validate.Message = h.Error
+	}
 	style := uischema.Style{
 		ColSpan:     h.ColSpan,
 		Format:      h.Format,
@@ -539,6 +542,8 @@ func (h UIHints) applyTo(p *uischema.UIParameter) {
 		ItemLabel:   h.ItemLabel,
 		Placeholder: h.Placeholder,
 		Advanced:    h.Advanced,
+		Section:     h.Section,
+		OptionsFrom: h.OptionsFrom,
 	}
 	if style != (uischema.Style{}) {
 		p.Style = &style

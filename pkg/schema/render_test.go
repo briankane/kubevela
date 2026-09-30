@@ -384,3 +384,22 @@ parameter: {
 	assert.Equal(t, "^[0-9]+$", ps.OpenAPI.Properties["items"].Value.Items.Value.Pattern)
 	assert.Equal(t, "^[a-z]+$", uiParam(t, ps.UI, "viaDef").Validate.Pattern)
 }
+
+func TestGenerateErrorSectionOptionsFrom(t *testing.T) {
+	ps := generate(t, `parameter: {
+	// +usage=Service name
+	// +ui:error=Lowercase letters and dashes only
+	name: string & =~"^[a-z-]+$"
+	// +ui:section=Networking
+	port: *80 | int
+	// +ui:section=Networking
+	// +ui:optionsFrom=configs:image-registry
+	registry?: string
+}`)
+	name := uiParam(t, ps.UI, "name")
+	assert.Equal(t, "Lowercase letters and dashes only", name.Validate.Message)
+	assert.Equal(t, "^[a-z-]+$", name.Validate.Pattern)
+	assert.Equal(t, "Networking", uiParam(t, ps.UI, "port").Style.Section)
+	registry := uiParam(t, ps.UI, "registry")
+	assert.Equal(t, &uischema.Style{Section: "Networking", OptionsFrom: "configs:image-registry"}, registry.Style)
+}

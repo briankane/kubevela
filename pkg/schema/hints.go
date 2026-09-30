@@ -42,9 +42,18 @@ type UIHints struct {
 	// the row's title.
 	RowKey string `json:"rowKey,omitempty"`
 	// ItemLabel names the field that titles each item of a list.
-	ItemLabel   string   `json:"itemLabel,omitempty"`
-	Label       string   `json:"label,omitempty"`
-	Placeholder string   `json:"placeholder,omitempty"`
+	ItemLabel   string `json:"itemLabel,omitempty"`
+	Label       string `json:"label,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	// Error is the message shown when a value fails the parameter's
+	// constraints, in place of one naming the raw constraint.
+	Error string `json:"error,omitempty"`
+	// Section names the collapsible section of the form the parameter is
+	// shown in; the value keeps its place in the parameter.
+	Section string `json:"section,omitempty"`
+	// OptionsFrom names where the parameter's choices are read when the form
+	// opens: configs:<template>, clusters or envs.
+	OptionsFrom string   `json:"optionsFrom,omitempty"`
 	Suggest     []string `json:"suggest,omitempty"`
 	ColSpan     int      `json:"colSpan,omitempty"`
 	// Order places the parameter among its siblings, ahead of declaration
@@ -57,7 +66,8 @@ type UIHints struct {
 
 func (h UIHints) empty() bool {
 	return h.Type == "" && h.Format == "" && h.RowKey == "" && h.ItemLabel == "" && h.Label == "" &&
-		h.Placeholder == "" && len(h.Suggest) == 0 && h.ColSpan == 0 && h.Order == nil && !h.Advanced && !h.Hidden
+		h.Placeholder == "" && h.Error == "" && h.Section == "" && h.OptionsFrom == "" &&
+		len(h.Suggest) == 0 && h.ColSpan == 0 && h.Order == nil && !h.Advanced && !h.Hidden
 }
 
 // doc is what a parameter's doc comment says.
@@ -121,6 +131,12 @@ func (h *UIHints) set(hint string) {
 		h.Label = value
 	case "placeholder":
 		h.Placeholder = value
+	case "error":
+		h.Error = value
+	case "section":
+		h.Section = value
+	case "optionsFrom":
+		h.OptionsFrom = value
 	case "suggest":
 		for _, s := range strings.Split(value, ",") {
 			if s = strings.TrimSpace(s); s != "" {
