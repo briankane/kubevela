@@ -19,6 +19,7 @@ package schema
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -263,6 +264,10 @@ func (w *walker) disjunction(f *Field, v cue.Value, args []cue.Value, path cue.P
 		// `"go" | "java" | string` is a string: the literals are
 		// suggestions.
 		f.Kind, f.Nullable = k, nullable
+		if pattern, ok := alternation(branches); ok {
+			f.Pattern = pattern
+			return
+		}
 		for _, b := range branches {
 			if s, err := b.String(); err == nil && b.IsConcrete() && !containsString(f.UI.Suggest, s) {
 				f.UI.Suggest = append(f.UI.Suggest, s)
@@ -327,14 +332,7 @@ func (w *walker) fields(v cue.Value, path cue.Path, refs []string, depth int) []
 
 // constraints reads bounds, patterns and validators from a conjunction.
 func constraints(f *Field, v cue.Value) {
-	if op, _ := unwrap(v); op == cue.SelectorOp {
-		v = cue.Dereference(v)
-	}
-	parts := []cue.Value{v}
-	if op, args := unwrap(v); op == cue.AndOp {
-		parts = flattenAnd(args)
-	}
-	for _, p := range parts {
+	for _, p := range constraintParts(v, 0) {
 		pop, pargs := unwrap(p)
 		switch pop {
 		case cue.GreaterThanEqualOp, cue.GreaterThanOp:
@@ -428,6 +426,29 @@ func pkgName(pkg cue.Value) string {
 		}
 	}
 	return ""
+}
+
+// constraintParts splits a value into the constraints it is the conjunction
+// of, following references, so `#Name & strings.MaxRunes(5)` yields #Name's
+// pattern as well as the length.
+func constraintParts(v cue.Value, depth int) []cue.Value {
+	if depth > maxDepth {
+		return nil
+	}
+	op, args := unwrap(v)
+	switch op {
+	case cue.SelectorOp:
+		if d := cue.Dereference(v); d != v {
+			return constraintParts(d, depth+1)
+		}
+	case cue.AndOp:
+		var out []cue.Value
+		for _, a := range args {
+			out = append(out, constraintParts(a, depth+1)...)
+		}
+		return out
+	}
+	return []cue.Value{v}
 }
 
 // unwrap strips the NoOp layers Expr puts around a value.
@@ -625,4 +646,37 @@ func listElem(v cue.Value) (cue.Value, bool) {
 		}
 	}
 	return cue.Value{}, false
+}
+
+// alternation is the one pattern a disjunction of patterns and string literals
+// matches: `=~"^a" | =~"^b" | "c"` is `(?:^a)|(?:^b)|(?:^c$)`. A branch that is
+// neither, such as a plain string, means anything matches, so there is none.
+func alternation(branches []cue.Value) (string, bool) {
+	var alts []string
+	sawPattern := false
+	for _, b := range branches {
+		if s, err := b.String(); err == nil && b.IsConcrete() {
+			alts = append(alts, "(?:^"+regexp.QuoteMeta(s)+"$)")
+			continue
+		}
+		pattern := ""
+		for _, p := range constraintParts(b, 0) {
+			if op, args := unwrap(p); op == cue.RegexMatchOp {
+				if s, ok := str(args); ok && pattern == "" {
+					pattern = s
+					continue
+				}
+				return "", false
+			}
+		}
+		if pattern == "" {
+			return "", false
+		}
+		sawPattern = true
+		alts = append(alts, "(?:"+pattern+")")
+	}
+	if !sawPattern {
+		return "", false
+	}
+	return strings.Join(alts, "|"), true
 }

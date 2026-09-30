@@ -362,3 +362,25 @@ func TestGenerateConditionInsideDefaultedList(t *testing.T) {
 	ps := generate(t, `parameter: ports: *[{type: "a", x: "1"}] | [...{type: "a" | "b", if type == "a" {x: string}, if type == "b" {y: int}}]`)
 	assert.Equal(t, []uischema.Condition{{JSONKey: "type", Value: "b"}}, conditionsOf(t, ps.UI, "ports", "y"))
 }
+
+func TestGeneratePatterns(t *testing.T) {
+	ps := generate(t, `
+import "strings"
+
+#Name: string & =~"^[a-z]+$"
+parameter: {
+	plain:  string & =~"^[a-z]+$"
+	either: =~"^a" | =~"^b" | "exact.value"
+	open:   =~"^a" | string
+	viaDef: #Name & strings.MaxRunes(5)
+	items: [...string & =~"^[0-9]+$"]
+}`)
+	pattern := func(key string) string { return ps.OpenAPI.Properties[key].Value.Pattern }
+	assert.Equal(t, "^[a-z]+$", pattern("plain"))
+	assert.Equal(t, `(?:^a)|(?:^b)|(?:^exact\.value$)`, pattern("either"))
+	assert.Equal(t, "", pattern("open"), "a plain string branch matches anything")
+	assert.Equal(t, "^[a-z]+$", pattern("viaDef"))
+	assert.Equal(t, uint64(5), *ps.OpenAPI.Properties["viaDef"].Value.MaxLength)
+	assert.Equal(t, "^[0-9]+$", ps.OpenAPI.Properties["items"].Value.Items.Value.Pattern)
+	assert.Equal(t, "^[a-z]+$", uiParam(t, ps.UI, "viaDef").Validate.Pattern)
+}
