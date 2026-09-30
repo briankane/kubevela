@@ -164,3 +164,16 @@ func TestParseParameterSchemaFallsBack(t *testing.T) {
 	_, path, _ := ParseParameterSchema(context.Background(), src)
 	assert.Equal(t, PathFull, path)
 }
+
+func TestParseParameterSchemaNeedsCuex(t *testing.T) {
+	src := `
+import "vela/kube"
+
+parameter: resource: kube.#Read.$params.value
+output: {}
+`
+	sch, path, err := ParseParameterSchema(context.Background(), src)
+	require.NoError(t, err)
+	assert.Equal(t, PathCuex, path)
+	assert.Contains(t, sch.Properties, "resource")
+}
