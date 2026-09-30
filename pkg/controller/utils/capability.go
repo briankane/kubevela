@@ -19,6 +19,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -43,6 +44,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
+	"github.com/oam-dev/kubevela/pkg/definition/inherit"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/schema"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
@@ -125,11 +127,17 @@ func NewCapabilityComponentDef(componentDefinition *v1beta1.ComponentDefinition)
 
 // GetOpenAPISchema gets OpenAPI v3 schema by WorkloadDefinition name
 func (def *CapabilityComponentDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
+	openAPI, _, err := def.parameterSchemas(ctx, name)
+	return openAPI, err
+}
+
+// parameterSchemas generates the OpenAPI and default UI schemas of the definition's parameter.
+func (def *CapabilityComponentDefinition) parameterSchemas(ctx context.Context, name string) ([]byte, []byte, error) {
 	capability, err := appfile.ConvertTemplateJSON2Object(name, def.ComponentDefinition.Spec.Extension, def.ComponentDefinition.Spec.Schematic)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert ComponentDefinition to Capability Object")
+		return nil, nil, fmt.Errorf("failed to convert ComponentDefinition to Capability Object")
 	}
-	return getOpenAPISchema(ctx, capability)
+	return getParameterSchemas(ctx, capability)
 }
 
 // GetOpenAPISchemaFromTerraformComponentDefinition gets OpenAPI v3 schema by WorkloadDefinition name
@@ -615,9 +623,10 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 	default:
 		switch {
 		case def.ComponentDefinition.Spec.Extends == "":
-			jsonSchema, err = def.GetOpenAPISchema(ctx, name)
+			jsonSchema, def.defaultUISchema, err = def.parameterSchemas(ctx, name)
 		case def.ComponentDefinition.Spec.Schematic != nil && def.ComponentDefinition.Spec.Schematic.CUE != nil:
-			jsonSchema, err = inheritedComponentSchema(ctx, &def.ComponentDefinition)
+			jsonSchema, def.defaultUISchema, err = inheritedSchemas(ctx, def.ComponentDefinition.Name,
+				def.ComponentDefinition.Spec.Schematic.CUE.Template, inherit.ComponentSurface)
 		default:
 			// Admission refuses this combination, so it can only reach here from
 			// a definition applied before the check existed. Publishing the
@@ -684,11 +693,17 @@ func NewCapabilityTraitDef(traitdefinition *v1beta1.TraitDefinition) CapabilityT
 
 // GetOpenAPISchema gets OpenAPI v3 schema by TraitDefinition name
 func (def *CapabilityTraitDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
+	openAPI, _, err := def.parameterSchemas(ctx, name)
+	return openAPI, err
+}
+
+// parameterSchemas generates the OpenAPI and default UI schemas of the definition's parameter.
+func (def *CapabilityTraitDefinition) parameterSchemas(ctx context.Context, name string) ([]byte, []byte, error) {
 	capability, err := appfile.ConvertTemplateJSON2Object(name, def.TraitDefinition.Spec.Extension, def.TraitDefinition.Spec.Schematic)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert WorkloadDefinition to Capability Object")
+		return nil, nil, fmt.Errorf("failed to convert WorkloadDefinition to Capability Object")
 	}
-	return getOpenAPISchema(ctx, capability)
+	return getParameterSchemas(ctx, capability)
 }
 
 // StoreOpenAPISchema stores OpenAPI v3 schema from TraitDefinition in ConfigMap
@@ -697,9 +712,10 @@ func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8
 	var err error
 	if def.TraitDefinition.Spec.Extends != "" &&
 		def.TraitDefinition.Spec.Schematic != nil && def.TraitDefinition.Spec.Schematic.CUE != nil {
-		jsonSchema, err = inheritedTraitSchema(ctx, &def.TraitDefinition)
+		jsonSchema, def.defaultUISchema, err = inheritedSchemas(ctx, def.TraitDefinition.Name,
+			def.TraitDefinition.Spec.Schematic.CUE.Template, inherit.TraitSurface)
 	} else {
-		jsonSchema, err = def.GetOpenAPISchema(ctx, name)
+		jsonSchema, def.defaultUISchema, err = def.parameterSchemas(ctx, name)
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
@@ -757,19 +773,23 @@ func NewCapabilityStepDef(stepdefinition *v1beta1.WorkflowStepDefinition) Capabi
 
 // GetOpenAPISchema gets OpenAPI v3 schema by StepDefinition name
 func (def *CapabilityStepDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
+	openAPI, _, err := def.parameterSchemas(ctx, name)
+	return openAPI, err
+}
+
+// parameterSchemas generates the OpenAPI and default UI schemas of the definition's parameter.
+func (def *CapabilityStepDefinition) parameterSchemas(ctx context.Context, name string) ([]byte, []byte, error) {
 	capability, err := appfile.ConvertTemplateJSON2Object(name, nil, def.StepDefinition.Spec.Schematic)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert WorkflowStepDefinition to Capability Object")
+		return nil, nil, fmt.Errorf("failed to convert WorkflowStepDefinition to Capability Object")
 	}
-	return getOpenAPISchema(ctx, capability)
+	return getParameterSchemas(ctx, capability)
 }
 
 // StoreOpenAPISchema stores OpenAPI v3 schema from StepDefinition in ConfigMap
 func (def *CapabilityStepDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name string, revName string) (string, error) {
-	var jsonSchema []byte
-	var err error
-
-	jsonSchema, err = def.GetOpenAPISchema(ctx, name)
+	jsonSchema, uiSchema, err := def.parameterSchemas(ctx, name)
+	def.defaultUISchema = uiSchema
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
 	}
@@ -826,19 +846,23 @@ func NewCapabilityPolicyDef(policydefinition *v1beta1.PolicyDefinition) Capabili
 
 // GetOpenAPISchema gets OpenAPI v3 schema by StepDefinition name
 func (def *CapabilityPolicyDefinition) GetOpenAPISchema(ctx context.Context, name string) ([]byte, error) {
+	openAPI, _, err := def.parameterSchemas(ctx, name)
+	return openAPI, err
+}
+
+// parameterSchemas generates the OpenAPI and default UI schemas of the definition's parameter.
+func (def *CapabilityPolicyDefinition) parameterSchemas(ctx context.Context, name string) ([]byte, []byte, error) {
 	capability, err := appfile.ConvertTemplateJSON2Object(name, nil, def.PolicyDefinition.Spec.Schematic)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert WorkflowStepDefinition to Capability Object")
+		return nil, nil, fmt.Errorf("failed to convert WorkflowStepDefinition to Capability Object")
 	}
-	return getOpenAPISchema(ctx, capability)
+	return getParameterSchemas(ctx, capability)
 }
 
 // StoreOpenAPISchema stores OpenAPI v3 schema from StepDefinition in ConfigMap
 func (def *CapabilityPolicyDefinition) StoreOpenAPISchema(ctx context.Context, k8sClient client.Client, namespace, name, revName string) (string, error) {
-	var jsonSchema []byte
-	var err error
-
-	jsonSchema, err = def.GetOpenAPISchema(ctx, name)
+	jsonSchema, uiSchema, err := def.parameterSchemas(ctx, name)
+	def.defaultUISchema = uiSchema
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OpenAPI v3 JSON schema for capability %s: %w", def.Name, err)
 	}
@@ -879,6 +903,9 @@ func (def *CapabilityPolicyDefinition) StoreOpenAPISchema(ctx context.Context, k
 
 // CapabilityBaseDefinition is the base struct for CapabilityWorkloadDefinition and CapabilityTraitDefinition
 type CapabilityBaseDefinition struct {
+	// defaultUISchema is the form generated from the definition's parameter,
+	// stored beside its OpenAPI schema when set.
+	defaultUISchema []byte
 }
 
 // CreateOrUpdateConfigMap creates ConfigMap to store OpenAPI v3 schema or or updates data in ConfigMap
@@ -888,6 +915,9 @@ func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context
 	var cm v1.ConfigMap
 	var data = map[string]string{
 		types.OpenapiV3JSONSchema: string(jsonSchema),
+	}
+	if len(def.defaultUISchema) > 0 {
+		data[types.DefaultUISchema] = string(def.defaultUISchema)
 	}
 	if labels == nil {
 		labels = make(map[string]string)
@@ -933,6 +963,31 @@ func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context
 	}
 	klog.InfoS("Successfully update Capability Schema in ConfigMap", "configMap", klog.KRef(namespace, cmName))
 	return cmName, nil
+}
+
+// getParameterSchemas generates a CUE template's OpenAPI and default UI
+// schemas. A template the generator cannot read gets the OpenAPI schema CUE's
+// encoder produces, and no UI schema, so VelaUX derives its form as before.
+func getParameterSchemas(ctx context.Context, capability types.Capability) ([]byte, []byte, error) {
+	ps, err := schema.GenerateParameterSchemas(ctx, capability.CueTemplate)
+	if err != nil {
+		klog.InfoS("falling back to the CUE OpenAPI encoder", "capability", capability.Name, "err", err.Error())
+		openAPI, err := getOpenAPISchema(ctx, capability)
+		return openAPI, nil, err
+	}
+	return marshalSchemas(ps)
+}
+
+func marshalSchemas(ps *schema.ParameterSchemas) ([]byte, []byte, error) {
+	openAPI, err := json.Marshal(ps.OpenAPI)
+	if err != nil {
+		return nil, nil, err
+	}
+	ui, err := json.Marshal(ps.UI)
+	if err != nil {
+		return nil, nil, err
+	}
+	return openAPI, ui, nil
 }
 
 // getOpenAPISchema is the main function for GetDefinition API
