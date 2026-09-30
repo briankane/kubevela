@@ -247,3 +247,113 @@ func TestGenerateShapeDescriptions(t *testing.T) {
 	}
 	assert.Equal(t, map[string]string{"Input": "URL path to probe", "Strings": "Command to run"}, got)
 }
+
+func TestGenerateUIHints(t *testing.T) {
+	ps := generate(t, `parameter: {
+	// +usage=Container image
+	// +ui:placeholder=nginx:1.25
+	// +ui:colSpan=12
+	image: string
+	// +ui:type=Password
+	// +ui:label=Access token
+	token: string
+	// +ui:advanced
+	debug: *false | bool
+	// +ignore
+	cliOnly?: string
+	// +ui:hidden
+	secret?: string
+	// +ui:order=0
+	name: string
+	// +usage=Ports to expose
+	// +ui:format=table
+	// +ui:rowKey=name
+	ports: [...{name: string, port: int}]
+	// +ui:unknownHint=ignored
+	extra?: string
+}`)
+	var keys []string
+	for _, p := range ps.UI {
+		keys = append(keys, p.JSONKey)
+	}
+	assert.Equal(t, "name", keys[0], "an explicit order goes ahead of declaration order")
+
+	image := uiParam(t, ps.UI, "image")
+	assert.Equal(t, "Container image", image.Description, "hint lines are not part of the description")
+	assert.Equal(t, &uischema.Style{ColSpan: 12, Placeholder: "nginx:1.25"}, image.Style)
+
+	token := uiParam(t, ps.UI, "token")
+	assert.Equal(t, "Password", token.UIType)
+	assert.Equal(t, "Access token", token.Label)
+
+	assert.True(t, uiParam(t, ps.UI, "debug").Style.Advanced)
+	assert.Nil(t, uiParam(t, ps.UI, "cliOnly").Disable, "+ignore hides a field from the CLI, not the UI")
+	assert.True(t, *uiParam(t, ps.UI, "secret").Disable)
+	assert.Equal(t, &uischema.Style{Format: "table", RowKey: "name"}, uiParam(t, ps.UI, "ports").Style)
+	assert.Nil(t, uiParam(t, ps.UI, "extra").Style)
+
+	assert.Equal(t, UIHints{Format: "table", RowKey: "name"}, ps.OpenAPI.Properties["ports"].Value.Extensions[ExtensionUI])
+}
+
+func TestGenerateSuggestions(t *testing.T) {
+	ps := generate(t, `parameter: {
+	lang: "go" | "java" | string
+	// +ui:suggest=eu-west-1, us-east-1
+	region: string
+}`)
+	lang := uiParam(t, ps.UI, "lang")
+	assert.Equal(t, "Suggest", lang.UIType)
+	assert.Len(t, lang.Validate.Options, 2)
+	region := uiParam(t, ps.UI, "region")
+	assert.Equal(t, "Suggest", region.UIType)
+	assert.Equal(t, "us-east-1", region.Validate.Options[1].Value)
+}
+
+func TestGenerateStructMap(t *testing.T) {
+	ps := generate(t, `parameter: sidecars: [string]: {image: string, cpu?: string}`)
+	p := uiParam(t, ps.UI, "sidecars")
+	assert.Equal(t, "StructMap", p.UIType)
+	assert.Len(t, p.SubParameters, 2)
+}
+
+func TestGenerateConditionsAcrossCollections(t *testing.T) {
+	ps := generate(t, `parameter: {
+	mode: "simple" | "advanced"
+	ports: [...{port: int, if mode == "advanced" {appProtocol?: string}}]
+	deep: {a: {b: {kind: "x" | "y"}}}
+	if deep.a.b.kind == "x" {note: string}
+}`)
+	assert.Equal(t, []uischema.Condition{{JSONKey: "../mode", Value: "advanced"}},
+		conditionsOf(t, ps.UI, "ports", "appProtocol"))
+	assert.Equal(t, []uischema.Condition{{JSONKey: "deep.a.b.kind", Value: "x"}}, conditionsOf(t, ps.UI, "note"))
+}
+
+func TestGenerateParameterSchemasAt(t *testing.T) {
+	ps, err := GenerateParameterSchemasAt(context.Background(), `
+metadata: name: "demo"
+template: parameter: {
+	kind: "token" | "basic"
+	if kind == "token" {
+		// +usage=Access token
+		token: string
+	}
+	if kind == "basic" {
+		// +usage=User name
+		user: string
+	}
+}
+`, "template")
+	require.NoError(t, err)
+	assert.Equal(t, "Access token", uiParam(t, ps.UI, "token").Description)
+	assert.Equal(t, []uischema.Condition{{JSONKey: "kind", Value: "basic"}}, uiParam(t, ps.UI, "user").Conditions)
+}
+
+func TestPlaceByOrder(t *testing.T) {
+	two, zero, nine := 2, 0, 9
+	fields := []*Field{{Name: "a"}, {Name: "b", UI: UIHints{Order: &two}}, {Name: "c"}, {Name: "d", UI: UIHints{Order: &zero}}, {Name: "e", UI: UIHints{Order: &nine}}}
+	var names []string
+	for _, f := range placeByOrder(fields) {
+		names = append(names, f.Name)
+	}
+	assert.Equal(t, []string{"d", "a", "b", "c", "e"}, names)
+}

@@ -96,6 +96,18 @@ func (c Condition) Validate() error {
 type Style struct {
 	// ColSpan the width of a responsive layout
 	ColSpan int `json:"colSpan"`
+	// Format is how a list of structs is laid out: `table` for one row each.
+	Format string `json:"format,omitempty"`
+	// RowKey names the field that identifies a row of a list: unique, and the
+	// row's title.
+	RowKey string `json:"rowKey,omitempty"`
+	// ItemLabel names the field that titles each item of a list.
+	ItemLabel string `json:"itemLabel,omitempty"`
+	// Placeholder is shown in an empty input.
+	Placeholder string `json:"placeholder,omitempty"`
+	// Advanced puts the parameter behind the Advanced toggle. Once any
+	// parameter of a form sets it, only those that do are hidden.
+	Advanced bool `json:"advanced,omitempty"`
 }
 
 // GroupOption define multiple data structure composition options.

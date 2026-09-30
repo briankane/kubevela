@@ -19,6 +19,7 @@ package schema
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
@@ -78,7 +79,7 @@ func GenerateParameterSchemas(ctx context.Context, template string) (*ParameterS
 	if pruned, err := PruneToParameter(template); err == nil {
 		src = pruned
 	}
-	src = instrumentClauses(src)
+	src = InstrumentClauses(src)
 	full := src + "\n" + schemaContext
 	val := cuecontext.New().CompileString(full)
 	if err := val.Err(); err != nil {
@@ -91,6 +92,24 @@ func GenerateParameterSchemas(ctx context.Context, template string) (*ParameterS
 		}
 	}
 	return GenerateParameterSchemasFromValue(val, src)
+}
+
+// GenerateParameterSchemasAt is GenerateParameterSchemas for a template whose
+// parameter sits under path rather than at the top, such as a config
+// template's `template.parameter`.
+func GenerateParameterSchemasAt(ctx context.Context, template, path string) (*ParameterSchemas, error) {
+	src := InstrumentClauses(template)
+	val := cuecontext.New().CompileString(src)
+	if err := val.Err(); err != nil {
+		if !needsCuex(src) {
+			return nil, err
+		}
+		val, err = providers.DefaultCompiler.Get().CompileStringWithOptions(ctx, src, cuex.DisableResolveProviderFunctions{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return GenerateParameterSchemasFromValue(val.LookupPath(cue.ParsePath(path)), src)
 }
 
 // GenerateParameterSchemasFromValue is GenerateParameterSchemas for a template
@@ -117,6 +136,12 @@ func (f *Field) OpenAPI() *openapi3.Schema {
 	s := &openapi3.Schema{Title: f.Name, Description: f.Description, Default: f.Default, Nullable: f.Nullable}
 	if f.Immutable {
 		s.Extensions = map[string]any{ExtensionImmutable: true}
+	}
+	if !f.UI.empty() {
+		if s.Extensions == nil {
+			s.Extensions = map[string]any{}
+		}
+		s.Extensions[ExtensionUI] = f.UI
 	}
 	switch f.Kind {
 	case KindString:
@@ -262,10 +287,33 @@ func (f *Field) branches(name string) openapi3.SchemaRefs {
 // order the template declares them.
 func (f *Field) UIParameters() uischema.UISchema {
 	var out uischema.UISchema
-	for i, c := range f.formFields() {
+	for i, c := range placeByOrder(f.formFields()) {
 		p := c.uiParameter()
 		p.Sort = uint(100 + i)
 		out = append(out, p)
+	}
+	return out
+}
+
+// placeByOrder puts a field with `+ui:order=N` at position N among its
+// siblings; the rest fill the other positions in declaration order.
+func placeByOrder(fields []*Field) []*Field {
+	var ordered, rest []*Field
+	for _, f := range fields {
+		if f.UI.Order != nil {
+			ordered = append(ordered, f)
+		} else {
+			rest = append(rest, f)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return *ordered[i].UI.Order < *ordered[j].UI.Order })
+	out := make([]*Field, 0, len(fields))
+	for len(ordered) > 0 || len(rest) > 0 {
+		if len(ordered) > 0 && (len(rest) == 0 || *ordered[0].UI.Order <= len(out)) {
+			out, ordered = append(out, ordered[0]), ordered[1:]
+			continue
+		}
+		out, rest = append(out, rest[0]), rest[1:]
 	}
 	return out
 }
@@ -300,6 +348,12 @@ func (f *Field) uiParameter() *uischema.UIParameter {
 		p.UIType = "Input"
 		if len(f.Enum) > 1 {
 			p.UIType = "Select"
+		} else if len(f.UI.Suggest) > 0 {
+			// Suggestions, unlike an enum's options, do not limit the value.
+			p.UIType = "Suggest"
+			for _, s := range f.UI.Suggest {
+				p.Validate.Options = append(p.Validate.Options, uischema.Option{Label: s, Value: s})
+			}
 		}
 	case KindInt, KindNumber:
 		p.UIType = "Number"
@@ -327,6 +381,8 @@ func (f *Field) uiParameter() *uischema.UIParameter {
 			p.Additional = &additional
 			p.AdditionalParameter = f.Values.uiParameter()
 			if f.Values.Kind == KindObject {
+				// A map of structs is entered as rows: a key and the struct.
+				p.UIType = "StructMap"
 				p.SubParameters = f.Values.UIParameters()
 			}
 		}
@@ -347,6 +403,7 @@ func (f *Field) uiParameter() *uischema.UIParameter {
 	default:
 		p.UIType = "Input"
 	}
+	f.UI.applyTo(p)
 	return p
 }
 
@@ -461,4 +518,29 @@ func needsCuex(src string) bool {
 		}
 	}
 	return false
+}
+
+// applyTo sets what the hints say on a rendered parameter.
+func (h UIHints) applyTo(p *uischema.UIParameter) {
+	if h.Type != "" {
+		p.UIType = h.Type
+	}
+	if h.Label != "" {
+		p.Label = h.Label
+	}
+	if h.Hidden {
+		hidden := true
+		p.Disable = &hidden
+	}
+	style := uischema.Style{
+		ColSpan:     h.ColSpan,
+		Format:      h.Format,
+		RowKey:      h.RowKey,
+		ItemLabel:   h.ItemLabel,
+		Placeholder: h.Placeholder,
+		Advanced:    h.Advanced,
+	}
+	if style != (uischema.Style{}) {
+		p.Style = &style
+	}
 }

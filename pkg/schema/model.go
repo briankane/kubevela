@@ -24,8 +24,6 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/token"
-
-	"github.com/oam-dev/kubevela/pkg/appfile"
 )
 
 // Kind is the shape of a parameter field.
@@ -94,6 +92,8 @@ type Field struct {
 	pos token.Pos
 	// clause is the marker of the `if` body that declares the field.
 	clause string
+	// UI are the field's `+ui:` hints.
+	UI UIHints
 	// Discriminators name the siblings whose values decide which conditional
 	// fields of this object exist.
 	Discriminators []string
@@ -115,7 +115,7 @@ type walker struct {
 	root      cue.Value
 	condNames map[string]bool
 	// clauses are the `if` bodies of the template, keyed by their marker
-	// (see instrumentClauses) or, unmarked, by their position.
+	// (see InstrumentClauses) or, unmarked, by their position.
 	clauses map[string]clause
 	// scopes are the discriminators of the objects enclosing the one being
 	// walked, innermost last.
@@ -135,7 +135,7 @@ func (w *walker) field(name string, v cue.Value, path cue.Path, refs []string, d
 		f.Kind, f.Recursive = KindObject, true
 		return f
 	}
-	f.Description, f.Immutable = describe(v)
+	f.apply(docOf(v))
 
 	if root, ref := v.ReferencePath(); root.Exists() && ref.String() != "" {
 		r := ref.String()
@@ -185,9 +185,7 @@ func (w *walker) field(name string, v cue.Value, path cue.Path, refs []string, d
 	case cue.ListKind:
 		f.Kind = KindArray
 		if elem, ok := listElem(shape); ok {
-			f.Items = w.detached(func() *Field {
-				return w.field("", elem, appendPath(path, cue.AnyIndex), refs, depth+1)
-			})
+			f.Items = w.field("", elem, appendPath(path, cue.AnyIndex), refs, depth+1)
 		} else if it, err := shape.List(); err == nil && it.Next() {
 			// A closed list reads its element's shape from the first entry,
 			// but not that entry's value.
@@ -262,9 +260,14 @@ func (w *walker) disjunction(f *Field, v cue.Value, args []cue.Value, path cue.P
 		return
 	}
 	if k, ok := sameScalarKind(branches); ok && len(branches) > 1 {
-		// `"go" | "java" | string` is a string: the literals are only
+		// `"go" | "java" | string` is a string: the literals are
 		// suggestions.
 		f.Kind, f.Nullable = k, nullable
+		for _, b := range branches {
+			if s, err := b.String(); err == nil && b.IsConcrete() && !containsString(f.UI.Suggest, s) {
+				f.UI.Suggest = append(f.UI.Suggest, s)
+			}
+		}
 		return
 	}
 	if len(branches) == 1 {
@@ -274,6 +277,9 @@ func (w *walker) disjunction(f *Field, v cue.Value, args []cue.Value, path cue.P
 			inner.Description = f.Description
 		}
 		inner.Immutable = inner.Immutable || f.Immutable
+		if inner.UI.empty() {
+			inner.UI = f.UI
+		}
 		*f = *inner
 		return
 	}
@@ -506,29 +512,6 @@ func labelName(sel cue.Selector) string {
 		return sel.Unquoted()
 	}
 	return strings.TrimRight(sel.String(), "?!")
-}
-
-// describe reads a field's doc comment the way FixOpenAPISchema does: the text
-// after +usage=, cut at +short, with a +immutable line lifted out.
-func describe(v cue.Value) (string, bool) {
-	var parts []string
-	for _, cg := range v.Doc() {
-		parts = append(parts, cg.Text())
-	}
-	return describeText(strings.Join(parts, "\n"))
-}
-
-// describeText reads a doc comment's text as describe does.
-func describeText(d string) (string, bool) {
-	d = strings.TrimSpace(d)
-	d, immutable := extractMarkerFromDescription(d, appfile.ImmutableTag)
-	if strings.Contains(d, appfile.UsageTag) {
-		d = strings.Split(d, appfile.UsageTag)[1]
-	}
-	if strings.Contains(d, appfile.ShortTag) {
-		d = strings.Split(d, appfile.ShortTag)[0]
-	}
-	return strings.TrimSpace(d), immutable
 }
 
 func literalString(lit *ast.BasicLit) (string, error) {

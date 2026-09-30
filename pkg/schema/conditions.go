@@ -85,9 +85,7 @@ func (w *walker) object(f *Field, v cue.Value, path cue.Path, refs []string, dep
 		// `...` reads as a `_` pattern: an open struct, not a map, unless it
 		// declares nothing else.
 		values := func() *Field {
-			return w.detached(func() *Field {
-				return w.field("", pv, appendPath(path, cue.AnyString), refs, depth+1)
-			})
+			return w.field("", pv, appendPath(path, cue.AnyString), refs, depth+1)
 		}
 		switch {
 		case len(base) == 0:
@@ -108,7 +106,7 @@ func (w *walker) object(f *Field, v cue.Value, path cue.Path, refs []string, dep
 			queue = append(queue, &discriminator{ref: up + d.ref, path: d.path, values: d.values, conds: d.conds})
 		}
 	}
-	queue = append(queue, w.childDiscriminators(base, path)...)
+	queue = append(queue, w.childDiscriminators(base, path, "", childDepth)...)
 
 	fields := base
 	for i := 0; i < len(queue) && i < maxCandidates; i++ {
@@ -122,15 +120,6 @@ func (w *walker) object(f *Field, v cue.Value, path cue.Path, refs []string, dep
 		}
 	}
 	f.Fields = w.sortBySource(fields)
-}
-
-// detached walks a list element or map value, whose form VelaUX renders on its
-// own: a condition inside it cannot reach the fields around the collection.
-func (w *walker) detached(walk func() *Field) *Field {
-	saved := w.scopes
-	w.scopes = nil
-	defer func() { w.scopes = saved }()
-	return walk()
 }
 
 // scopeFor lists the fields of v that an `if` could read: those named in a
@@ -160,20 +149,27 @@ func (w *walker) scopeFor(v cue.Value, path cue.Path) scope {
 	return s
 }
 
+// childDepth bounds how far into child objects a condition is looked for.
+const childDepth = 3
+
 // childDiscriminators are the fields of child objects an `if` in this object
-// could read, one level down.
-func (w *walker) childDiscriminators(base []*Field, path cue.Path) []*discriminator {
+// could read, up to depth levels down, named by their dotted path.
+func (w *walker) childDiscriminators(fields []*Field, path cue.Path, prefix string, depth int) []*discriminator {
+	if depth == 0 {
+		return nil
+	}
 	var out []*discriminator
-	for _, c := range base {
+	for _, c := range fields {
 		if c.Kind != KindObject || len(c.Conditions) > 0 || !w.condNames[c.Name] {
 			continue
 		}
+		cp := pathJoin(path, c.Name)
 		for _, g := range c.Fields {
 			if !w.condNames[g.Name] || len(g.Conditions) > 0 {
 				continue
 			}
-			gp := pathJoin(pathJoin(path, c.Name), g.Name)
-			ref := c.Name + "." + g.Name
+			gp := pathJoin(cp, g.Name)
+			ref := prefix + c.Name + "." + g.Name
 			if values := g.values(); values != nil {
 				out = append(out, &discriminator{ref: ref, path: gp, values: values})
 			}
@@ -181,6 +177,7 @@ func (w *walker) childDiscriminators(base []*Field, path cue.Path) []*discrimina
 				out = append(out, &discriminator{ref: ref, path: gp})
 			}
 		}
+		out = append(out, w.childDiscriminators(c.Fields, cp, prefix+c.Name+".", depth-1)...)
 	}
 	return out
 }
@@ -469,7 +466,7 @@ func (c clause) index(name string) int {
 	return 0
 }
 
-// clauseMarker prefixes the definition instrumentClauses puts in each `if`
+// clauseMarker prefixes the definition InstrumentClauses puts in each `if`
 // body. A definition is never listed as a field, so it changes no schema, but
 // its presence in an evaluated struct says the body is active.
 const clauseMarker = "#velaClause"
@@ -479,12 +476,12 @@ func offsetKey(off int) string {
 	return fmt.Sprintf("@%d", off)
 }
 
-// instrumentClauses marks every body of a comprehension made only of `if`
+// InstrumentClauses marks every body of a comprehension made only of `if`
 // clauses. A name several bodies declare has one position and one doc comment
 // for all of them, so only the markers say which body a field came from.
 // Bodies with a `for` clause are left alone: they can embed a scalar, which a
 // definition field would conflict with.
-func instrumentClauses(src string) string {
+func InstrumentClauses(src string) string {
 	f, err := parser.ParseFile("template", src, parser.ParseComments)
 	if err != nil {
 		return src
@@ -546,7 +543,7 @@ func (w *walker) placeInClause(f *Field, parent cue.Value) {
 	}
 	f.clause = key
 	if cf.doc != "" {
-		f.Description, f.Immutable = describeText(cf.doc)
+		f.apply(parseDoc(cf.doc))
 	}
 }
 
