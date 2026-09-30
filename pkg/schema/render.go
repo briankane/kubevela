@@ -78,6 +78,7 @@ func GenerateParameterSchemas(ctx context.Context, template string) (*ParameterS
 	if pruned, err := PruneToParameter(template); err == nil {
 		src = pruned
 	}
+	src = instrumentClauses(src)
 	full := src + "\n" + schemaContext
 	val := cuecontext.New().CompileString(full)
 	if err := val.Err(); err != nil {

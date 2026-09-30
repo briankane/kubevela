@@ -226,3 +226,24 @@ func TestGenerateRejectsInvalidParameter(t *testing.T) {
 	_, err := GenerateParameterSchemas(context.Background(), `parameter: example: *"default"`)
 	assert.Error(t, err)
 }
+
+func TestGenerateShapeDescriptions(t *testing.T) {
+	ps := generate(t, `parameter: {
+	probe: "http" | *"exec"
+	if probe == "http" {
+		// +usage=URL path to probe
+		target: *"/healthz" | string
+	}
+	if probe == "exec" {
+		// +usage=Command to run
+		target: [...string]
+	}
+}`)
+	got := map[string]string{}
+	for _, p := range ps.UI {
+		if p.JSONKey == "target" {
+			got[p.UIType] = p.Description
+		}
+	}
+	assert.Equal(t, map[string]string{"Input": "URL path to probe", "Strings": "Command to run"}, got)
+}

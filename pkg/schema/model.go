@@ -92,6 +92,8 @@ type Field struct {
 	Conditions []Condition
 	// pos is where the field is declared, which orders a form.
 	pos token.Pos
+	// clause is the marker of the `if` body that declares the field.
+	clause string
 	// Discriminators name the siblings whose values decide which conditional
 	// fields of this object exist.
 	Discriminators []string
@@ -101,7 +103,7 @@ type Field struct {
 // template's source, used only to find which fields an `if` reads.
 func BuildParameter(param cue.Value, src string) (*Field, error) {
 	w := &walker{root: param}
-	w.condNames, w.clauseLabels = scanSource(src)
+	w.condNames, w.clauses = scanSource(src)
 	f := w.field("", param, cue.Path{}, nil, 0)
 	if w.err != nil {
 		return nil, w.err
@@ -112,10 +114,9 @@ func BuildParameter(param cue.Value, src string) (*Field, error) {
 type walker struct {
 	root      cue.Value
 	condNames map[string]bool
-	// clauseLabels are the field labels each `if` body declares, in order,
-	// keyed by the clause's offset, since CUE gives every field the clause
-	// adds the clause's position.
-	clauseLabels map[int][]string
+	// clauses are the `if` bodies of the template, keyed by their marker
+	// (see instrumentClauses) or, unmarked, by their position.
+	clauses map[string]clause
 	// scopes are the discriminators of the objects enclosing the one being
 	// walked, innermost last.
 	scopes []scope
@@ -309,6 +310,7 @@ func (w *walker) fields(v cue.Value, path cue.Path, refs []string, depth int) []
 		name := labelName(sel)
 		child := w.field(name, it.Value(), appendPath(path, sel), refs, depth+1)
 		child.pos = it.Value().Pos()
+		w.placeInClause(child, v)
 		if sel.ConstraintType() == cue.OptionalConstraint || child.HasDefault {
 			child.Optional = true
 		}
@@ -513,7 +515,12 @@ func describe(v cue.Value) (string, bool) {
 	for _, cg := range v.Doc() {
 		parts = append(parts, cg.Text())
 	}
-	d := strings.TrimSpace(strings.Join(parts, "\n"))
+	return describeText(strings.Join(parts, "\n"))
+}
+
+// describeText reads a doc comment's text as describe does.
+func describeText(d string) (string, bool) {
+	d = strings.TrimSpace(d)
 	d, immutable := extractMarkerFromDescription(d, appfile.ImmutableTag)
 	if strings.Contains(d, appfile.UsageTag) {
 		d = strings.Split(d, appfile.UsageTag)[1]

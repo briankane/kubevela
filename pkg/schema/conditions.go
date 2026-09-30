@@ -17,11 +17,13 @@ limitations under the License.
 package schema
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
 )
 
@@ -206,6 +208,8 @@ func (w *walker) branch(d *discriminator, fields []*Field, path cue.Path, refs [
 		value cue.Value
 		prev  string
 		in    []outcome
+		// sub is the struct of the first outcome that produced it.
+		sub cue.Value
 	}
 	var order []string
 	variants := map[string]*variant{}
@@ -226,7 +230,7 @@ func (w *walker) branch(d *discriminator, fields []*Field, path cue.Path, refs [
 			key := name + "|" + shapeOf(it.Value())
 			vr, ok := variants[key]
 			if !ok {
-				vr = &variant{name: name, shape: key, sel: sel, value: it.Value(), prev: prev}
+				vr = &variant{name: name, shape: key, sel: sel, value: it.Value(), prev: prev, sub: sub}
 				variants[key] = vr
 				order = append(order, key)
 			}
@@ -247,10 +251,11 @@ func (w *walker) branch(d *discriminator, fields []*Field, path cue.Path, refs [
 			continue
 		}
 		cond := d.condition(vr.in)
-		existing := findField(fields, vr.name, vr.shape)
+		existing := findField(fields, vr.name, vr.shape, shapes[vr.name] == 1)
 		if existing == nil {
 			fl := w.field(vr.name, vr.value, appendPath(path, vr.sel), refs, depth+1)
 			fl.pos = vr.value.Pos()
+			w.placeInClause(fl, vr.sub)
 			fl.Optional = vr.sel.ConstraintType() == cue.OptionalConstraint || fl.HasDefault
 			fl.Conditions = append(append([]Condition(nil), d.conds...), cond)
 			fields = insertAfter(fields, fl, vr.prev)
@@ -265,6 +270,7 @@ func (w *walker) branch(d *discriminator, fields []*Field, path cue.Path, refs [
 			}
 		} else {
 			existing.Conditions = append(existing.Conditions, cond)
+			w.placeInClause(existing, vr.sub)
 		}
 		conditional = true
 	}
@@ -356,7 +362,9 @@ func shapeOf(v cue.Value) string {
 	return (k &^ cue.NullKind).String()
 }
 
-func findField(fields []*Field, name, key string) *Field {
+// findField finds the field a variant updates: the one of its name and shape,
+// or, when the name takes only one shape, the one of its name.
+func findField(fields []*Field, name, key string, oneShape bool) *Field {
 	var byName *Field
 	count := 0
 	for _, f := range fields {
@@ -369,7 +377,7 @@ func findField(fields []*Field, name, key string) *Field {
 			return f
 		}
 	}
-	if count == 1 && len(byName.Conditions) == 0 {
+	if oneShape && count == 1 && len(byName.Conditions) == 0 {
 		// The unconditional read took this field's shape from the
 		// discriminator's default; any shape of it is the same field.
 		return byName
@@ -415,16 +423,17 @@ func insertAfter(fields []*Field, fl *Field, prev string) []*Field {
 // position, so fields of one clause are ordered by the clause's labels.
 func (w *walker) sortBySource(fields []*Field) []*Field {
 	for _, f := range fields {
-		if !f.pos.IsValid() {
+		if !f.pos.IsValid() && f.clause == "" {
 			return fields
 		}
 	}
 	rank := func(f *Field) (int, int) {
+		if c, ok := w.clauses[f.clause]; ok {
+			return c.offset, c.index(f.Name)
+		}
 		off := f.pos.Position().Offset
-		for i, l := range w.clauseLabels[off] {
-			if l == f.Name {
-				return off, i
-			}
+		if c, ok := w.clauses[offsetKey(off)]; ok {
+			return off, c.index(f.Name)
 		}
 		return off, 0
 	}
@@ -439,15 +448,117 @@ func (w *walker) sortBySource(fields []*Field) []*Field {
 	return fields
 }
 
+// clauseField is a field an `if` body declares.
+type clauseField struct {
+	name string
+	doc  string
+}
+
+// clause is an `if` body: where it sits and the fields it declares.
+type clause struct {
+	offset int
+	fields []clauseField
+}
+
+func (c clause) index(name string) int {
+	for i, f := range c.fields {
+		if f.name == name {
+			return i
+		}
+	}
+	return 0
+}
+
+// clauseMarker prefixes the definition instrumentClauses puts in each `if`
+// body. A definition is never listed as a field, so it changes no schema, but
+// its presence in an evaluated struct says the body is active.
+const clauseMarker = "#velaClause"
+
+// offsetKey keys a clause that carries no marker by its position.
+func offsetKey(off int) string {
+	return fmt.Sprintf("@%d", off)
+}
+
+// instrumentClauses marks every body of a comprehension made only of `if`
+// clauses. A name several bodies declare has one position and one doc comment
+// for all of them, so only the markers say which body a field came from.
+// Bodies with a `for` clause are left alone: they can embed a scalar, which a
+// definition field would conflict with.
+func instrumentClauses(src string) string {
+	f, err := parser.ParseFile("template", src, parser.ParseComments)
+	if err != nil {
+		return src
+	}
+	n := 0
+	ast.Walk(f, func(node ast.Node) bool {
+		c, ok := node.(*ast.Comprehension)
+		if !ok {
+			return true
+		}
+		body, ok := c.Value.(*ast.StructLit)
+		if !ok {
+			return true
+		}
+		for _, cl := range c.Clauses {
+			if _, ok := cl.(*ast.IfClause); !ok {
+				return true
+			}
+		}
+		marker := &ast.Field{Label: ast.NewIdent(fmt.Sprintf("%s%d", clauseMarker, n)), Value: ast.NewIdent("_")}
+		body.Elts = append([]ast.Decl{marker}, body.Elts...)
+		n++
+		return true
+	}, nil)
+	out, err := format.Node(f)
+	if err != nil {
+		return src
+	}
+	return string(out)
+}
+
+// clauseOf finds the active `if` body of the struct v that declares name.
+func (w *walker) clauseOf(v cue.Value, name string) (string, clauseField, bool) {
+	keys := make([]string, 0, len(w.clauses))
+	for key := range w.clauses {
+		if strings.HasPrefix(key, clauseMarker) {
+			keys = append(keys, key)
+		}
+	}
+	// Source order, so a name two active bodies declare resolves to the first.
+	sort.Slice(keys, func(i, j int) bool { return w.clauses[keys[i]].offset < w.clauses[keys[j]].offset })
+	for _, key := range keys {
+		c := w.clauses[key]
+		for _, cf := range c.fields {
+			if cf.name == name && v.LookupPath(cue.ParsePath(key)).Exists() {
+				return key, cf, true
+			}
+		}
+	}
+	return "", clauseField{}, false
+}
+
+// placeInClause records which `if` body a field came from, and takes its
+// description from that body's comment, since Doc() gives every body's.
+func (w *walker) placeInClause(f *Field, parent cue.Value) {
+	key, cf, ok := w.clauseOf(parent, f.Name)
+	if !ok {
+		return
+	}
+	f.clause = key
+	if cf.doc != "" {
+		f.Description, f.Immutable = describeText(cf.doc)
+	}
+}
+
 // scanSource collects every identifier an `if` clause reads, which bounds the
 // fields worth evaluating as discriminators, and the labels each `if` body
 // declares, which orders the fields it adds.
-func scanSource(src string) (map[string]bool, map[int][]string) {
+func scanSource(src string) (map[string]bool, map[string]clause) {
 	names := map[string]bool{}
-	labels := map[int][]string{}
-	f, err := parser.ParseFile("template", src)
+	clauses := map[string]clause{}
+	f, err := parser.ParseFile("template", src, parser.ParseComments)
 	if err != nil {
-		return names, labels
+		return names, clauses
 	}
 	ast.Walk(f, func(n ast.Node) bool {
 		c, ok := n.(*ast.Comprehension)
@@ -478,16 +589,32 @@ func scanSource(src string) (map[string]bool, map[int][]string) {
 			}, nil)
 		}
 		if body, ok := c.Value.(*ast.StructLit); ok && len(c.Clauses) > 0 {
-			off := c.Clauses[0].Pos().Offset()
+			cl := clause{offset: c.Clauses[0].Pos().Offset()}
+			key := offsetKey(cl.offset)
 			for _, el := range body.Elts {
-				if fd, ok := el.(*ast.Field); ok {
-					if name, _, err := ast.LabelName(fieldLabel(fd.Label)); err == nil {
-						labels[off] = append(labels[off], name)
+				fd, ok := el.(*ast.Field)
+				if !ok {
+					continue
+				}
+				name, _, err := ast.LabelName(fieldLabel(fd.Label))
+				if err != nil {
+					continue
+				}
+				if strings.HasPrefix(name, clauseMarker) {
+					key = name
+					continue
+				}
+				var doc []string
+				for _, cg := range ast.Comments(fd) {
+					if cg.Doc {
+						doc = append(doc, cg.Text())
 					}
 				}
+				cl.fields = append(cl.fields, clauseField{name: name, doc: strings.Join(doc, "\n")})
 			}
+			clauses[key] = cl
 		}
 		return true
 	}, nil)
-	return names, labels
+	return names, clauses
 }
