@@ -34,6 +34,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/nsrestrict"
 	"github.com/oam-dev/kubevela/pkg/logging"
 	"github.com/oam-dev/kubevela/pkg/oam"
+	"github.com/oam-dev/kubevela/pkg/sources"
 	webhookutils "github.com/oam-dev/kubevela/pkg/webhook/utils"
 )
 
@@ -116,6 +117,13 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	// rather than at its first resolve.
 	if err := webhookutils.ValidateSourceTemplate(ctx, cueTemplate); err != nil {
 		logger.WithStep("validate-cue").WithError(err).Error(err, "CUE template contains syntax errors or invalid constructs - template compilation failed")
+		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
+	}
+
+	// The controller decides auto-update before anything renders, reading the
+	// template text, so a computed value would be silently ignored there.
+	if _, err := sources.DefinitionAutoUpdate(cueTemplate); err != nil {
+		logger.WithStep("validate-auto-update").WithError(err).Error(err, "SourceDefinition storage.autoUpdate is not a literal")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 

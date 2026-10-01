@@ -353,7 +353,8 @@ func (h *AppHandler) applyComponentFunc(appParser *appfile.Parser, af *appfile.A
 		isHealth := true
 		if utilfeature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
 			manifestDispatchers, err := h.generateDispatcher(appRev, h.latestAppRev, readyWorkload, readyTraits, overrideNamespace, af.AppAnnotations,
-				autoUpdatingSources(af.Sources, sourceAutoUpdateDefault()))
+				autoUpdatingSources(af.Sources, definitionAutoUpdates(af.RelatedSourceDefinitions), sourceAutoUpdateDefault(),
+					metav1.HasAnnotation(h.app.ObjectMeta, oam.AnnotationPublishVersion)))
 			if err != nil {
 				return nil, nil, false, errors.WithMessage(err, "generateDispatcher")
 			}
