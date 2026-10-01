@@ -216,3 +216,29 @@ func TestPlacementCallsOnlyOnAComponent(t *testing.T) {
 	_, err = PropertyReferences(`component.db.cluster(context.cluster).namespace("west").output`)
 	require.NoError(t, err, "left to the read's own validation, which names the literal-argument rule")
 }
+
+// A hyphenated component name read with a dot parses as subtraction; the error
+// says to read it by index, and the index form reads it.
+func TestHyphenatedComponentName(t *testing.T) {
+	env, err := DynEnv()
+	require.NoError(t, err)
+
+	_, err = OutputType(env, `component.my-db.output.data.host`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `write component["my-db"]`)
+
+	_, err = PropertyReferences(`"pg://" + component.my-db.cluster("east").output.data.host`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `write component["my-db"]`)
+
+	refs, err := PropertyReferences(`component["my-db"].output.data.host`)
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	require.Equal(t, `component["my-db"].output.data.host`, refs[0].String(), "a read renders as it must be written")
+
+	_, err = OutputType(env, `component.db.output.replicas - 1`)
+	require.NoError(t, err, "subtraction after a component read is still subtraction")
+	_, err = OutputType(env, `undefined_thing`)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "by index", "only a dotted hyphenated component read gets the hint")
+}
