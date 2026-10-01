@@ -18,19 +18,108 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
-	"strings"
+	"context"
 	"testing"
 
+	clustercommon "github.com/oam-dev/cluster-gateway/pkg/common"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 )
 
+const testTemplate = `
+context: cluster: string
+parameter: {
+	region: string
+	role:   *"role-\(context.cluster)" | string
+}
+providerConfig: {region: parameter.region, role: parameter.role}
+setup: [{title: "Create \(parameter.role)", commands: ["create \(parameter.role) --region \(parameter.region)"]}]
+`
+
+func clientWithTemplate(t *testing.T, provider, template string) client.Client {
+	t.Helper()
+	multicluster.ClusterGatewaySecretNamespace = "vela-system"
+	s := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(s))
+	b := fake.NewClientBuilder().WithScheme(s)
+	if template != "" {
+		b = b.WithObjects(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "credential-provider-" + provider, Namespace: "vela-system",
+				Labels: map[string]string{clustercommon.LabelKeyCredentialProvider: provider},
+			},
+			Data: map[string]string{clustercommon.CredentialProviderTemplateKey: template},
+		})
+	}
+	return b.Build()
+}
+
+func TestParseParams(t *testing.T) {
+	params, err := parseParams([]string{"region=eu-west-1", "note=a=b"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"region": "eu-west-1", "note": "a=b"}, params)
+
+	for _, bad := range [][]string{{"region"}, {"=x"}, {"a=1", "a=2"}} {
+		_, err := parseParams(bad)
+		require.Error(t, err, "%v", bad)
+	}
+}
+
+func TestResolveProviderConfig(t *testing.T) {
+	ctx := context.Background()
+	withTemplate := clientWithTemplate(t, "acme", testTemplate)
+	noTemplate := clientWithTemplate(t, "acme", "")
+
+	cfg, err := resolveProviderConfig(ctx, withTemplate, "acme", "prod", "", map[string]string{"region": "eu-west-1"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"region":"eu-west-1","role":"role-prod"}`, string(cfg))
+
+	_, err = resolveProviderConfig(ctx, withTemplate, "acme", "prod", "", nil)
+	require.ErrorContains(t, err, "region", "template parameters without defaults are required")
+
+	cfg, err = resolveProviderConfig(ctx, withTemplate, "acme", "prod", `{"raw":true}`, nil)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"raw":true}`, string(cfg), "an explicit provider-config bypasses the template")
+
+	_, err = resolveProviderConfig(ctx, withTemplate, "acme", "prod", `{"raw":true}`, map[string]string{"region": "x"})
+	require.ErrorContains(t, err, "--param")
+
+	_, err = resolveProviderConfig(ctx, withTemplate, "acme", "prod", `nope`, nil)
+	require.ErrorContains(t, err, "--provider-config")
+
+	cfg, err = resolveProviderConfig(ctx, noTemplate, "acme", "prod", "", nil)
+	require.NoError(t, err)
+	require.Nil(t, cfg, "a plugin without a template may need no configuration")
+
+	_, err = resolveProviderConfig(ctx, noTemplate, "acme", "prod", "", map[string]string{"region": "x"})
+	require.ErrorContains(t, err, "no setup template")
+}
+
+func TestWriteProviderSetup(t *testing.T) {
+	rendered, err := multicluster.RenderCredentialProvider(context.Background(), clientWithTemplate(t, "acme", testTemplate),
+		"acme", "prod", map[string]string{"region": "eu-west-1", "role": "it's mine"})
+	require.NoError(t, err)
+
+	var out bytes.Buffer
+	writeProviderSetup(&out, "prod", "acme", map[string]string{"region": "eu-west-1", "role": "it's mine"}, rendered)
+	require.Equal(t, `# Create it's mine
+create it's mine --region eu-west-1
+
+# Then register the cluster:
+vela cluster join <kubeconfig> --name prod --provider acme --param region=eu-west-1 --param 'role=it'\''s mine'
+`, out.String())
+}
+
 func TestStoredExecTokenWarning(t *testing.T) {
 	withExec := &multicluster.KubeClusterConfig{AuthInfo: &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{Command: "aws"}}}
-	require.Contains(t, storedExecTokenWarning(withExec), "--credential-provider")
+	require.Contains(t, storedExecTokenWarning(withExec), "--provider")
 
 	withProvider := &multicluster.KubeClusterConfig{
 		AuthInfo:           &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{Command: "aws"}},
@@ -40,89 +129,4 @@ func TestStoredExecTokenWarning(t *testing.T) {
 
 	withToken := &multicluster.KubeClusterConfig{AuthInfo: &clientcmdapi.AuthInfo{Token: "t"}}
 	require.Empty(t, storedExecTokenWarning(withToken))
-}
-
-func TestCredentialProviderOption(t *testing.T) {
-	op, err := credentialProviderOption("", `{"region":"eu-west-1"}`)
-	require.NoError(t, err)
-	require.Nil(t, op)
-
-	op, err = credentialProviderOption("aws", `{"region":"eu-west-1"}`)
-	require.NoError(t, err)
-	require.Equal(t, multicluster.JoinClusterCredentialProviderOption{Name: "aws", Config: []byte(`{"region":"eu-west-1"}`)}, *op)
-
-	_, err = credentialProviderOption("", `{"region":"eu-west-1"}x`)
-	require.NoError(t, err, "config is ignored without a provider")
-	_, err = credentialProviderOption("aws", `nope`)
-	require.ErrorContains(t, err, "--provider-config")
-}
-
-func TestEKSSetup(t *testing.T) {
-	opts := eksSetupOptions{
-		Cluster:         "prod-eu",
-		Region:          "eu-west-1",
-		EKSCluster:      "prod-eu-1",
-		AccountID:       "222222222222",
-		HubRoleARN:      "arn:aws:iam::111111111111:role/vela-cluster-gateway",
-		RoleName:        "vela-{cluster}",
-		SessionPrefix:   "cluster-gateway",
-		KubernetesGroup: "vela:cluster-gateway",
-	}
-	var out bytes.Buffer
-	require.NoError(t, writeEKSSetup(&out, opts))
-	script := out.String()
-
-	require.Contains(t, script, "aws iam create-role --role-name vela-prod-eu ")
-	require.Contains(t, script, "aws eks create-access-entry --region eu-west-1 --cluster-name prod-eu-1 --principal-arn arn:aws:iam::222222222222:role/vela-prod-eu --kubernetes-groups vela:cluster-gateway")
-	require.Contains(t, script, "vela cluster join <kubeconfig> --name prod-eu --credential-provider aws")
-
-	// The trust policy and provider-config are embedded as single-quoted JSON.
-	trust := between(t, script, "--assume-role-policy-document '", "'")
-	var policy struct {
-		Statement []struct {
-			Principal map[string]string
-			Action    string
-			Condition map[string]map[string]string
-		}
-	}
-	require.NoError(t, json.Unmarshal([]byte(trust), &policy))
-	require.Equal(t, "arn:aws:iam::111111111111:role/vela-cluster-gateway", policy.Statement[0].Principal["AWS"])
-	require.Equal(t, "sts:AssumeRole", policy.Statement[0].Action)
-	require.Equal(t, "cluster-gateway-prod-eu", policy.Statement[0].Condition["StringEquals"]["sts:RoleSessionName"])
-
-	providerConfig := between(t, script, "--provider-config '", "'")
-	require.JSONEq(t, `{"region":"eu-west-1","clusterName":"prod-eu-1","roleArn":"arn:aws:iam::222222222222:role/vela-prod-eu"}`, providerConfig)
-}
-
-func TestEKSSetupRejects(t *testing.T) {
-	valid := eksSetupOptions{
-		Cluster: "prod", Region: "eu-west-1", EKSCluster: "prod", AccountID: "222222222222",
-		HubRoleARN: "arn:aws:iam::111111111111:role/hub", RoleName: "vela-{cluster}",
-		SessionPrefix: "cluster-gateway", KubernetesGroup: "vela:cluster-gateway",
-	}
-	cases := map[string]func(o *eksSetupOptions){
-		"cluster":       func(o *eksSetupOptions) { o.Cluster = "" },
-		"region":        func(o *eksSetupOptions) { o.Region = "" },
-		"account-id":    func(o *eksSetupOptions) { o.AccountID = "12345" },
-		"hub-role-arn":  func(o *eksSetupOptions) { o.HubRoleARN = "hub" },
-		"role name":     func(o *eksSetupOptions) { o.RoleName = "vela/{cluster}" },
-		"64 characters": func(o *eksSetupOptions) { o.Cluster = strings.Repeat("a", 50) },
-	}
-	for want, mutate := range cases {
-		t.Run(want, func(t *testing.T) {
-			o := valid
-			mutate(&o)
-			require.ErrorContains(t, writeEKSSetup(&bytes.Buffer{}, o), want)
-		})
-	}
-}
-
-func between(t *testing.T, s, start, end string) string {
-	t.Helper()
-	i := strings.Index(s, start)
-	require.GreaterOrEqual(t, i, 0, "missing %q", start)
-	rest := s[i+len(start):]
-	j := strings.Index(rest, end)
-	require.GreaterOrEqual(t, j, 0, "missing %q after %q", end, start)
-	return rest[:j]
 }

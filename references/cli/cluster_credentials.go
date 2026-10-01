@@ -17,40 +17,68 @@ limitations under the License.
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/pkg/multicluster"
+	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
+// The credential plugin itself is named with FlagProvider.
 const (
-	// FlagCredentialProvider names the cluster-gateway credential plugin for a cluster
-	FlagCredentialProvider = "credential-provider"
-	// FlagProviderConfig is the JSON configuration passed to the credential plugin
+	// FlagProviderParam is a key=value parameter of the provider's setup template
+	FlagProviderParam = "param"
+	// FlagProviderConfig is the JSON configuration passed to the credential plugin as is
 	FlagProviderConfig = "provider-config"
 )
 
-// credentialProviderOption returns the join option for the flags, or nil when no
-// provider is named.
-func credentialProviderOption(provider, config string) (*multicluster.JoinClusterCredentialProviderOption, error) {
-	if provider == "" {
-		return nil, nil
+// parseParams turns repeated key=value flags into a map.
+func parseParams(pairs []string) (map[string]string, error) {
+	params := map[string]string{}
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok || k == "" {
+			return nil, errors.Errorf("--%s %q: want key=value", FlagProviderParam, p)
+		}
+		if _, dup := params[k]; dup {
+			return nil, errors.Errorf("--%s %s given twice", FlagProviderParam, k)
+		}
+		params[k] = v
 	}
-	op := &multicluster.JoinClusterCredentialProviderOption{Name: provider}
-	if config != "" {
+	return params, nil
+}
+
+// resolveProviderConfig returns the provider-config for a cluster: rawConfig as
+// given, or the provider's setup template rendered with params. A provider
+// without a template, given neither, gets no configuration.
+func resolveProviderConfig(ctx context.Context, cli client.Client, provider, cluster, rawConfig string, params map[string]string) ([]byte, error) {
+	if rawConfig != "" {
+		if len(params) > 0 {
+			return nil, errors.Errorf("use --%s or --%s, not both", FlagProviderConfig, FlagProviderParam)
+		}
 		var obj map[string]interface{}
-		if err := json.Unmarshal([]byte(config), &obj); err != nil {
+		if err := json.Unmarshal([]byte(rawConfig), &obj); err != nil {
 			return nil, errors.Errorf("--%s must be a JSON object: %v", FlagProviderConfig, err)
 		}
-		op.Config = []byte(config)
+		return []byte(rawConfig), nil
 	}
-	return op, nil
+	rendered, err := multicluster.RenderCredentialProvider(ctx, cli, provider, cluster, params)
+	if errors.Is(err, multicluster.ErrNoProviderTemplate) && len(params) == 0 {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rendered.ProviderConfig, nil
 }
 
 // storedExecTokenWarning explains that join ran the kubeconfig's exec plugin once
@@ -61,125 +89,71 @@ func storedExecTokenWarning(cfg *multicluster.KubeClusterConfig) string {
 	}
 	return fmt.Sprintf("Warning: the kubeconfig's exec plugin (%s) was run once and its token stored. "+
 		"Short-lived tokens, such as EKS's 15 minutes, stop working when they expire; "+
-		"register the cluster with --%s so cluster-gateway mints them itself.\n", cfg.AuthInfo.Exec.Command, FlagCredentialProvider)
+		"register the cluster with --%s so cluster-gateway mints them itself.\n", cfg.AuthInfo.Exec.Command, FlagProvider)
 }
 
-type eksSetupOptions struct {
-	Cluster         string
-	Region          string
-	EKSCluster      string
-	AccountID       string
-	HubRoleARN      string
-	RoleName        string
-	SessionPrefix   string
-	KubernetesGroup string
-	AccessPolicy    string
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+func shellQuote(s string) string {
+	if shellSafe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-var (
-	awsAccountID = regexp.MustCompile(`^[0-9]{12}$`)
-	awsRoleARN   = regexp.MustCompile(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[\w+=,.@/-]+$`)
-	awsRoleName  = regexp.MustCompile(`^[\w+=,.@-]{1,64}$`)
-	awsRegion    = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
-)
-
-// maxRoleSessionName is the longest RoleSessionName STS accepts.
-const maxRoleSessionName = 64
-
-// writeEKSSetup prints the AWS commands that let cluster-gateway reach one EKS
-// cluster through its own role, and the join command that registers it.
-func writeEKSSetup(w io.Writer, o eksSetupOptions) error {
-	if o.Cluster == "" {
-		return errors.New("cluster name is required")
+// writeProviderSetup prints the provider's setup steps for one cluster, then the
+// join command that registers it with the same parameters.
+func writeProviderSetup(w io.Writer, cluster, provider string, params map[string]string, rendered *multicluster.RenderedProvider) {
+	for _, step := range rendered.Setup {
+		_, _ = fmt.Fprintln(w, step.String())
 	}
-	if o.EKSCluster == "" {
-		o.EKSCluster = o.Cluster
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
 	}
-	if !awsRegion.MatchString(o.Region) {
-		return errors.Errorf("invalid or missing --region %q", o.Region)
+	sort.Strings(keys)
+	join := []string{"vela cluster join <kubeconfig> --name", shellQuote(cluster), "--" + FlagProvider, shellQuote(provider)}
+	for _, k := range keys {
+		join = append(join, "--"+FlagProviderParam, shellQuote(k+"="+params[k]))
 	}
-	if !awsAccountID.MatchString(o.AccountID) {
-		return errors.Errorf("--account-id must be a 12-digit AWS account ID, got %q", o.AccountID)
-	}
-	if !awsRoleARN.MatchString(o.HubRoleARN) {
-		return errors.Errorf("--hub-role-arn must be an IAM role ARN, got %q", o.HubRoleARN)
-	}
-	roleName := strings.ReplaceAll(o.RoleName, "{cluster}", o.Cluster)
-	if !awsRoleName.MatchString(roleName) {
-		return errors.Errorf("invalid role name %q from --role-name %q", roleName, o.RoleName)
-	}
-	// The trust policy pins the session name the AWS plugin uses, which it only
-	// shortens past this length.
-	sessionName := o.SessionPrefix + "-" + o.Cluster
-	if len(sessionName) > maxRoleSessionName {
-		return errors.Errorf("session name %q exceeds %d characters; use a shorter cluster name or --session-prefix", sessionName, maxRoleSessionName)
-	}
-	roleARN := fmt.Sprintf("arn:%s:iam::%s:role/%s", strings.SplitN(o.HubRoleARN, ":", 3)[1], o.AccountID, roleName)
-
-	trust, err := json.Marshal(map[string]interface{}{
-		"Version": "2012-10-17",
-		"Statement": []map[string]interface{}{{
-			"Effect":    "Allow",
-			"Principal": map[string]string{"AWS": o.HubRoleARN},
-			"Action":    "sts:AssumeRole",
-			"Condition": map[string]map[string]string{"StringEquals": {"sts:RoleSessionName": sessionName}},
-		}},
-	})
-	if err != nil {
-		return err
-	}
-	providerConfig, err := json.Marshal(struct {
-		Region      string `json:"region"`
-		ClusterName string `json:"clusterName"`
-		RoleARN     string `json:"roleArn"`
-	}{o.Region, o.EKSCluster, roleARN})
-	if err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintf(w, "# 1. In account %s: the role cluster-gateway assumes for cluster %s.\n", o.AccountID, o.Cluster)
-	_, _ = fmt.Fprintf(w, "#    Only %s may assume it, and only with session name %s.\n", o.HubRoleARN, sessionName)
-	_, _ = fmt.Fprintf(w, "aws iam create-role --role-name %s --assume-role-policy-document '%s'\n\n", roleName, trust)
-	_, _ = fmt.Fprintf(w, "# 2. Map the role into EKS cluster %s.\n", o.EKSCluster)
-	_, _ = fmt.Fprintf(w, "aws eks create-access-entry --region %s --cluster-name %s --principal-arn %s --kubernetes-groups %s\n", o.Region, o.EKSCluster, roleARN, o.KubernetesGroup)
-	if o.AccessPolicy != "" {
-		_, _ = fmt.Fprintf(w, "aws eks associate-access-policy --region %s --cluster-name %s --principal-arn %s --policy-arn arn:aws:eks::aws:cluster-access-policy/%s --access-scope type=cluster\n", o.Region, o.EKSCluster, roleARN, o.AccessPolicy)
-	} else {
-		_, _ = fmt.Fprintf(w, "#    Grant group %s its permissions with RBAC in the cluster, or pass --access-policy.\n", o.KubernetesGroup)
-	}
-	_, _ = fmt.Fprintf(w, "\n# 3. The cluster-gateway AWS plugin must allow the role, e.g. allowedRoleArns: [\"arn:aws:iam::%s:role/%s\"].\n", o.AccountID, o.RoleName)
-	_, _ = fmt.Fprintf(w, "# 4. Register the cluster.\n")
-	_, _ = fmt.Fprintf(w, "vela cluster join <kubeconfig> --name %s --%s aws --%s '%s'\n", o.Cluster, FlagCredentialProvider, FlagProviderConfig, providerConfig)
-	return nil
+	_, _ = fmt.Fprintf(w, "# Then register the cluster:\n%s\n", strings.Join(join, " "))
 }
 
-// NewClusterEKSSetupCommand prints the AWS setup for joining an EKS cluster with
-// the cluster-gateway AWS credential plugin.
-func NewClusterEKSSetupCommand() *cobra.Command {
-	o := eksSetupOptions{}
+// NewClusterSetupCommand prints what a credential provider needs set up for a
+// cluster before it is joined, from the setup template the provider ships.
+func NewClusterSetupCommand(c *common.Args) *cobra.Command {
+	var provider string
+	var paramPairs []string
 	cmd := &cobra.Command{
-		Use:   "eks-setup CLUSTER",
-		Short: "Print the AWS setup for joining an EKS cluster with its own IAM role.",
-		Long: "Print the AWS CLI commands that create the IAM role cluster-gateway assumes for one EKS cluster, " +
-			"map it into the cluster with an access entry, and the vela cluster join command that registers it. " +
-			"Nothing is run and no AWS credentials are needed.",
-		Example: "> vela cluster eks-setup prod-eu --region eu-west-1 --account-id 222222222222 \\\n" +
-			"    --hub-role-arn arn:aws:iam::111111111111:role/vela-cluster-gateway",
+		Use:   "setup CLUSTER",
+		Short: "Print what a credential provider needs set up before a cluster is joined.",
+		Long: "Render the setup template a cluster-gateway credential plugin ships for one cluster: the cloud " +
+			"resources to create beforehand, and the vela cluster join command that registers the cluster. " +
+			"Nothing is run.",
+		Example: "> vela cluster setup prod-eu --provider aws --param region=eu-west-1 \\\n" +
+			"    --param accountId=222222222222 --param hubRoleArn=arn:aws:iam::111111111111:role/vela-cluster-gateway",
 		Args: cobra.ExactArgs(1),
-		// Printing needs no connection to the hub.
-		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o.Cluster = args[0]
-			return writeEKSSetup(cmd.OutOrStdout(), o)
+			if provider == "" {
+				return errors.Errorf("--%s is required", FlagProvider)
+			}
+			params, err := parseParams(paramPairs)
+			if err != nil {
+				return err
+			}
+			cli, err := c.GetClient()
+			if err != nil {
+				return err
+			}
+			rendered, err := multicluster.RenderCredentialProvider(cmd.Context(), cli, provider, args[0], params)
+			if err != nil {
+				return err
+			}
+			writeProviderSetup(cmd.OutOrStdout(), args[0], provider, params, rendered)
+			return nil
 		},
 	}
-	cmd.Flags().StringVar(&o.Region, "region", "", "AWS region of the EKS cluster")
-	cmd.Flags().StringVar(&o.EKSCluster, "eks-cluster", "", "EKS cluster name, if different from the KubeVela cluster name")
-	cmd.Flags().StringVar(&o.AccountID, "account-id", "", "AWS account ID that owns the EKS cluster")
-	cmd.Flags().StringVar(&o.HubRoleARN, "hub-role-arn", "", "IAM role of the cluster-gateway AWS plugin (its IRSA or Pod Identity role)")
-	cmd.Flags().StringVar(&o.RoleName, "role-name", "vela-{cluster}", "name of the role to create; {cluster} is replaced by the cluster name")
-	cmd.Flags().StringVar(&o.SessionPrefix, "session-prefix", "cluster-gateway", "the AWS plugin's --session-name")
-	cmd.Flags().StringVar(&o.KubernetesGroup, "kubernetes-group", "vela:cluster-gateway", "Kubernetes group the role maps to")
-	cmd.Flags().StringVar(&o.AccessPolicy, "access-policy", "", "EKS access policy to associate, e.g. AmazonEKSEditPolicy; omit to grant permissions with RBAC")
+	cmd.Flags().StringVar(&provider, FlagProvider, "", "credential provider, e.g. aws")
+	cmd.Flags().StringArrayVar(&paramPairs, FlagProviderParam, nil, "key=value parameter of the provider's setup template, repeatable")
 	return cmd
 }
