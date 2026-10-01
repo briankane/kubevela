@@ -196,6 +196,21 @@ func ValidBindingName(name string) error {
 		name, name, suggestion)
 }
 
+// hyphenatedComponentRead is a component read with a dot whose name has a
+// hyphen. Component names are Kubernetes names, so a hyphen is common, and CEL
+// parses `component.my-db` as `component.my - db`.
+var hyphenatedComponentRead = regexp.MustCompile(`\bcomponent\.([A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+)`)
+
+// compileError is an expression's compile failure, naming the index form where
+// the expression reads a hyphenated component name with a dot. The component
+// root is a map, so component["my-db"] reads it.
+func compileError(expr string, err error) error {
+	if m := hyphenatedComponentRead.FindStringSubmatch(expr); m != nil {
+		return fmt.Errorf("%w; a component whose name has a hyphen is read by index: write component[%q]", err, m[1])
+	}
+	return err
+}
+
 // OutputType compiles an expression and reports the type it produces.
 //
 // This is the whole point of the spike. propexpr needs sentinel values and an
@@ -203,7 +218,7 @@ func ValidBindingName(name string) error {
 func OutputType(env *cel.Env, expr string) (*cel.Type, error) {
 	ast, iss := env.Compile(expr)
 	if iss != nil && iss.Err() != nil {
-		return nil, iss.Err()
+		return nil, compileError(expr, iss.Err())
 	}
 	return ast.OutputType(), nil
 }
