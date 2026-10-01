@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -63,6 +64,10 @@ type KubeClusterConfig struct {
 	*clientcmdapi.Config
 	*clientcmdapi.Cluster
 	*clientcmdapi.AuthInfo
+	// CredentialProvider, if set, registers the cluster with the Provider
+	// credential type: cluster-gateway obtains short-lived credentials from the
+	// named plugin, and the kubeconfig's own credentials are not stored.
+	CredentialProvider *CredentialProvider
 
 	// ClusterAlreadyExistCallback callback for handling cluster already exist,
 	// if no error returned, the logic will pass through
@@ -70,6 +75,34 @@ type KubeClusterConfig struct {
 
 	// Logs records intermediate logs (which do not return error) during running
 	Logs bytes.Buffer
+}
+
+// CredentialProvider names a cluster-gateway credential plugin and the
+// configuration passed to it for this cluster.
+type CredentialProvider struct {
+	Name string
+	// Config is the plugin's provider-config, a JSON object whose schema belongs
+	// to the plugin.
+	Config []byte
+}
+
+// credentialProviderName matches the plugin names cluster-gateway accepts.
+var credentialProviderName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+func (p *CredentialProvider) validate(cluster *clientcmdapi.Cluster) error {
+	if !credentialProviderName.MatchString(p.Name) {
+		return errors.Errorf("invalid credential provider name %q", p.Name)
+	}
+	if len(p.Config) > 0 {
+		var obj map[string]interface{}
+		if err := json.Unmarshal(p.Config, &obj); err != nil {
+			return errors.Errorf("provider config must be a JSON object: %v", err)
+		}
+	}
+	if cluster != nil && cluster.InsecureSkipTLSVerify {
+		return errors.Errorf("credential provider %s requires the cluster's CA: cluster-gateway does not present minted credentials to an unverified endpoint", p.Name)
+	}
+	return nil
 }
 
 // SetClusterName set cluster name if not empty
@@ -93,6 +126,9 @@ func (clusterConfig *KubeClusterConfig) Validate() error {
 		return errors.Errorf("ClusterName cannot be empty")
 	case ClusterLocalName:
 		return errors.Errorf("ClusterName cannot be `%s`, it is reserved as the local cluster", ClusterLocalName)
+	}
+	if clusterConfig.CredentialProvider != nil {
+		return clusterConfig.CredentialProvider.validate(clusterConfig.Cluster)
 	}
 	return nil
 }
@@ -130,6 +166,13 @@ func (clusterConfig *KubeClusterConfig) createOrUpdateClusterSecret(ctx context.
 		}
 	}
 	switch {
+	case clusterConfig.CredentialProvider != nil:
+		credentialType = clusterv1alpha1.CredentialTypeProvider
+		data["provider"] = []byte(clusterConfig.CredentialProvider.Name)
+		if len(clusterConfig.CredentialProvider.Config) > 0 {
+			data["provider-config"] = clusterConfig.CredentialProvider.Config
+		}
+
 	case len(clusterConfig.AuthInfo.Token) > 0:
 		credentialType = clusterv1alpha1.CredentialTypeServiceAccountToken
 		data["token"] = []byte(clusterConfig.AuthInfo.Token)
@@ -369,6 +412,7 @@ type JoinClusterArgs struct {
 	inClusterBootstrap          *bool
 	trackingSpinnerFactory      func(string) *spinner.Spinner
 	clusterAlreadyExistCallback func(string) bool
+	credentialProvider          *CredentialProvider
 }
 
 func newJoinClusterArgs(options ...JoinClusterOption) *JoinClusterArgs {
@@ -410,6 +454,16 @@ func (op JoinClusterAlreadyExistCallback) ApplyToArgs(args *JoinClusterArgs) {
 	args.clusterAlreadyExistCallback = op
 }
 
+// JoinClusterCredentialProviderOption registers the cluster with a cluster-gateway
+// credential plugin instead of the kubeconfig's credentials
+type JoinClusterCredentialProviderOption CredentialProvider
+
+// ApplyToArgs apply to args
+func (op JoinClusterCredentialProviderOption) ApplyToArgs(args *JoinClusterArgs) {
+	provider := CredentialProvider(op)
+	args.credentialProvider = &provider
+}
+
 // JoinClusterOCMOptions options used when joining clusters by ocm, only support cli for now
 type JoinClusterOCMOptions struct {
 	IoStreams              cmdutil.IOStreams
@@ -432,6 +486,10 @@ func JoinClusterByKubeConfig(ctx context.Context, cli client.Client, kubeconfigP
 	clusterConfig, err := LoadKubeClusterConfigFromFile(kubeconfigPath)
 	if err != nil {
 		return nil, err
+	}
+	clusterConfig.CredentialProvider = args.credentialProvider
+	if clusterConfig.CredentialProvider != nil && args.engine != ClusterGateWayEngine {
+		return nil, errors.Errorf("a credential provider requires the %s engine", ClusterGateWayEngine)
 	}
 	if err := clusterConfig.SetClusterName(clusterName).SetCreateNamespace(args.createNamespace).Validate(); err != nil {
 		return nil, err

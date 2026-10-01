@@ -119,6 +119,34 @@ func TestKubeClusterConfig_Validate(t *testing.T) {
 	}
 }
 
+func TestKubeClusterConfig_ValidateCredentialProvider(t *testing.T) {
+	testCases := []struct {
+		name      string
+		provider  *CredentialProvider
+		insecure  bool
+		expectErr string
+	}{
+		{name: "valid", provider: &CredentialProvider{Name: "aws", Config: []byte(`{"region":"eu-west-1"}`)}},
+		{name: "no config", provider: &CredentialProvider{Name: "aws"}},
+		{name: "invalid name", provider: &CredentialProvider{Name: "../aws"}, expectErr: "invalid credential provider name"},
+		{name: "config not an object", provider: &CredentialProvider{Name: "aws", Config: []byte(`["x"]`)}, expectErr: "provider config must be a JSON object"},
+		{name: "insecure endpoint", provider: &CredentialProvider{Name: "aws"}, insecure: true, expectErr: "requires the cluster's CA"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := makeBaseClusterConfig("prod")
+			cfg.Cluster.InsecureSkipTLSVerify = tc.insecure
+			cfg.CredentialProvider = tc.provider
+			err := cfg.Validate()
+			if tc.expectErr != "" {
+				require.ErrorContains(t, err, tc.expectErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func newTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = corev1.AddToScheme(s)
@@ -239,6 +267,28 @@ func TestRegisterByVelaSecret(t *testing.T) {
 				var sec corev1.Secret
 				require.NoError(t, cli.Get(ctx, client.ObjectKey{Name: cfg.ClusterName, Namespace: ClusterGatewaySecretNamespace}, &sec))
 				require.Nil(t, sec.Data["ca.crt"])
+			},
+		},
+		{
+			name: "Credential provider ignores the kubeconfig's credentials",
+			cfg: func() *KubeClusterConfig {
+				cfg := makeBaseClusterConfig("c-provider")
+				cfg.AuthInfo.Token = "must-not-be-stored"
+				cfg.AuthInfo.Exec = &clientcmdapi.ExecConfig{Command: "/must/not/run"}
+				cfg.CredentialProvider = &CredentialProvider{Name: "aws", Config: []byte(`{"region":"eu-west-1"}`)}
+				return cfg
+			}(),
+			cli: fake.NewClientBuilder().WithScheme(scheme).Build(),
+			verify: func(t *testing.T, cli client.Client, cfg *KubeClusterConfig) {
+				var sec corev1.Secret
+				require.NoError(t, cli.Get(ctx, client.ObjectKey{Name: cfg.ClusterName, Namespace: ClusterGatewaySecretNamespace}, &sec))
+				require.Equal(t, string(clusterv1alpha1.CredentialTypeProvider), sec.Labels[clustercommon.LabelKeyClusterCredentialType])
+				require.Equal(t, map[string][]byte{
+					"endpoint":        []byte("https://example:6443"),
+					"ca.crt":          []byte("ca-bytes"),
+					"provider":        []byte("aws"),
+					"provider-config": []byte(`{"region":"eu-west-1"}`),
+				}, sec.Data)
 			},
 		},
 		{
