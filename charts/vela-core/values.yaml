@@ -278,6 +278,7 @@ definitionRestrictions: {}
 ## @param multicluster.clusterGateway.credentialPlugins.aws.resources AWS credential plugin resources
 ## @param multicluster.clusterGateway.credentialPlugins.custom Further credential plugins, as container specs run beside ClusterGateway
 ## @param multicluster.clusterGateway.credentialPlugins.volumes Extra pod volumes for custom credential plugins
+## @param multicluster.clusterGateway.credentialPlugins.templates Setup templates for custom credential plugins, keyed by provider name, for vela cluster setup and join --provider
 multicluster:
   enabled: true
   metrics:
@@ -330,6 +331,7 @@ multicluster:
         resources: {}
       custom: []
       volumes: []
+      templates: {}
 
 
 ## @section Test parameters
