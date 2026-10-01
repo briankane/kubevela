@@ -319,6 +319,6 @@ replace (
 	sigs.k8s.io/apiserver-runtime => github.com/kmodules/apiserver-runtime v1.1.2-0.20250422194347-c5ac4abaf2ae
 )
 
-replace github.com/kubevela/pkg => github.com/briankane/pkg v0.0.0-20260928111829-7ce350456176
+replace github.com/kubevela/pkg => github.com/briankane/pkg v0.0.0-20261001065943-26b0a10a373d
 
-replace github.com/kubevela/workflow => github.com/briankane/workflow v0.6.5-0.20260928111957-902def5f3c77
+replace github.com/kubevela/workflow => github.com/briankane/workflow v0.6.5-0.20261001070113-dfd5de52b80e
