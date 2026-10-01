@@ -649,7 +649,12 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, componentDefinition.Name, typeComponentDefinition, componentDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
+	var outputs map[string]string
+	if def.WorkloadType != util.TerraformDef && componentDefinition.Spec.Extends == "" &&
+		componentDefinition.Spec.Schematic != nil && componentDefinition.Spec.Schematic.CUE != nil {
+		outputs = outputSchemaData(ctx, componentDefinition.Name, componentDefinition.Spec.Schematic.CUE.Template)
+	}
+	cmName, err := def.storeSchemas(ctx, k8sClient, namespace, componentDefinition.Name, typeComponentDefinition, componentDefinition.Labels, nil, jsonSchema, uiSchema, outputs, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -667,7 +672,7 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeComponentDefinition, defRev.Spec.ComponentDefinition.Labels, nil, jsonSchema, uiSchema, ownerReference)
+	_, err = def.storeSchemas(ctx, k8sClient, namespace, revName, typeComponentDefinition, defRev.Spec.ComponentDefinition.Labels, nil, jsonSchema, uiSchema, outputs, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -731,7 +736,11 @@ func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	cmName, err := def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, traitDefinition.Name, typeTraitDefinition, traitDefinition.Labels, traitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, ownerReference)
+	var outputs map[string]string
+	if traitDefinition.Spec.Extends == "" && traitDefinition.Spec.Schematic != nil && traitDefinition.Spec.Schematic.CUE != nil {
+		outputs = outputSchemaData(ctx, traitDefinition.Name, traitDefinition.Spec.Schematic.CUE.Template)
+	}
+	cmName, err := def.storeSchemas(ctx, k8sClient, namespace, traitDefinition.Name, typeTraitDefinition, traitDefinition.Labels, traitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, outputs, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -749,7 +758,7 @@ func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8
 		Controller:         ptr.To(true),
 		BlockOwnerDeletion: ptr.To(true),
 	}}
-	_, err = def.CreateOrUpdateConfigMap(ctx, k8sClient, namespace, revName, typeTraitDefinition, defRev.Spec.TraitDefinition.Labels, defRev.Spec.TraitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, ownerReference)
+	_, err = def.storeSchemas(ctx, k8sClient, namespace, revName, typeTraitDefinition, defRev.Spec.TraitDefinition.Labels, defRev.Spec.TraitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, outputs, ownerReference)
 	if err != nil {
 		return cmName, err
 	}
@@ -907,11 +916,21 @@ type CapabilityBaseDefinition struct {
 // CreateOrUpdateConfigMap creates ConfigMap to store OpenAPI v3 schema or or updates data in ConfigMap
 func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context, k8sClient client.Client, namespace,
 	definitionName, definitionType string, labels map[string]string, appliedWorkloads []string, jsonSchema, uiSchema []byte, ownerReferences []metav1.OwnerReference) (string, error) {
+	return def.storeSchemas(ctx, k8sClient, namespace, definitionName, definitionType, labels, appliedWorkloads, jsonSchema, uiSchema, nil, ownerReferences)
+}
+
+// storeSchemas stores a definition's parameter schemas, with any extra keys
+// such as its output schemas, in its schema ConfigMap.
+func (def *CapabilityBaseDefinition) storeSchemas(ctx context.Context, k8sClient client.Client, namespace,
+	definitionName, definitionType string, labels map[string]string, appliedWorkloads []string, jsonSchema, uiSchema []byte, extra map[string]string, ownerReferences []metav1.OwnerReference) (string, error) {
 	var data = map[string]string{
 		types.OpenapiV3JSONSchema: string(jsonSchema),
 	}
 	if len(uiSchema) > 0 {
 		data[types.DefaultUISchema] = string(uiSchema)
+	}
+	for k, v := range extra {
+		data[k] = v
 	}
 	return def.storeSchemaConfigMap(ctx, k8sClient, namespace, definitionName, definitionType, labels, appliedWorkloads, data, ownerReferences)
 }
