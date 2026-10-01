@@ -263,6 +263,21 @@ definitionRestrictions: {}
 ## @param multicluster.clusterGateway.secureTLS.certManager.enabled Whether to enable cert-manager
 ## @param multicluster.clusterGateway.serviceMonitor.enabled Whether to enable service monitor
 ## @param multicluster.clusterGateway.serviceMonitor.additionalLabels Additional labels for service monitor
+## @param multicluster.clusterGateway.serviceAccount.name ClusterGateway ServiceAccount name, defaults to <fullname>-cluster-gateway
+## @param multicluster.clusterGateway.serviceAccount.annotations Annotations on the ClusterGateway ServiceAccount
+## @param multicluster.clusterGateway.credentialPlugins.fsGroup Group owning the credential plugin sockets, set as the pod fsGroup when plugins run
+## @param multicluster.clusterGateway.credentialPlugins.aws.enabled Run the AWS credential plugin, which mints EKS tokens for clusters joined with --credential-provider aws
+## @param multicluster.clusterGateway.credentialPlugins.aws.image.repository AWS credential plugin image repository
+## @param multicluster.clusterGateway.credentialPlugins.aws.image.tag AWS credential plugin image tag, defaults to the ClusterGateway image tag
+## @param multicluster.clusterGateway.credentialPlugins.aws.region AWS region for the plugin's own STS calls, required with IRSA
+## @param multicluster.clusterGateway.credentialPlugins.aws.irsa.roleArn IAM role the plugin assumes with IRSA; mounted into the plugin container only
+## @param multicluster.clusterGateway.credentialPlugins.aws.podIdentity.enabled Use an EKS Pod Identity association for the ClusterGateway ServiceAccount
+## @param multicluster.clusterGateway.credentialPlugins.aws.allowBaseIdentity Sign for clusters without a roleArn with the plugin's own identity
+## @param multicluster.clusterGateway.credentialPlugins.aws.allowedRoleArns Roles clusters may assume; {cluster} in a role name matches only that cluster's own name
+## @param multicluster.clusterGateway.credentialPlugins.aws.sessionName Prefix of the RoleSessionName, which is <sessionName>-<cluster>
+## @param multicluster.clusterGateway.credentialPlugins.aws.resources AWS credential plugin resources
+## @param multicluster.clusterGateway.credentialPlugins.custom Further credential plugins, as container specs run beside ClusterGateway
+## @param multicluster.clusterGateway.credentialPlugins.volumes Extra pod volumes for custom credential plugins
 multicluster:
   enabled: true
   metrics:
@@ -290,6 +305,31 @@ multicluster:
       certManager:
         enabled: false
       certPath: /etc/k8s-cluster-gateway-certs
+    serviceAccount:
+      name: ""
+      annotations: {}
+    # Credential plugins mint short-lived credentials for clusters joined with
+    # --credential-provider, and run as sidecars sharing a socket volume with the
+    # gateway. They need a ClusterGateway image with credential plugin support.
+    credentialPlugins:
+      fsGroup: 65532
+      aws:
+        enabled: false
+        image:
+          repository: oamdev/cluster-gateway-plugin-aws
+          tag: ""
+        region: ""
+        irsa:
+          roleArn: ""
+        podIdentity:
+          enabled: false
+        allowBaseIdentity: false
+        # {cluster} needs a values file or --set-json: --set reads braces as a list.
+        allowedRoleArns: []
+        sessionName: cluster-gateway
+        resources: {}
+      custom: []
+      volumes: []
 
 
 ## @section Test parameters

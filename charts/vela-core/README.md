@@ -138,25 +138,40 @@ helm install --create-namespace -n vela-system kubevela kubevela/vela-core --wai
 
 ### MultiCluster parameters
 
-| Name                                                          | Description                                                                                 | Value                            |
-| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------- |
-| `multicluster.enabled`                                        | Whether to enable multi-cluster                                                             | `true`                           |
-| `multicluster.metrics.enabled`                                | Whether to enable multi-cluster metrics collect                                             | `false`                          |
-| `multicluster.clusterGateway.direct`                          | controller will connect to ClusterGateway directly instead of going to Kubernetes APIServer | `true`                           |
-| `multicluster.clusterGateway.replicaCount`                    | ClusterGateway replica count                                                                | `1`                              |
-| `multicluster.clusterGateway.port`                            | ClusterGateway port                                                                         | `9443`                           |
-| `multicluster.clusterGateway.image.repository`                | ClusterGateway image repository                                                             | `oamdev/cluster-gateway`         |
-| `multicluster.clusterGateway.image.tag`                       | ClusterGateway image tag                                                                    | `v1.9.0-alpha.2`                 |
-| `multicluster.clusterGateway.image.pullPolicy`                | ClusterGateway image pull policy                                                            | `IfNotPresent`                   |
-| `multicluster.clusterGateway.resources.requests.cpu`          | ClusterGateway cpu request                                                                  | `50m`                            |
-| `multicluster.clusterGateway.resources.requests.memory`       | ClusterGateway memory request                                                               | `20Mi`                           |
-| `multicluster.clusterGateway.resources.limits.cpu`            | ClusterGateway cpu limit                                                                    | `500m`                           |
-| `multicluster.clusterGateway.resources.limits.memory`         | ClusterGateway memory limit                                                                 | `200Mi`                          |
-| `multicluster.clusterGateway.secureTLS.enabled`               | Whether to enable secure TLS                                                                | `true`                           |
-| `multicluster.clusterGateway.secureTLS.certPath`              | Path to the certificate file                                                                | `/etc/k8s-cluster-gateway-certs` |
-| `multicluster.clusterGateway.secureTLS.certManager.enabled`   | Whether to enable cert-manager                                                              | `false`                          |
-| `multicluster.clusterGateway.serviceMonitor.enabled`          | Whether to enable service monitor                                                           | `false`                          |
-| `multicluster.clusterGateway.serviceMonitor.additionalLabels` | Additional labels for service monitor                                                       | `{}`                             |
+| Name                                                                    | Description                                                                                              | Value                               |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `multicluster.enabled`                                                  | Whether to enable multi-cluster                                                                          | `true`                              |
+| `multicluster.metrics.enabled`                                          | Whether to enable multi-cluster metrics collect                                                          | `false`                             |
+| `multicluster.clusterGateway.direct`                                    | controller will connect to ClusterGateway directly instead of going to Kubernetes APIServer              | `true`                              |
+| `multicluster.clusterGateway.replicaCount`                              | ClusterGateway replica count                                                                             | `1`                                 |
+| `multicluster.clusterGateway.port`                                      | ClusterGateway port                                                                                      | `9443`                              |
+| `multicluster.clusterGateway.image.repository`                          | ClusterGateway image repository                                                                          | `oamdev/cluster-gateway`            |
+| `multicluster.clusterGateway.image.tag`                                 | ClusterGateway image tag                                                                                 | `v1.9.0-alpha.2`                    |
+| `multicluster.clusterGateway.image.pullPolicy`                          | ClusterGateway image pull policy                                                                         | `IfNotPresent`                      |
+| `multicluster.clusterGateway.resources.requests.cpu`                    | ClusterGateway cpu request                                                                               | `50m`                               |
+| `multicluster.clusterGateway.resources.requests.memory`                 | ClusterGateway memory request                                                                            | `20Mi`                              |
+| `multicluster.clusterGateway.resources.limits.cpu`                      | ClusterGateway cpu limit                                                                                 | `500m`                              |
+| `multicluster.clusterGateway.resources.limits.memory`                   | ClusterGateway memory limit                                                                              | `200Mi`                             |
+| `multicluster.clusterGateway.secureTLS.enabled`                         | Whether to enable secure TLS                                                                             | `true`                              |
+| `multicluster.clusterGateway.secureTLS.certPath`                        | Path to the certificate file                                                                             | `/etc/k8s-cluster-gateway-certs`    |
+| `multicluster.clusterGateway.secureTLS.certManager.enabled`             | Whether to enable cert-manager                                                                           | `false`                             |
+| `multicluster.clusterGateway.serviceMonitor.enabled`                    | Whether to enable service monitor                                                                        | `false`                             |
+| `multicluster.clusterGateway.serviceMonitor.additionalLabels`           | Additional labels for service monitor                                                                    | `{}`                                |
+| `multicluster.clusterGateway.serviceAccount.name`                       | ClusterGateway ServiceAccount name, defaults to <fullname>-cluster-gateway                               | `""`                                |
+| `multicluster.clusterGateway.serviceAccount.annotations`                | Annotations on the ClusterGateway ServiceAccount                                                         | `{}`                                |
+| `multicluster.clusterGateway.credentialPlugins.fsGroup`                 | Group owning the credential plugin sockets, set as the pod fsGroup when plugins run                      | `65532`                             |
+| `multicluster.clusterGateway.credentialPlugins.aws.enabled`             | Run the AWS credential plugin, which mints EKS tokens for clusters joined with --credential-provider aws | `false`                             |
+| `multicluster.clusterGateway.credentialPlugins.aws.image.repository`    | AWS credential plugin image repository                                                                   | `oamdev/cluster-gateway-plugin-aws` |
+| `multicluster.clusterGateway.credentialPlugins.aws.image.tag`           | AWS credential plugin image tag, defaults to the ClusterGateway image tag                                | `""`                                |
+| `multicluster.clusterGateway.credentialPlugins.aws.region`              | AWS region for the plugin's own STS calls, required with IRSA                                            | `""`                                |
+| `multicluster.clusterGateway.credentialPlugins.aws.irsa.roleArn`        | IAM role the plugin assumes with IRSA; mounted into the plugin container only                            | `""`                                |
+| `multicluster.clusterGateway.credentialPlugins.aws.podIdentity.enabled` | Use an EKS Pod Identity association for the ClusterGateway ServiceAccount                                | `false`                             |
+| `multicluster.clusterGateway.credentialPlugins.aws.allowBaseIdentity`   | Sign for clusters without a roleArn with the plugin's own identity                                       | `false`                             |
+| `multicluster.clusterGateway.credentialPlugins.aws.allowedRoleArns`     | Roles clusters may assume; {cluster} in a role name matches only that cluster's own name                 | `[]`                                |
+| `multicluster.clusterGateway.credentialPlugins.aws.sessionName`         | Prefix of the RoleSessionName, which is <sessionName>-<cluster>                                          | `cluster-gateway`                   |
+| `multicluster.clusterGateway.credentialPlugins.aws.resources`           | AWS credential plugin resources                                                                          | `{}`                                |
+| `multicluster.clusterGateway.credentialPlugins.custom`                  | Further credential plugins, as container specs run beside ClusterGateway                                 | `[]`                                |
+| `multicluster.clusterGateway.credentialPlugins.volumes`                 | Extra pod volumes for custom credential plugins                                                          | `[]`                                |
 
 ### Test parameters
 

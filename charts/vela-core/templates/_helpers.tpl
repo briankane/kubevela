@@ -107,3 +107,11 @@ nothing when no restriction applies.
 {{ printf "restrictions:\n%s" (toYaml $restrictions | indent 2) | indent 2 }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The cluster-gateway ServiceAccount, separate from the controller's so that cloud
+identity bound to it (IRSA, EKS Pod Identity) reaches only the gateway pod.
+*/}}
+{{- define "kubevela-cluster-gateway.serviceAccountName" -}}
+{{ default (printf "%s-cluster-gateway" (include "kubevela.fullname" .)) .Values.multicluster.clusterGateway.serviceAccount.name }}
+{{- end -}}
