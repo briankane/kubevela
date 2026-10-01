@@ -93,6 +93,8 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 		Templates: in.Templates,
 		Sensitive: in.Sensitive,
 		Store:     in.Store,
+
+		ComponentReads: componentScopeFor(ctx, surface),
 	})
 	if err != nil {
 		return nil, err
@@ -152,6 +154,8 @@ type sourceResolver struct {
 	compiler        SourceCompiler
 	resolved        map[string]map[string]interface{}
 	resolving       map[string]bool
+	// componentReads is the delivered `component` scope.
+	componentReads map[string]interface{}
 }
 
 // SourceResolutionStatus captures source runtime resolution result.
@@ -219,6 +223,8 @@ type sourceInputs struct {
 	// Compiler evaluates source templates. Nil takes the workload compiler, which
 	// is what the Application render has always used.
 	Compiler SourceCompiler
+	// ComponentReads is the delivered `component` scope.
+	ComponentReads map[string]interface{}
 }
 
 // contextValuesFor flattens the render context into the field values a source may
@@ -335,6 +341,7 @@ func newSourceResolver(goCtx context.Context, ctxValues map[string]interface{}, 
 		sourceSchemas:   sourceSchemas,
 		sensitivePaths:  in.Sensitive,
 		cacheStore:      in.Store,
+		componentReads:  in.ComponentReads,
 		resolved:        map[string]map[string]interface{}{},
 		resolving:       map[string]bool{},
 	}

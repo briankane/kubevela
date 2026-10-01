@@ -40,6 +40,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/resourcekeeper"
 	"github.com/oam-dev/kubevela/pkg/resourcetracker"
+	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // appCollector is the Application's garbage collection beyond the keeper's own: the
@@ -336,7 +337,8 @@ func applicationDependents(app *v1beta1.Application) func(component string) []st
 					outputs = append(outputs, output.Name)
 				}
 			} else {
-				for _, dependsOn := range comp.DependsOn {
+				// A component read beside the reader counts as its dependsOn.
+				for _, dependsOn := range sources.EffectiveDependsOn(comp, app.GetAnnotations()) {
 					if dependsOn == component {
 						dependent = append(dependent, comp.Name)
 						break
