@@ -500,7 +500,8 @@ func DetachCluster(ctx context.Context, cli client.Client, clusterName string, o
 	}
 
 	switch vc.Spec.CredentialType {
-	case clusterv1alpha1.CredentialTypeX509Certificate, clusterv1alpha1.CredentialTypeServiceAccountToken:
+	case clusterv1alpha1.CredentialTypeX509Certificate, clusterv1alpha1.CredentialTypeServiceAccountToken,
+		clusterv1alpha1.CredentialTypeDynamic, clusterv1alpha1.CredentialTypeProvider:
 		clusterSecret, err := getMutableClusterSecret(ctx, cli, clusterName)
 		if err != nil {
 			return errors.Wrapf(err, "cluster %s is not mutable now", clusterName)
@@ -533,8 +534,6 @@ func DetachCluster(ctx context.Context, cli client.Client, clusterName string, o
 		}
 	case clusterv1alpha1.CredentialTypeInternal:
 		return fmt.Errorf("cannot detach internal cluster `local`")
-	case clusterv1alpha1.CredentialTypeDynamic:
-		// added for lint
 	}
 	return nil
 }

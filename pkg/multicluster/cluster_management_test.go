@@ -507,6 +507,33 @@ func TestDetachCluster(t *testing.T) {
 	}
 }
 
+func TestDetachClusterDeletesSecret(t *testing.T) {
+	ctx := context.Background()
+	scheme := newTestScheme()
+	ClusterGatewaySecretNamespace = "vela-system"
+
+	for _, credType := range []clusterv1alpha1.CredentialType{
+		clusterv1alpha1.CredentialTypeServiceAccountToken,
+		clusterv1alpha1.CredentialTypeX509Certificate,
+		clusterv1alpha1.CredentialTypeDynamic,
+		clusterv1alpha1.CredentialTypeProvider,
+	} {
+		t.Run(string(credType), func(t *testing.T) {
+			cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "spoke",
+					Namespace: ClusterGatewaySecretNamespace,
+					Labels:    map[string]string{clustercommon.LabelKeyClusterCredentialType: string(credType)},
+				},
+				Data: map[string][]byte{"endpoint": []byte("https://spoke.example.com")},
+			}).Build()
+			require.NoError(t, DetachCluster(ctx, cli, "spoke"))
+			err := cli.Get(ctx, client.ObjectKey{Namespace: ClusterGatewaySecretNamespace, Name: "spoke"}, &corev1.Secret{})
+			require.True(t, apierrors.IsNotFound(err), "cluster Secret still present: %v", err)
+		})
+	}
+}
+
 func TestRenameCluster(t *testing.T) {
 	ctx := context.Background()
 	scheme := newTestScheme()
