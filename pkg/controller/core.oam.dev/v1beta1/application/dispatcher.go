@@ -507,25 +507,47 @@ func liveResolvedSourceHashes(ctx context.Context, cli client.Client, clusterNam
 // sourceAutoUpdateEnabled reports whether a change to this binding re-dispatches
 // the components and traits that read it.
 //
-// The decision lives on the binding rather than on the Application because it is
-// a property of the data, not of the app: a registry address is worth picking up
-// the moment it moves, a feature flag should wait for a deliberate rollout, and
-// one Application routinely reads both. An unset field defers to the
-// controller-wide default so a platform can choose the fleet's posture without
-// editing every Application.
-func sourceAutoUpdateEnabled(src v1beta1.ApplicationSource, defaultOn bool) bool {
+// It is a property of the data, not of the app: a registry address is worth
+// picking up the moment it moves, a feature flag should wait for a deliberate
+// rollout, and one Application routinely reads both. So the binding decides, then
+// its SourceDefinition's storage.autoUpdate (defs, keyed by type), then the
+// controller-wide default.
+//
+// A publishVersion pin freezes only that default. A binding or definition that
+// says autoUpdate: true asked for live data by name, which a pin applied to every
+// Application VelaUX deploys must not take away.
+func sourceAutoUpdateEnabled(src v1beta1.ApplicationSource, defs map[string]*bool, defaultOn, pinned bool) bool {
 	if src.AutoUpdate != nil {
 		return *src.AutoUpdate
 	}
-	return defaultOn
+	if on := defs[src.Type]; on != nil {
+		return *on
+	}
+	return defaultOn && !pinned
+}
+
+// definitionAutoUpdates reads each SourceDefinition's storage.autoUpdate, keyed by
+// the type a binding names it by. A template the reader refuses says nothing;
+// admission refuses such a definition.
+func definitionAutoUpdates(defs map[string]*v1beta1.SourceDefinition) map[string]*bool {
+	out := make(map[string]*bool, len(defs))
+	for typ, def := range defs {
+		if def == nil || def.Spec.Schematic == nil || def.Spec.Schematic.CUE == nil {
+			continue
+		}
+		if on, err := sources.DefinitionAutoUpdate(def.Spec.Schematic.CUE.Template); err == nil && on != nil {
+			out[typ] = on
+		}
+	}
+	return out
 }
 
 // autoUpdatingSources is the set of binding names whose changes re-dispatch.
 // Empty means no refresh work is worth doing for this Application at all.
-func autoUpdatingSources(sources []v1beta1.ApplicationSource, defaultOn bool) map[string]struct{} {
+func autoUpdatingSources(sources []v1beta1.ApplicationSource, defs map[string]*bool, defaultOn, pinned bool) map[string]struct{} {
 	out := make(map[string]struct{}, len(sources))
 	for _, src := range sources {
-		if sourceAutoUpdateEnabled(src, defaultOn) {
+		if sourceAutoUpdateEnabled(src, defs, defaultOn, pinned) {
 			out[src.Name] = struct{}{}
 		}
 	}

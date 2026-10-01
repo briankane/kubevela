@@ -130,6 +130,17 @@ func TestHandleDeniesAndSaysWhy(t *testing.T) {
 			want:     "must declare spec.schematic.cue",
 		},
 		{
+			name: "an autoUpdate the controller cannot read",
+			template: `
+$internal: {key: "probe-source", keyInputs: []}
+parameter: live: bool
+storage: autoUpdate: parameter.live
+schema: {host: string}
+output: {host: "example.com"}
+`,
+			want: "storage.autoUpdate must be a literal",
+		},
+		{
 			name:     "cue that does not compile",
 			template: `output: {this is not cue`,
 			want:     "expected",

@@ -60,13 +60,14 @@ type ApplicationSource struct {
 	// re-dispatches the components and traits that read it, without waiting for
 	// the workflow to run again.
 	//
-	// Unset defers to the EnableSourceAutoUpdate feature gate, so a platform can
-	// set the fleet-wide default and an Application can disagree per binding: a
-	// registry address worth picking up immediately and a feature flag that
-	// should wait for the next rollout can sit side by side.
+	// Unset defers to the SourceDefinition's storage.autoUpdate, then to the
+	// EnableSourceAutoUpdate feature gate, so a definition can declare its data
+	// live and an Application can disagree per binding: a registry address worth
+	// picking up immediately and a feature flag that should wait for the next
+	// rollout can sit side by side.
 	//
-	// A publishVersion pin overrides this in both directions. An explicit pin is
-	// hard, so nothing re-dispatches until the pin is bumped.
+	// A publishVersion pin freezes only the gate's default. True here, or on the
+	// definition, keeps the binding live under a pin.
 	// +optional
 	AutoUpdate *bool `json:"autoUpdate,omitempty"`
 }
