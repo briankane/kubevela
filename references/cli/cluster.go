@@ -107,6 +107,7 @@ func ClusterCommandGroup(f velacmd.Factory, order string, c common.Args, ioStrea
 		NewClusterLabelCommandGroup(&c),
 		NewClusterAliasCommand(&c),
 		NewClusterExportConfigCommand(f, ioStreams),
+		NewClusterEKSSetupCommand(),
 	)
 	return cmd
 }
@@ -167,7 +168,10 @@ func NewClusterJoinCommand(c *common.Args, ioStreams cmdutil.IOStreams) *cobra.C
 		Long:  "join managed cluster by kubeconfig.",
 		Example: "# Join cluster declared in my-child-cluster.kubeconfig\n" +
 			"> vela cluster join my-child-cluster.kubeconfig --name example-cluster\n" +
-			"> vela cluster join my-child-cluster.kubeconfig --name example-cluster --labels project=kubevela,owner=oam-dev",
+			"> vela cluster join my-child-cluster.kubeconfig --name example-cluster --labels project=kubevela,owner=oam-dev\n" +
+			"# Join an EKS cluster whose credentials cluster-gateway mints with its AWS plugin (see vela cluster eks-setup)\n" +
+			"> vela cluster join prod-eu.kubeconfig --name prod-eu --credential-provider aws \\\n" +
+			"    --provider-config '{\"region\":\"eu-west-1\",\"clusterName\":\"prod-eu\",\"roleArn\":\"arn:aws:iam::222222222222:role/vela-prod-eu\"}'",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// get ClusterName from flag or config
@@ -188,6 +192,18 @@ func NewClusterJoinCommand(c *common.Args, ioStreams cmdutil.IOStreams) *cobra.C
 			if err != nil {
 				return errors.Wrapf(err, "failed to get label")
 			}
+			credentialProvider, err := cmd.Flags().GetString(FlagCredentialProvider)
+			if err != nil {
+				return err
+			}
+			providerConfig, err := cmd.Flags().GetString(FlagProviderConfig)
+			if err != nil {
+				return err
+			}
+			providerOption, err := credentialProviderOption(credentialProvider, providerConfig)
+			if err != nil {
+				return err
+			}
 			client, err := c.GetClient()
 			if err != nil {
 				return err
@@ -204,7 +220,7 @@ func NewClusterJoinCommand(c *common.Args, ioStreams cmdutil.IOStreams) *cobra.C
 
 			managedClusterKubeConfig := args[0]
 			ctx := context.WithValue(context.Background(), multicluster.KubeConfigContext, restConfig)
-			clusterConfig, err := multicluster.JoinClusterByKubeConfig(ctx, client, managedClusterKubeConfig, clusterName,
+			joinOptions := []multicluster.JoinClusterOption{
 				multicluster.JoinClusterCreateNamespaceOption(createNamespace),
 				multicluster.JoinClusterEngineOption(clusterManagementType),
 				multicluster.JoinClusterOCMOptions{
@@ -219,10 +235,16 @@ func NewClusterJoinCommand(c *common.Args, ioStreams cmdutil.IOStreams) *cobra.C
 						return false
 					}
 					return true
-				}))
+				}),
+			}
+			if providerOption != nil {
+				joinOptions = append(joinOptions, *providerOption)
+			}
+			clusterConfig, err := multicluster.JoinClusterByKubeConfig(ctx, client, managedClusterKubeConfig, clusterName, joinOptions...)
 			if err != nil {
 				return err
 			}
+			cmd.Print(storedExecTokenWarning(clusterConfig))
 
 			if len(labels) > 0 {
 				if err := addClusterLabels(cmd, c, clusterName, labels); err != nil {
@@ -244,6 +266,9 @@ func NewClusterJoinCommand(c *common.Args, ioStreams cmdutil.IOStreams) *cobra.C
 		`will use the internal endpoint prescribed in the hub cluster's configmap "kube-public/cluster-info to register "`+
 		"itself to the hub cluster. Otherwise use the original endpoint from the hub kubeconfig.")
 	cmd.Flags().StringP(CreateLabel, "", "", "Specifies the labels need to create in managedCluster")
+	cmd.Flags().String(FlagCredentialProvider, "", "Register the cluster with this cluster-gateway credential plugin, e.g. aws, "+
+		"which mints short-lived credentials for every request. The kubeconfig then supplies only the endpoint and CA.")
+	cmd.Flags().String(FlagProviderConfig, "", "JSON configuration for the credential plugin, e.g. {\"region\":\"eu-west-1\",\"clusterName\":\"prod\",\"roleArn\":\"...\"}")
 
 	return cmd
 }
