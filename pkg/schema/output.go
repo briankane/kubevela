@@ -368,3 +368,66 @@ func withStatus(s *openapi3.Schema) *openapi3.Schema {
 	s.Properties[statusFieldName] = openapi3.NewSchemaRef("", &openapi3.Schema{})
 	return s
 }
+
+// Extend lays the output schemas of a definition that extends this one over
+// this one's, as its render merges them: field by field, with outputs joining
+// by name. output and outputs say whether the child inherits each; one it does
+// not is the child's alone. A field the child writes untyped, such as one read
+// from `$super`, keeps the type this one gives it.
+func (s *OutputSchemas) Extend(child *OutputSchemas, output, outputs bool) *OutputSchemas {
+	if s == nil {
+		s = &OutputSchemas{}
+	}
+	if child == nil {
+		child = &OutputSchemas{}
+	}
+	out := &OutputSchemas{Output: child.Output, Outputs: child.Outputs}
+	if output {
+		out.Output = overlay(s.Output, child.Output)
+	}
+	if outputs && len(s.Outputs) > 0 {
+		out.Outputs = map[string]*openapi3.Schema{}
+		for k, v := range s.Outputs {
+			out.Outputs[k] = v
+		}
+		for k, v := range child.Outputs {
+			out.Outputs[k] = overlay(s.Outputs[k], v)
+		}
+	}
+	return out
+}
+
+// overlay is child laid over parent: the child's type where it gives one, and
+// the fields of both.
+func overlay(parent, child *openapi3.Schema) *openapi3.Schema {
+	if parent == nil {
+		return child
+	}
+	if child == nil {
+		return parent
+	}
+	out := *child
+	if out.Type == nil {
+		out.Type = parent.Type
+	}
+	if len(parent.Properties) > 0 {
+		out.Properties = openapi3.Schemas{}
+		for k, ref := range parent.Properties {
+			out.Properties[k] = ref
+		}
+		for k, ref := range child.Properties {
+			out.Properties[k] = openapi3.NewSchemaRef("", overlay(refValue(parent.Properties[k]), refValue(ref)))
+		}
+	}
+	if parent.Items != nil {
+		out.Items = openapi3.NewSchemaRef("", overlay(refValue(parent.Items), refValue(child.Items)))
+	}
+	return &out
+}
+
+func refValue(ref *openapi3.SchemaRef) *openapi3.Schema {
+	if ref == nil {
+		return nil
+	}
+	return ref.Value
+}
