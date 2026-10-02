@@ -650,9 +650,9 @@ func (def *CapabilityComponentDefinition) StoreOpenAPISchema(ctx context.Context
 		BlockOwnerDeletion: ptr.To(true),
 	}}
 	var outputs map[string]string
-	if def.WorkloadType != util.TerraformDef && componentDefinition.Spec.Extends == "" &&
+	if def.WorkloadType != util.TerraformDef &&
 		componentDefinition.Spec.Schematic != nil && componentDefinition.Spec.Schematic.CUE != nil {
-		outputs = outputSchemaData(ctx, componentDefinition.Name, componentDefinition.Spec.Schematic.CUE.Template)
+		outputs = componentOutputSchemaData(ctx, k8sClient, &componentDefinition)
 	}
 	cmName, err := def.storeSchemas(ctx, k8sClient, namespace, componentDefinition.Name, typeComponentDefinition, componentDefinition.Labels, nil, jsonSchema, uiSchema, outputs, ownerReference)
 	if err != nil {
@@ -737,8 +737,8 @@ func (def *CapabilityTraitDefinition) StoreOpenAPISchema(ctx context.Context, k8
 		BlockOwnerDeletion: ptr.To(true),
 	}}
 	var outputs map[string]string
-	if traitDefinition.Spec.Extends == "" && traitDefinition.Spec.Schematic != nil && traitDefinition.Spec.Schematic.CUE != nil {
-		outputs = outputSchemaData(ctx, traitDefinition.Name, traitDefinition.Spec.Schematic.CUE.Template)
+	if traitDefinition.Spec.Schematic != nil && traitDefinition.Spec.Schematic.CUE != nil {
+		outputs = traitOutputSchemaData(ctx, k8sClient, &traitDefinition)
 	}
 	cmName, err := def.storeSchemas(ctx, k8sClient, namespace, traitDefinition.Name, typeTraitDefinition, traitDefinition.Labels, traitDefinition.Spec.AppliesToWorkloads, jsonSchema, uiSchema, outputs, ownerReference)
 	if err != nil {
