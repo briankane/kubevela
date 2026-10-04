@@ -162,6 +162,7 @@ func run(ctx context.Context, coreOptions *options.CoreOptions) error {
 	// Configure feature gates
 	klog.V(2).InfoS("Configuring feature gates")
 	configureFeatureGates(coreOptions)
+	publishFeatureGates(ctx, kubeConfig)
 
 	// Create controller manager
 	klog.InfoS("Creating controller manager",
@@ -347,6 +348,21 @@ func configureFeatureGates(coreOptions *options.CoreOptions) {
 			"period", coreOptions.Kubernetes.InformerSyncPeriod)
 		commonconfig.ApplicationReSyncPeriod = coreOptions.Kubernetes.InformerSyncPeriod
 	}
+}
+
+// publishFeatureGates writes the controller's feature gates to a ConfigMap in
+// the system namespace, so other processes running KubeVela code can match
+// them. Failing to is logged, not fatal: the controller does not need it.
+func publishFeatureGates(ctx context.Context, kubeConfig *rest.Config) {
+	cli, err := ctrlclient.New(kubeConfig, ctrlclient.Options{})
+	if err == nil {
+		err = features.Publish(ctx, cli, oam.SystemDefinitionNamespace, version.VelaVersion, utilfeature.DefaultFeatureGate)
+	}
+	if err != nil {
+		klog.ErrorS(err, "Failed to publish feature gates", "configMap", features.FeatureGatesConfigMapName)
+		return
+	}
+	klog.InfoS("Published feature gates", "configMap", klog.KRef(oam.SystemDefinitionNamespace, features.FeatureGatesConfigMapName))
 }
 
 // buildManagerOptions constructs ctrl.Options from CoreOptions for creating a controller manager.
