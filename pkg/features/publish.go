@@ -18,6 +18,7 @@ package features
 import (
 	"context"
 	"sort"
+	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,8 +29,8 @@ import (
 )
 
 const (
-	// FeatureGatesConfigMapName is the ConfigMap, in the controller's namespace,
-	// where the controller publishes its feature gates when it starts: a key per
+	// FeatureGatesConfigMapName is the ConfigMap, in the system namespace, where
+	// the controller publishes KubeVela's feature gates when it starts: a key per
 	// gate, "true" or "false". Other processes that run KubeVela code, such as
 	// VelaUX, read it to behave as the controller does.
 	FeatureGatesConfigMapName = "kubevela-feature-gates"
@@ -37,32 +38,29 @@ const (
 	FeatureGatesVersionAnnotation = "core.oam.dev/kubevela-version"
 )
 
-// GateStates are a gate's features and whether each is on, leaving out the
-// AllAlpha and AllBeta switches every feature gate carries.
-func GateStates(gate featuregate.FeatureGate) map[string]string {
-	known := gate.DeepCopy().GetAll()
-	names := make([]string, 0, len(known))
-	for f := range known {
-		if f == "AllAlpha" || f == "AllBeta" {
-			continue
-		}
-		names = append(names, string(f))
+// KubeVelaFeatures are KubeVela's own gates, not the Kubernetes API server's
+// that share the process's feature gate.
+func KubeVelaFeatures() []featuregate.Feature {
+	out := make([]featuregate.Feature, 0, len(defaultFeatureGates))
+	for f := range defaultFeatureGates {
+		out = append(out, f)
 	}
-	sort.Strings(names)
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// GateStates are whether each of the named features is on in gate.
+func GateStates(gate featuregate.FeatureGate, names []featuregate.Feature) map[string]string {
 	out := make(map[string]string, len(names))
 	for _, name := range names {
-		if gate.Enabled(featuregate.Feature(name)) {
-			out[name] = "true"
-		} else {
-			out[name] = "false"
-		}
+		out[string(name)] = strconv.FormatBool(gate.Enabled(name))
 	}
 	return out
 }
 
-// Publish writes the gate's states to FeatureGatesConfigMapName in namespace,
-// replacing what an earlier start wrote.
-func Publish(ctx context.Context, cli client.Client, namespace, version string, gate featuregate.FeatureGate) error {
+// Publish writes the named features' states in gate to
+// FeatureGatesConfigMapName in namespace, replacing what an earlier start wrote.
+func Publish(ctx context.Context, cli client.Client, namespace, version string, gate featuregate.FeatureGate, names []featuregate.Feature) error {
 	cm := &corev1.ConfigMap{}
 	err := cli.Get(ctx, types.NamespacedName{Namespace: namespace, Name: FeatureGatesConfigMapName}, cm)
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -76,7 +74,7 @@ func Publish(ctx context.Context, cli client.Client, namespace, version string, 
 		cm.Annotations = map[string]string{}
 	}
 	cm.Annotations[FeatureGatesVersionAnnotation] = version
-	cm.Data = GateStates(gate)
+	cm.Data = GateStates(gate, names)
 	if exists {
 		return cli.Update(ctx, cm)
 	}

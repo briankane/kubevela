@@ -32,9 +32,11 @@ func TestPublish(t *testing.T) {
 	ctx := context.Background()
 	gate := featuregate.NewFeatureGate()
 	require.NoError(t, gate.Add(map[featuregate.Feature]featuregate.FeatureSpec{
-		"On":  {Default: true},
-		"Off": {Default: false},
+		"On":          {Default: true},
+		"Off":         {Default: false},
+		"NotKubeVela": {Default: true},
 	}))
+	names := []featuregate.Feature{"Off", "On"}
 	cli := fake.NewClientBuilder().Build()
 	read := func() *corev1.ConfigMap {
 		cm := &corev1.ConfigMap{}
@@ -42,14 +44,20 @@ func TestPublish(t *testing.T) {
 		return cm
 	}
 
-	require.NoError(t, Publish(ctx, cli, "vela-system", "v1.12.0", gate))
+	require.NoError(t, Publish(ctx, cli, "vela-system", "v1.12.0", gate, names))
 	cm := read()
-	assert.Equal(t, map[string]string{"On": "true", "Off": "false"}, cm.Data, "every gate it knows, none of the AllAlpha/AllBeta switches")
+	assert.Equal(t, map[string]string{"On": "true", "Off": "false"}, cm.Data, "the named gates, not the others sharing the feature gate")
 	assert.Equal(t, "v1.12.0", cm.Annotations[FeatureGatesVersionAnnotation])
 
 	require.NoError(t, gate.Set("Off=true"))
-	require.NoError(t, Publish(ctx, cli, "vela-system", "v1.12.1", gate))
+	require.NoError(t, Publish(ctx, cli, "vela-system", "v1.12.1", gate, names))
 	cm = read()
 	assert.Equal(t, "true", cm.Data["Off"], "a restart with other flags is written over the last")
 	assert.Equal(t, "v1.12.1", cm.Annotations[FeatureGatesVersionAnnotation])
+}
+
+func TestKubeVelaFeatures(t *testing.T) {
+	names := KubeVelaFeatures()
+	assert.Contains(t, names, EnableDefinitionInheritance)
+	assert.NotContains(t, names, featuregate.Feature("APIListChunking"), "an API server gate in the same process")
 }
