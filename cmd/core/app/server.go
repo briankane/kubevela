@@ -350,13 +350,13 @@ func configureFeatureGates(coreOptions *options.CoreOptions) {
 	}
 }
 
-// publishFeatureGates writes the controller's feature gates to a ConfigMap in
-// the system namespace, so other processes running KubeVela code can match
+// publishFeatureGates writes KubeVela's feature gates, as the controller has
+// them, to a ConfigMap in the system namespace, so other processes running KubeVela code can match
 // them. Failing to is logged, not fatal: the controller does not need it.
 func publishFeatureGates(ctx context.Context, kubeConfig *rest.Config) {
 	cli, err := ctrlclient.New(kubeConfig, ctrlclient.Options{})
 	if err == nil {
-		err = features.Publish(ctx, cli, oam.SystemDefinitionNamespace, version.VelaVersion, utilfeature.DefaultFeatureGate)
+		err = features.Publish(ctx, cli, oam.SystemDefinitionNamespace, version.VelaVersion, utilfeature.DefaultFeatureGate, features.KubeVelaFeatures())
 	}
 	if err != nil {
 		klog.ErrorS(err, "Failed to publish feature gates", "configMap", features.FeatureGatesConfigMapName)
