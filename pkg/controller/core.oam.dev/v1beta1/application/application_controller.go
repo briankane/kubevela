@@ -415,7 +415,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 // inside the component dispatcher then suppresses the re-apply when nothing
 // actually changed.
 func (r *Reconciler) refreshSourceDrivenComponents(logCtx monitorContext.Context, handler *AppHandler, appParser *appfile.Parser, af *appfile.Appfile, app *v1beta1.Application) {
-	if ok, reason := sourceRefreshEnabled(app, sourceAutoUpdateDefault()); !ok {
+	if ok, reason := sourceRefreshEnabled(app, definitionAutoUpdates(af.RelatedSourceDefinitions), sourceAutoUpdateDefault()); !ok {
 		klog.V(2).InfoS("skipping source refresh", "app", klog.KObj(app), "reason", reason)
 		return
 	}
@@ -546,29 +546,26 @@ func sourceAutoUpdateDefault() bool {
 // sourceRefreshEnabled reports whether out-of-band source refresh should run for
 // this Application, and says why when it should not.
 //
-// defaultOn is the controller-wide default applied to an Application that
-// expresses no opinion of its own.
-func sourceRefreshEnabled(app *v1beta1.Application, defaultOn bool) (bool, string) {
+// defs are the SourceDefinitions' own storage.autoUpdate, by type, and defaultOn
+// the controller-wide default applied where neither a binding nor its definition
+// says.
+//
+// A publishVersion pin freezes what the default turned on, as it freezes a
+// pinned helmchart valuesFrom revision (see the fingerprint gate in
+// workflow.go): until the pin is bumped, nothing moves that nobody asked to.
+// A binding or definition that says autoUpdate: true did ask, by name, and
+// stays live; VelaUX pins every Application it deploys, so a pin that beat
+// the opt-in would leave live data impossible to have there.
+func sourceRefreshEnabled(app *v1beta1.Application, defs map[string]*bool, defaultOn bool) (bool, string) {
 	if len(app.Spec.Sources) == 0 {
 		return false, "no sources declared"
 	}
-	if len(autoUpdatingSources(app.Spec.Sources, defaultOn)) == 0 {
+	pinned := metav1.HasAnnotation(app.ObjectMeta, oam.AnnotationPublishVersion)
+	if len(autoUpdatingSources(app.Spec.Sources, defs, defaultOn, pinned)) == 0 {
+		if pinned && len(autoUpdatingSources(app.Spec.Sources, defs, defaultOn, false)) > 0 {
+			return false, "publishVersion is set, so the Application is pinned; set autoUpdate: true on a binding to keep it live"
+		}
 		return false, "no source has autoUpdate enabled"
-	}
-	// A publishVersion pin is hard. A source value changing must not move what
-	// is deployed until the user bumps the pin, exactly as an edit to a
-	// referenced ConfigMap does not move a pinned helmchart valuesFrom revision
-	// (see the fingerprint gate in workflow.go). Sources and valuesFrom are both
-	// external data feeding a render, so they must answer this the same way, or
-	// pinning means one thing for one feature and something else for the other.
-	//
-	// The pin wins over an explicit opt-in rather than the reverse: an
-	// Application carrying both has asked for two incompatible things, and
-	// freezing is the safe reading. Nothing surfaces that contradiction yet -
-	// admission is the right place for it, but warnings would have to be
-	// threaded through the field.ErrorList the validators return.
-	if metav1.HasAnnotation(app.ObjectMeta, oam.AnnotationPublishVersion) {
-		return false, "publishVersion is set, so the Application is pinned"
 	}
 	return true, ""
 }

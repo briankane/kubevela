@@ -648,6 +648,10 @@ func (h *AppHandler) sourceStatusList() []common.ApplicationSourceStatus {
 	out := make([]common.ApplicationSourceStatus, 0, len(h.app.Spec.Sources))
 	autoUpdateDefault := sourceAutoUpdateDefault()
 	_, pinned := h.app.GetAnnotations()[oam.AnnotationPublishVersion]
+	var defs map[string]*bool
+	if h.currentAppRev != nil {
+		defs = definitionAutoUpdates(h.currentAppRev.Spec.SourceDefinitions)
+	}
 	for _, src := range h.app.Spec.Sources {
 		entry := common.ApplicationSourceStatus{Name: src.Name, Type: src.Type, Phase: sourcePhaseUnused}
 		if got := h.sourceStatuses[src.Name]; got != nil {
@@ -656,17 +660,16 @@ func (h *AppHandler) sourceStatusList() []common.ApplicationSourceStatus {
 				entry.Phase = sourcePhaseResolved
 			}
 		}
-		wanted := sourceAutoUpdateEnabled(src, autoUpdateDefault)
-		effective := wanted && !pinned
+		effective := sourceAutoUpdateEnabled(src, defs, autoUpdateDefault, pinned)
 		entry.AutoUpdate = &effective
 		// A bool cannot say why it is false, and one case is worth the words: the
-		// binding asked for auto-update and a pin took it away. The other two -
-		// the gate is off, or the author set autoUpdate: false - need no message.
+		// default would have turned it on and a pin took it away. The others - the
+		// gate is off, or the binding or definition says false - need no message.
 		// Being off by default is the normal state of every binding in every
 		// Application, so reporting it would put a sentence nobody needs on all
 		// of them, and an author who set false already knows.
-		if wanted && pinned && entry.Message == "" {
-			entry.Message = "autoUpdate suppressed: the Application is pinned by app.oam.dev/publishVersion"
+		if !effective && pinned && sourceAutoUpdateEnabled(src, defs, autoUpdateDefault, false) && entry.Message == "" {
+			entry.Message = "autoUpdate suppressed: the Application is pinned by app.oam.dev/publishVersion; set autoUpdate: true on the binding to keep it live"
 		}
 		out = append(out, entry)
 	}
