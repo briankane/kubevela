@@ -134,3 +134,114 @@ func selectors(path []string) []cue.Selector {
 	}
 	return sels
 }
+
+// checkPatchKinds checks a trait's patch, as a partial object, against the
+// kinds its appliesToWorkloads names as resources ("deployments.apps") whose
+// schemas are known, and reports what fits none of them. A patch that is a JSON patch, a list of operations, is
+// not an object, so is not checked.
+func (d *document) checkPatchKinds(f *ast.File, v cue.Value) []Diagnostic {
+	kinds := d.opts.Kinds
+	if kinds == nil || d.templateKind() != traitType {
+		return nil
+	}
+	patch := v.LookupPath(cue.MakePath(cue.Str(templateLabel), cue.Str("patch")))
+	if !patch.Exists() || patch.IncompleteKind() != cue.StructKind {
+		return nil
+	}
+	var gvks []kubeschema.GVK
+	for _, r := range d.appliesToWorkloads() {
+		if gvk := kinds.KindOf(r); gvk != (kubeschema.GVK{}) && kinds.Has(gvk) {
+			gvks = append(gvks, gvk)
+		}
+	}
+	// A trait may patch each kind it applies to differently, choosing by a
+	// parameter, so only a field wrong for every kind is reported. Each kind
+	// is checked in a build of its own: CUE reports an error once per
+	// position, however many checks share it.
+	var order []string
+	first := map[string]Diagnostic{}
+	kindsOf := map[string][]string{}
+	for _, gvk := range gvks {
+		for _, diag := range d.checkPatchKind(f, kinds, gvk) {
+			key := fmt.Sprintf("%d:%d:%s", diag.Range.Start.Line, diag.Range.Start.Column, diag.Message)
+			if _, seen := first[key]; !seen {
+				order = append(order, key)
+				first[key] = diag
+			}
+			kindsOf[key] = append(kindsOf[key], describe(gvk))
+		}
+	}
+	var diags []Diagnostic
+	for _, key := range order {
+		if len(kindsOf[key]) < len(gvks) {
+			continue
+		}
+		diag := first[key]
+		diag.Message += " (" + strings.Join(kindsOf[key], ", ") + ")"
+		diags = append(diags, diag)
+	}
+	return diags
+}
+
+// checkPatchKind checks a trait's patch against one kind.
+func (d *document) checkPatchKind(f *ast.File, kinds *kubeschema.Schemas, gvk kubeschema.GVK) []Diagnostic {
+	src, ok := kinds.CUE(gvk)
+	if !ok {
+		return nil
+	}
+	schema, err := parser.ParseFile("kubeschema", src)
+	if err != nil {
+		return nil
+	}
+	const check = "velaPatchCheck"
+	decls := append(append([]ast.Decl{}, f.Decls...), schema.Decls...)
+	decls = append(decls, mustField(check+": "+templateLabel+".patch & "+kubeschema.Root(gvk)))
+	bi := build.NewContext().NewInstance(d.path, nil)
+	bi.Imports = d.packages().imports()
+	if err := bi.AddSyntax(&ast.File{Filename: d.path, Decls: decls}); err != nil {
+		return nil
+	}
+	checked := cuecontext.New().BuildInstance(bi)
+	err = checked.Err()
+	if err == nil {
+		err = checked.Validate()
+	}
+	var diags []Diagnostic
+	for _, e := range cueerrors.Errors(err) {
+		if path := e.Path(); len(path) == 0 || path[0] != check {
+			continue
+		}
+		for _, diag := range d.fromErrors(e, check) {
+			diag.Message = "patch." + diag.Message
+			diags = append(diags, diag)
+		}
+	}
+	return diags
+}
+
+// appliesToWorkloads are the workloads the trait's header says it applies to.
+func (d *document) appliesToWorkloads() []string {
+	var out []string
+	for _, h := range d.headers {
+		attrs, ok := fieldIn(h, "attributes")
+		if !ok {
+			continue
+		}
+		applies, ok := fieldIn(attrs, "appliesToWorkloads")
+		if !ok {
+			continue
+		}
+		list, ok := applies.Value.(*ast.ListLit)
+		if !ok {
+			continue
+		}
+		for _, e := range list.Elts {
+			if lit, ok := e.(*ast.BasicLit); ok {
+				if s, err := strconv.Unquote(lit.Value); err == nil {
+					out = append(out, s)
+				}
+			}
+		}
+	}
+	return out
+}

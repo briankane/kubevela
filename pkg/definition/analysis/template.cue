@@ -28,7 +28,8 @@
 		errs?:       #velaErrs
 		processing?: {...}
 		outputs?: [string]: #velaObject
-		patch?: {...}
+		// patch is a list of operations under +patchStrategy=jsonPatch.
+		patch?: {...} | [...{...}]
 		patchOutputs?: [string]: {...}
 		"$super"?: {...}
 		"$inherit"?: #velaInherit
