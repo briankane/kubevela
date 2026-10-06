@@ -63,6 +63,11 @@ type indexed struct {
 	crds          [][]byte
 }
 
+// contributes reports whether a file adds anything to the index.
+func (e indexed) contributes() bool {
+	return e.published != nil || e.name != "" || len(e.packages) > 0 || len(e.crds) > 0
+}
+
 // indexFile reads what a file contributes to the index, from src, or from
 // disk when src is nil.
 func indexFile(path string, src []byte) indexed {
@@ -121,12 +126,16 @@ func (s *Server) indexWorkspace() {
 			})
 		}
 		s.post(func() {
+			changed := false
 			for path, entry := range found {
-				if _, open := s.docs["file://"+path]; !open {
+				if _, open := s.docs["file://"+path]; !open && entry.contributes() {
 					s.record(path, entry)
+					changed = true
 				}
 			}
-			s.republish()
+			if changed {
+				s.republish()
+			}
 		})
 	}()
 }
@@ -318,8 +327,11 @@ func (s *Server) connectCluster() {
 		fetch, vela, context, err := connect()
 		s.post(func() {
 			s.cluster = &clusterState{fetch: fetch, vela: vela && err == nil, context: context}
-			s.rebuildKinds()
-			s.republish()
+			// Without KubeVela, the cluster adds no kinds to those already built.
+			if s.cluster.vela {
+				s.rebuildKinds()
+				s.republish()
+			}
 		})
 	}()
 }

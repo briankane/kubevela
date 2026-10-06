@@ -136,3 +136,20 @@ func TestListsTheWorkspaceDefinitions(t *testing.T) {
 	}
 	assert.Equal(t, []string{"web"}, names)
 }
+
+func TestAddonFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-addon")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "definitions"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "schemas"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "metadata.yaml"), []byte("name: my-addon\nversion: 1.0.0\n"), 0o600))
+	open := func(rel, text string) string {
+		c := newClient(t)
+		u := "file://" + filepath.Join(dir, rel)
+		c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "cue", Version: 1, Text: text}}, false)
+		return messages(c.diagnostics().Diagnostics)
+	}
+	assert.Contains(t, open("template.cue", "package main\n\noutput: {apiVersion: \"core.oam.dev/v1beta1\", kind: \"Deployment\"}\n"), "Application")
+	assert.Contains(t, open("schemas/component-uischema-web.yaml", "- jsonKey: a\n  uitype: Input\n"), "uitype")
+	assert.Contains(t, open("definitions/web.cue", "\"web\": {\n\ttype: \"component\"\n\tattributs: {}\n}\ntemplate: output: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n"), "attributs", "an addon's definitions are checked as definitions")
+	assert.Empty(t, open("values.yaml", "a: [unclosed\n"), "other YAML is not ours to check")
+}

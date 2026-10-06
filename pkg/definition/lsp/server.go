@@ -26,6 +26,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -236,6 +237,7 @@ func (s *Server) handle(msg message) error {
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
 		}
 	case "initialized":
+		s.rebuildKinds()
 		s.indexWorkspace()
 		s.connectCluster()
 	case "workspace/didChangeConfiguration":
@@ -361,10 +363,17 @@ func (s *Server) diagnose(uri, text string) []Diagnostic {
 // diagnose analyses a document and converts the result to protocol positions.
 // A CUE test file is checked by loading it, as `vela def test` would.
 func diagnose(uri, text string, opts analysis.Options) []Diagnostic {
-	if utils.IsCUETestFile(pathOf(uri)) {
-		return testDiagnostics(pathOf(uri), text)
+	path := pathOf(uri)
+	if utils.IsCUETestFile(path) {
+		return testDiagnostics(path, text)
 	}
-	res := analysis.AnalyzeWith(pathOf(uri), []byte(text), opts)
+	if diags, ok := analysis.CheckAddonFile(path, []byte(text), opts); ok {
+		return toProtocol(text, diags)
+	}
+	if filepath.Ext(path) != ".cue" {
+		return []Diagnostic{}
+	}
+	res := analysis.AnalyzeWith(path, []byte(text), opts)
 	diags := make([]Diagnostic, 0, len(res.Diagnostics))
 	for _, d := range res.Diagnostics {
 		diags = append(diags, Diagnostic{
