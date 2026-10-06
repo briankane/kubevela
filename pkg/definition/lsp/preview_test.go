@@ -72,6 +72,6 @@ func TestPreviewValues(t *testing.T) {
 	require.Empty(t, string(m["error"]))
 	var r PreviewValuesResult
 	require.NoError(t, json.Unmarshal(m["result"], &r))
-	assert.Contains(t, r.YAML, "image: \"\" # required")
+	assert.Contains(t, r.YAML, "image: null # required string")
 	assert.Contains(t, r.YAML, "name: my-worker")
 }

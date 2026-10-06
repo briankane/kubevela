@@ -117,6 +117,13 @@ func TestRenderUsesSampleContext(t *testing.T) {
 	assert.Equal(t, "web", object(t, r.Objects[0])["metadata"].(map[string]interface{})["name"], "context.name defaults to the definition's name")
 }
 
+func TestRenderNamesAPlaceholderStillInTheSkeleton(t *testing.T) {
+	s, err := Skeleton(context.Background(), "web.cue", []byte(webComponent))
+	require.NoError(t, err)
+	r := Render(context.Background(), Request{Path: "web.cue", Source: []byte(webComponent), Values: []byte(s)})
+	assert.Contains(t, r.Error, "image")
+}
+
 func TestRenderNamesAMissingParameter(t *testing.T) {
 	r := Render(context.Background(), Request{Path: "web.cue", Source: []byte(webComponent), Values: []byte("parameter: {}\n")})
 	assert.Contains(t, r.Error, "image")
@@ -182,7 +189,7 @@ func TestSkeleton(t *testing.T) {
 	assert.EqualValues(t, 80, p["port"])
 	assert.Contains(t, p, "image")
 	assert.NotContains(t, p, "labels", "optional fields are left out")
-	assert.Contains(t, s, "image: \"\" # required: Image to run")
+	assert.Contains(t, s, "image: null # required string: Image to run", "a placeholder no render accepts, so the preview names what is missing")
 	assert.Equal(t, "web", v["context"].(map[string]interface{})["name"])
 	assert.NotContains(t, v, "workload", "only a trait patches a workload")
 

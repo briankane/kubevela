@@ -304,7 +304,9 @@ func writeFields(b *strings.Builder, v cue.Value, indent string) bool {
 			}
 			continue
 		}
-		fmt.Fprintf(b, "\n%s%s: %s # required%s", indent, name, placeholder(f.IncompleteKind()), usageOf(f))
+		// null is a placeholder no parameter accepts, so a render names what is
+		// still to fill in rather than rendering an empty value.
+		fmt.Fprintf(b, "\n%s%s: null # required %s%s", indent, name, kindName(f.IncompleteKind()), usageOf(f))
 	}
 	return wrote
 }
@@ -317,18 +319,21 @@ func jsonOf(v cue.Value) string {
 	return string(b)
 }
 
-func placeholder(k cue.Kind) string {
+// kindName names the kind a required parameter takes.
+func kindName(k cue.Kind) string {
 	switch {
 	case k&cue.StringKind != 0:
-		return `""`
+		return "string"
+	case k&cue.IntKind != 0 && k&cue.FloatKind == 0:
+		return "int"
 	case k&cue.NumberKind != 0:
-		return "0"
+		return "number"
 	case k&cue.BoolKind != 0:
-		return "false"
+		return "bool"
 	case k&cue.ListKind != 0:
-		return "[]"
+		return "list"
 	default:
-		return "null"
+		return "value"
 	}
 }
 
