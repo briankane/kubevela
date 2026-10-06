@@ -77,7 +77,9 @@ func helloExternals(t *testing.T) *Externals {
 
 func TestCustomProviderImports(t *testing.T) {
 	ext := helloExternals(t)
-	assert.Empty(t, lines(AnalyzeWith("def.cue", []byte(usesHello), Options{Externals: ext}).Diagnostics))
+	for _, d := range AnalyzeWith("def.cue", []byte(usesHello), Options{Externals: ext}).Diagnostics {
+		assert.NotEqual(t, SeverityError, d.Severity, d.Message)
+	}
 
 	without := lines(Analyze("def.cue", []byte(usesHello)).Diagnostics)
 	require.NotEmpty(t, without)
@@ -102,4 +104,30 @@ func TestCustomProviderCompletion(t *testing.T) {
 func TestParsePackagesReportsABrokenOne(t *testing.T) {
 	_, errs := ParsePackages([]byte("apiVersion: cue.oam.dev/v1alpha1\nkind: Package\nmetadata: {name: bad}\nspec:\n  path: ext/bad\n  templates:\n    bad.cue: \"#X: {\"\n"))
 	assert.NotEmpty(t, errs)
+}
+
+// A custom provider runs on every render of a component or trait, so its
+// use there warns; a workflow step runs it once, so does not.
+func TestCustomProvidersInRendersWarn(t *testing.T) {
+	ext := helloExternals(t)
+	warnings := func(src string) []Diagnostic {
+		var out []Diagnostic
+		for _, d := range AnalyzeWith("def.cue", []byte(src), Options{Externals: ext}).Diagnostics {
+			if d.Severity == SeverityWarning {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+	got := warnings(usesHello)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1, got[0].Range.Start.Line)
+	assert.Contains(t, got[0].Message, "experimental")
+	assert.Contains(t, got[0].Message, "deterministic")
+
+	step := strings.Replace(usesHello, `type: "component"`, `type: "workflow-step"`, 1)
+	assert.Empty(t, warnings(step))
+
+	builtin := "import \"vela/kube\"\n\n\"c\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\t_r: kube.#Read & {$params: resource: {apiVersion: \"v1\", kind: \"ConfigMap\"}}\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n}\n"
+	assert.Empty(t, warnings(builtin), "KubeVela's own packages are not custom providers")
 }

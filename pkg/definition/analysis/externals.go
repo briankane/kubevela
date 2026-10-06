@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"cuelang.org/go/cue"
@@ -204,4 +205,26 @@ func documentedPackage(path string, templates []string) (cue.Value, bool) {
 		}
 	}
 	return cuecontext.New().BuildFile(&ast.File{Decls: decls}), true
+}
+
+// checkCustomProviders warns on each custom provider package a component or
+// trait imports: its calls run on every render of every Application using
+// the definition, where a slow or varying answer stalls or churns them.
+func (d *document) checkCustomProviders() []Diagnostic {
+	if kind := d.templateKind(); kind != componentType && kind != traitType {
+		return nil
+	}
+	var diags []Diagnostic
+	for _, decl := range d.imports {
+		for _, spec := range decl.Specs {
+			path := strings.Trim(spec.Path.Value, `"`)
+			if _, ok := d.opts.Externals.find(path); !ok {
+				continue
+			}
+			diag := d.at(spec.Path.Pos(), fmt.Sprintf("%s is a custom provider: its use in a %s is experimental. Its calls run on every render, so make sure they are fast and deterministic", path, d.typ))
+			diag.Severity = SeverityWarning
+			diags = append(diags, diag)
+		}
+	}
+	return diags
 }
