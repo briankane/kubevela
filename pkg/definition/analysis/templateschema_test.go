@@ -82,6 +82,7 @@ func TestTemplateSchemas(t *testing.T) {
 			src: header("s", "source", "") + `template: {
 	schema: {region: string, zones: [...string]}
 	output: {region: "eu-west-1", zones: "a"}
+	storage: {storageTTL: "5m", onStaleFailure: "use-stale"}
 }
 `,
 			want: []wantSev{
@@ -253,24 +254,34 @@ func TestTemplateSchemas(t *testing.T) {
 `,
 			want: []wantSev{{8, SeverityError, "componentz"}},
 		},
-		"a source needs schema and output": {
+		"a source needs schema, output and storage": {
 			src: header("s", "source", "") + `template: {
 	parameter: name: string
 }
 `,
-			want: []wantSev{{4, SeverityError, "a source's template must declare schema and output"}},
+			want: []wantSev{{4, SeverityError, "a source's template must declare schema, output and storage"}},
+		},
+		"a source's storage without its fields": {
+			src: header("s", "source", "") + `template: {
+	schema: value: string
+	output: value: "x"
+	storage: storageTTL: "5m"
+}
+`,
+			want: []wantSev{{7, SeverityError, "storage must declare onStaleFailure"}},
 		},
 		"a source's storage": {
 			src: header("s", "source", "") + `template: {
 	schema: value: string
 	output: value: "x"
 	storage: {
+		storageTTL:     "5m"
 		onStaleFailure: "maybe"
 		ttl: "1h"
 	}
 }
 `,
-			want: []wantSev{{8, SeverityError, "onStaleFailure"}, {9, SeverityError, "ttl"}},
+			want: []wantSev{{9, SeverityError, "onStaleFailure"}, {10, SeverityError, "ttl"}},
 		},
 		"a workflow step is open beyond parameter": {
 			src: header("w", "workflow-step", "") + `template: {

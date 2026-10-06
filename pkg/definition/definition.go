@@ -760,7 +760,7 @@ func GetDefinitionDefaultSpecVariant(kind, variant string) (map[string]interface
 			"output: {\n\tapiVersion: \"v1\"\n\tkind:       \"ConfigMap\"\n}\nparameter: {}\n"), nil
 	case v1beta1.SourceDefinitionKind:
 		return withTemplate(map[string]interface{}{},
-			"schema: value: string\noutput: value: parameter.value\nparameter: value: string\n"), nil
+			"schema: value: string\noutput: value: parameter.value\nstorage: {\n\tstorageTTL:     \"5m\"\n\tonStaleFailure: \"use-stale\"\n}\nparameter: value: string\n"), nil
 	}
 	return map[string]interface{}{}, nil
 }

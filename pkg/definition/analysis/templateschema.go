@@ -87,6 +87,38 @@ func templateSchemaFor(kind string) (cue.Value, bool) {
 	return this, this.Exists()
 }
 
+// requireNested reports a struct field, written as a struct, that does not
+// declare each of the fields named.
+func (d *document) requireNested(f *ast.Field, label string, fields ...string) []Diagnostic {
+	if f == nil {
+		return nil
+	}
+	s, ok := f.Value.(*ast.StructLit)
+	if !ok || hasEmbedding(s) {
+		return nil
+	}
+	declared := map[string]*ast.Field{}
+	topLevelFields(s, declared)
+	var missing []string
+	for _, name := range fields {
+		if declared[name] == nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return []Diagnostic{d.at(f.Label.Pos(), fmt.Sprintf("%s must declare %s", label, andList(missing)))}
+}
+
+// andList joins words as "a", "a and b", or "a, b and c".
+func andList(words []string) string {
+	if len(words) <= 1 {
+		return strings.Join(words, "")
+	}
+	return strings.Join(words[:len(words)-1], ", ") + " and " + words[len(words)-1]
+}
+
 // unbound clears the references the parser bound within a snippet, so they
 // are resolved in the file the snippet is compiled into.
 func unbound(f *ast.Field) *ast.Field {
@@ -244,7 +276,7 @@ var requiredFields = map[string][]struct {
 	traitType:         {{[]string{"patch", "patchOutputs", "outputs"}, "patch or outputs"}},
 	policyType:        {{[]string{"output"}, "output"}},
 	applicationPolicy: {{[]string{"output"}, "output"}},
-	sourceType:        {{[]string{"schema"}, "schema"}, {[]string{"output"}, "output"}},
+	sourceType:        {{[]string{"schema"}, "schema"}, {[]string{"output"}, "output"}, {[]string{"storage"}, "storage"}},
 }
 
 // builtinPolicies are the policies KubeVela implements in Go: their
@@ -319,7 +351,12 @@ func (d *document) checkTemplateFields() []Diagnostic {
 	}
 	if len(missing) > 0 {
 		diags = append(diags, d.at(d.template.Label.Pos(),
-			fmt.Sprintf("%s must declare %s", templateOf(kind), strings.Join(missing, " and "))))
+			fmt.Sprintf("%s must declare %s", templateOf(kind), andList(missing))))
+	}
+	// A source says how long its value is kept, and what serves it when a
+	// refresh fails.
+	if kind == sourceType {
+		diags = append(diags, d.requireNested(declared["storage"], "storage", "storageTTL", "onStaleFailure")...)
 	}
 	// A global policy applies to every Application unasked, so nothing can
 	// set its parameters.
