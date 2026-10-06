@@ -705,6 +705,12 @@ func loadSubject(file string) (Subject, error) {
 	return subjectFromCUE(string(src))
 }
 
+// SubjectFromCUE loads a definition from its CUE, as a test case loads the
+// one it names.
+func SubjectFromCUE(src string) (Subject, error) {
+	return subjectFromCUE(src)
+}
+
 // subjectFromCUE loads a definition from its CUE.
 func subjectFromCUE(src string) (Subject, error) {
 	def := definition.Definition{Unstructured: unstructured.Unstructured{}}

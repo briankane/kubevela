@@ -38,8 +38,10 @@ import (
 
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
+	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/cuetest"
 )
 
 // Request is a definition file and the values to render it with.
@@ -71,6 +73,9 @@ type Result struct {
 	// Inputs are what each input renders to, when the values file holds
 	// several, separated by ---. Objects, Workload and Error are then empty.
 	Inputs []Input `json:"inputs,omitempty"`
+	// Status is what KubeVela reports of what rendered, for a component or
+	// trait with a status.
+	Status *Status `json:"status,omitempty"`
 }
 
 // Input is what one input of a values file renders to.
@@ -80,6 +85,7 @@ type Input struct {
 	Objects  []Object `json:"objects"`
 	Workload *Object  `json:"workload,omitempty"`
 	Error    string   `json:"error,omitempty"`
+	Status   *Status  `json:"status,omitempty"`
 }
 
 // values is one input of a values file.
@@ -88,6 +94,9 @@ type values struct {
 	Parameter map[string]interface{} `json:"parameter"`
 	Context   sampleContext          `json:"context"`
 	Workload  map[string]interface{} `json:"workload"`
+	// Observed is the live state of what renders, merged over it, for the
+	// status to read.
+	Observed cuetest.Observed `json:"observed"`
 }
 
 // sampleContext is the context a preview renders in.
@@ -138,7 +147,7 @@ func Render(ctx context.Context, req Request) Result {
 			named.Name = fmt.Sprintf("input %d", i+1)
 		}
 		res.Type = r.Type
-		res.Inputs = append(res.Inputs, Input{Name: named.Name, Objects: r.Objects, Workload: r.Workload, Error: r.Error})
+		res.Inputs = append(res.Inputs, Input{Name: named.Name, Objects: r.Objects, Workload: r.Workload, Error: r.Error, Status: r.Status})
 	}
 	res.Objects = []Object{}
 	return res
@@ -233,7 +242,61 @@ func render(ctx context.Context, req Request) Result {
 	default:
 		res.Notice = fmt.Sprintf("A %s definition renders no objects to preview.", tmpl.Type)
 	}
+	if res.Error == "" && (tmpl.Type == "component" || tmpl.Type == "trait") && declaresStatus.Match(req.Source) {
+		res.Status = previewStatus(req.Source, v, tmpl.Name)
+	}
 	return res
+}
+
+// declaresStatus matches a definition that says how its status is read.
+var declaresStatus = regexp.MustCompile(`\b(healthPolicy|customStatus|details)\s*:`)
+
+// Status is what KubeVela reports of a component or trait: its health,
+// message and details and, for a component, each attached trait's.
+type Status struct {
+	Healthy bool                            `json:"healthy"`
+	Message string                          `json:"message,omitempty"`
+	Details map[string]string               `json:"details,omitempty"`
+	Traits  map[string]*health.StatusResult `json:"traits,omitempty"`
+	Error   string                          `json:"error,omitempty"`
+}
+
+// previewStatus evaluates the definition's status as the controller's health
+// check does, over what renders with the values' observed state merged in.
+func previewStatus(src []byte, v values, name string) *Status {
+	subject, err := cuetest.SubjectFromCUE(string(src))
+	if err != nil {
+		return &Status{Error: err.Error()}
+	}
+	in := cuetest.Input{
+		Parameter: v.Parameter,
+		Workload:  v.Workload,
+		Context: cuetest.Context{
+			Name:      v.Context.name(name),
+			AppName:   orDefault(v.Context.AppName, defaultAppName),
+			Namespace: orDefault(v.Context.Namespace, defaultNamespace),
+			Cluster:   orDefault(v.Context.Cluster, defaultCluster),
+		},
+	}
+	report, err := cuetest.Status(subject, in, v.Observed)
+	out := &Status{}
+	if report != nil && report.StatusResult != nil {
+		out.Healthy, out.Message, out.Details = report.Healthy, report.Message, report.Details
+		if len(report.Traits) > 0 {
+			out.Traits = report.Traits
+		}
+	}
+	if err != nil {
+		out.Error = err.Error()
+	}
+	return out
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 func (r *Result) fail(err error) {
@@ -354,6 +417,14 @@ func Skeleton(ctx context.Context, path string, src []byte) (string, error) {
 		b.WriteString(" {}\n")
 	}
 	fmt.Fprintf(&b, "context:\n  name: %s\n  appName: %s\n  namespace: %s\n  cluster: %s\n", tmpl.Name, defaultAppName, defaultNamespace, defaultCluster)
+	if declaresStatus.Match(src) {
+		switch tmpl.Type {
+		case "component":
+			b.WriteString("# The live state its status reads, merged over what renders.\nobserved:\n  output:\n    status: {}\n")
+		case "trait":
+			b.WriteString("# The live state of its outputs its status reads, by name, merged over what renders.\nobserved:\n  outputs: {}\n")
+		}
+	}
 	if tmpl.Type == "trait" {
 		w, err := yaml.Marshal(sampleWorkload(tmpl.Name))
 		if err != nil {
