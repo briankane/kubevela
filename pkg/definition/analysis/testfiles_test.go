@@ -191,3 +191,21 @@ func TestCompleteTestAttributes(t *testing.T) {
 	assert.Equal(t, []string{"@pending"}, labels(CompleteTestAttribute("} @pen")))
 	assert.Empty(t, CompleteTestAttribute("x: \"a@b"))
 }
+
+func TestNewTestFile(t *testing.T) {
+	ext := testExternals(t)
+	dir := t.TempDir()
+	def := filepath.Join(dir, "scaler.cue")
+	path, snippet, ok := NewTestFile(def, []byte(scalerWithParams), ext)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(dir, "scaler_test.cue"), path)
+	assert.Contains(t, snippet, `import "vela/test"`)
+	assert.Contains(t, snippet, `test.#TraitRender & {`)
+	assert.Contains(t, snippet, `definition: "scaler"`)
+	assert.Contains(t, snippet, "${", "it is a snippet to fill in")
+
+	_, _, ok = NewTestFile(def, []byte("x: 1\n"), ext)
+	assert.False(t, ok, "not a definition")
+	_, _, ok = NewTestFile(filepath.Join(dir, "scaler_test.cue"), []byte(scalerWithParams), ext)
+	assert.False(t, ok, "a test file has no test file")
+}

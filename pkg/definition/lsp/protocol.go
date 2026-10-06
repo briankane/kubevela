@@ -351,3 +351,19 @@ type HoverParams struct {
 type Hover struct {
 	Contents MarkupContent `json:"contents"`
 }
+
+// MethodNewTest scaffolds the test file of a definition. It is this
+// server's own request.
+const MethodNewTest = "vela/newTest"
+
+// NewTestParams names the definition, with its text when it is open.
+type NewTestParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text,omitempty"`
+}
+
+// NewTestResult is where the test file goes and its text, as a snippet.
+type NewTestResult struct {
+	Path    string `json:"path"`
+	Snippet string `json:"snippet"`
+}

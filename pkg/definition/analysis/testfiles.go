@@ -190,3 +190,29 @@ func depth(text string) int {
 	}
 	return n
 }
+
+// NewTestFile is the test file to create for the definition at path: its
+// path beside it, and its text as a snippet, a case calling the
+// definition's render test function with its fields to fill in. It is false
+// for a file that is not a definition, or is a test file.
+func NewTestFile(path string, src []byte, ext *Externals) (string, string, bool) {
+	if strings.HasSuffix(path, "_test.cue") || isTestDoc(string(src)) {
+		return "", "", false
+	}
+	_, defType, ok := DefinitionHeader(path, src)
+	if !ok || len(testsFor[defType]) == 0 {
+		return "", "", false
+	}
+	pkg, ok := ext.documented(testPackagePath)
+	if !ok {
+		return "", "", false
+	}
+	fn := testsFor[defType][0]
+	name := strings.TrimSuffix(filepath.Base(path), ".cue")
+	var b strings.Builder
+	fmt.Fprintf(&b, "import \"%s\"\n\n", testPackagePath)
+	fmt.Fprintf(&b, "\"${1:renders with its defaults}\": test.%s & {\n", fn)
+	b.WriteString(caseBody(pkg.LookupPath(cue.MakePath(cue.Def(fn))), name, 2))
+	b.WriteString("}\n")
+	return filepath.Join(filepath.Dir(path), name+"_test.cue"), b.String(), true
+}

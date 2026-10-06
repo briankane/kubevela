@@ -146,3 +146,18 @@ func TestTestFileErrorsAtTheField(t *testing.T) {
 	assert.Equal(t, uint32(5), got[0].Range.Start.Line, got[0].Message)
 	assert.Contains(t, got[0].Message, "scaler takes no parameter replicaz")
 }
+
+func TestNewTestRequest(t *testing.T) {
+	dir := t.TempDir()
+	def := filepath.Join(dir, "scaler.cue")
+	require.NoError(t, os.WriteFile(def, []byte("\"scaler\": {\n\ttype: \"trait\"\n}\ntemplate: patch: spec: replicas: 1\n"), 0o600))
+	c := newClient(t)
+	m := c.response(c.send(MethodNewTest, NewTestParams{TextDocument: TextDocumentIdentifier{URI: "file://" + def}}, true))
+	var r NewTestResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	assert.Equal(t, filepath.Join(dir, "scaler_test.cue"), r.Path)
+	assert.Contains(t, r.Snippet, "test.#TraitRender")
+
+	m = c.response(c.send(MethodNewTest, NewTestParams{TextDocument: TextDocumentIdentifier{URI: "file://" + def}, Text: "x: 1\n"}, true))
+	assert.Contains(t, string(m["error"]), "not a definition")
+}

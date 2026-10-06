@@ -26,6 +26,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -192,6 +193,22 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
 		}
+	case MethodNewTest:
+		var p NewTestParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			path := pathOf(p.TextDocument.URI)
+			src := []byte(p.Text)
+			if len(src) == 0 {
+				//nolint:gosec // reading the definition the client names is the point
+				src, _ = os.ReadFile(path)
+			}
+			file, snippet, ok := analysis.NewTestFile(path, src, testExternals())
+			if !ok {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: "not a definition KubeVela's tests can run: a component, trait, policy, workflow step or source"}
+			} else {
+				result = NewTestResult{Path: file, Snippet: snippet}
+			}
+		}
 	case MethodTestCases:
 		var p TestCasesParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -274,7 +291,7 @@ func (s *Server) handle(msg message) error {
 			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
