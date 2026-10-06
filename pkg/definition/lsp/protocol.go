@@ -537,3 +537,12 @@ type ClusterDefinitionResult struct {
 	Namespace string `json:"namespace"`
 	Context   string `json:"context"`
 }
+
+// MethodDefinitionFiles lists the files of the workspace's definitions. It
+// is this server's own request.
+const MethodDefinitionFiles = "vela/definitionFiles"
+
+// DefinitionFilesResult is the files, in order.
+type DefinitionFilesResult struct {
+	Files []string `json:"files"`
+}

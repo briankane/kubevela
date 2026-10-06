@@ -258,3 +258,21 @@ func TestClusterPackages(t *testing.T) {
 	_, _, d = openWith(t, clusterWith(t, clusterHello), "off", dir, "greeter.cue", uses("ext/hello", "hello.#Shout"))
 	assert.Contains(t, unresolved(d), "Shout", "the cluster's version is hidden by the workspace's")
 }
+
+func TestDefinitionFiles(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "web.cue"), []byte(parentSrc), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "web_test.cue"), []byte("import \"vela/test\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "values.cue"), []byte("x: 1\n"), 0o600))
+	c := newClient(t)
+	c.drain()
+	c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	var files []string
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end) && len(files) == 0; time.Sleep(50 * time.Millisecond) {
+		var r DefinitionFilesResult
+		require.NoError(t, json.Unmarshal(c.response(c.send(MethodDefinitionFiles, struct{}{}, true))["result"], &r))
+		files = r.Files
+	}
+	assert.Equal(t, []string{filepath.Join(dir, "web.cue")}, files, "definitions only")
+}

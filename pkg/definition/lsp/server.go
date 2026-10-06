@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -186,6 +187,13 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 // velaRequest answers the server's own vela/* requests that reply at once.
 func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseError) {
 	switch msg.Method {
+	case MethodDefinitionFiles:
+		files := make([]string, 0, len(s.definitions))
+		for path := range s.definitions {
+			files = append(files, path)
+		}
+		sort.Strings(files)
+		result = DefinitionFilesResult{Files: files}
 	case MethodReconnectCluster:
 		s.reconnectCluster()
 		result = struct{}{}
@@ -359,7 +367,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
