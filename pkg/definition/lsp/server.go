@@ -61,6 +61,8 @@ type Server struct {
 	definitions map[string]definitionEntry
 	packages    map[string][]cuexruntime.Package
 	externals   *analysis.Externals
+	// clusterPackages are the cluster's Package resources.
+	clusterPackages []cuexruntime.Package
 	// crds are the CustomResourceDefinitions each workspace file holds.
 	crds map[string][][]byte
 

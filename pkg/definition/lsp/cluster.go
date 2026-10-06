@@ -17,9 +17,16 @@ limitations under the License.
 package lsp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/kubevela/pkg/apis/cue/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/rest"
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/clientcmd"
@@ -27,10 +34,21 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
-// ClusterConnector reaches the cluster the kubeconfig names: whether it runs
-// KubeVela, its current context's name, and how to fetch the OpenAPI v3
-// document of one of its group-versions.
-type ClusterConnector func() (fetch kubeschema.Fetch, hasKubeVela bool, context string, err error)
+// Cluster is what the editor reads of the kubeconfig's cluster.
+type Cluster struct {
+	// Fetch fetches the OpenAPI v3 document of one of its group-versions.
+	Fetch kubeschema.Fetch
+	// KubeVela is set when it runs KubeVela.
+	KubeVela bool
+	// Context is the kubeconfig context reached.
+	Context string
+	// Packages are its Package resources, in every namespace, as the
+	// controller loads them.
+	Packages []v1alpha1.Package
+}
+
+// ClusterConnector reaches the cluster the kubeconfig names.
+type ClusterConnector func() (Cluster, error)
 
 // clusterTimeout bounds each call to the cluster, so an unreachable one
 // cannot hold an editor up.
@@ -41,37 +59,42 @@ const kubeVelaGroup = "core.oam.dev"
 
 // connectKubeconfig is the ClusterConnector for the kubeconfig's current
 // context, as kubectl reads it.
-func connectKubeconfig() (kubeschema.Fetch, bool, string, error) {
+func connectKubeconfig() (Cluster, error) {
 	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(clientcmd.NewDefaultClientConfigLoadingRules(), &clientcmd.ConfigOverrides{})
 	raw, err := cc.RawConfig()
 	if err != nil {
-		return nil, false, "", err
+		return Cluster{}, err
 	}
+	out := Cluster{Context: raw.CurrentContext}
 	cfg, err := cc.ClientConfig()
 	if err != nil {
-		return nil, false, raw.CurrentContext, err
+		return out, err
 	}
 	cfg.Timeout = clusterTimeout
 	dc, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
-		return nil, false, raw.CurrentContext, err
+		return out, err
 	}
 	groups, err := dc.ServerGroups()
 	if err != nil {
-		return nil, false, raw.CurrentContext, err
+		return out, err
 	}
-	vela := false
+	packages := false
 	for _, g := range groups.Groups {
-		vela = vela || g.Name == kubeVelaGroup
+		out.KubeVela = out.KubeVela || g.Name == kubeVelaGroup
+		packages = packages || g.Name == v1alpha1.GroupVersion.Group
 	}
-	if !vela {
-		return nil, false, raw.CurrentContext, nil
+	if packages {
+		out.Packages = listPackages(cfg)
+	}
+	if !out.KubeVela {
+		return out, nil
 	}
 	paths, err := dc.OpenAPIV3().Paths()
 	if err != nil {
-		return nil, true, raw.CurrentContext, err
+		return out, err
 	}
-	return func(gv string) ([]byte, error) {
+	out.Fetch = func(gv string) ([]byte, error) {
 		key := "api/" + gv
 		if strings.Contains(gv, "/") {
 			key = "apis/" + gv
@@ -81,5 +104,29 @@ func connectKubeconfig() (kubeschema.Fetch, bool, string, error) {
 			return nil, fmt.Errorf("the cluster serves no %s", gv)
 		}
 		return p.Schema("application/json")
-	}, true, raw.CurrentContext, nil
+	}
+	return out, nil
+}
+
+// listPackages are the cluster's Package resources, in every namespace; a
+// resource that does not decode is passed over, as the controller passes it.
+func listPackages(cfg *rest.Config) []v1alpha1.Package {
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), clusterTimeout)
+	defer cancel()
+	list, err := client.Resource(v1alpha1.PackageGroupVersionResource).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil
+	}
+	var out []v1alpha1.Package
+	for _, item := range list.Items {
+		var p v1alpha1.Package
+		if runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }

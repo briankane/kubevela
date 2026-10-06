@@ -18,8 +18,10 @@ package lsp
 
 import (
 	"encoding/json"
+	"github.com/kubevela/pkg/apis/cue/v1alpha1"
 	"os"
 	"path/filepath"
+	"sigs.k8s.io/yaml"
 	"strings"
 	"testing"
 	"time"
@@ -220,4 +222,39 @@ func TestYAMLCompletion(t *testing.T) {
 		labels = append(labels, it.Label)
 	}
 	assert.ElementsMatch(t, []string{"grpc", "http", "https"}, labels)
+}
+
+// clusterWith is a cluster with KubeVela holding the Package resources in
+// yamlDocs.
+func clusterWith(t *testing.T, yamlDocs string) ClusterConnector {
+	t.Helper()
+	var pkgs []v1alpha1.Package
+	for _, doc := range strings.Split(yamlDocs, "---\n") {
+		var p v1alpha1.Package
+		require.NoError(t, yaml.Unmarshal([]byte(doc), &p))
+		pkgs = append(pkgs, p)
+	}
+	return func() (Cluster, error) { return Cluster{KubeVela: true, Packages: pkgs}, nil }
+}
+
+func TestClusterPackages(t *testing.T) {
+	clusterOnly := strings.NewReplacer("name: hello", "name: farewell", "ext/hello", "ext/farewell", "package hello", "package farewell", "#Say", "#Bye", `"hello"`, `"farewell"`).Replace(helloPackageYAML)
+	clusterHello := strings.Replace(helloPackageYAML, "#Say", "#Shout", 1)
+	uses := func(imp, member string) string {
+		return strings.NewReplacer("ext/hello", imp, "hello.#Say", member).Replace(usesHelloSrc)
+	}
+	unresolved := func(d []Diagnostic) string { return messages(errorsOf(d)) }
+
+	// A package only the cluster has resolves.
+	c, u, d := openWith(t, clusterWith(t, clusterOnly), "off", "", "greeter.cue", uses("ext/farewell", "farewell.#Bye"), func(d []Diagnostic) bool { return unresolved(d) == "" })
+	_ = c
+	assert.Empty(t, unresolved(d), u)
+
+	// The workspace's package of a path takes precedence over the cluster's.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "hello-package.yaml"), []byte(helloPackageYAML), 0o600))
+	_, _, d = openWith(t, clusterWith(t, clusterHello), "off", dir, "greeter.cue", uses("ext/hello", "hello.#Say"), func(d []Diagnostic) bool { return unresolved(d) == "" })
+	assert.Empty(t, unresolved(d), "the workspace's #Say, not the cluster's #Shout")
+	_, _, d = openWith(t, clusterWith(t, clusterHello), "off", dir, "greeter.cue", uses("ext/hello", "hello.#Shout"))
+	assert.Contains(t, unresolved(d), "Shout", "the cluster's version is hidden by the workspace's")
 }

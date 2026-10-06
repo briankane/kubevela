@@ -166,14 +166,31 @@ func (s *Server) record(path string, entry indexed) {
 	if hadCRDs || len(entry.crds) > 0 {
 		s.rebuildKinds()
 	}
+	s.rebuildExternals()
+}
+
+// rebuildExternals gathers the custom provider packages checks may import:
+// the workspace's, then the cluster's of an import path the workspace does
+// not define, so a package being written takes precedence over the one
+// applied.
+func (s *Server) rebuildExternals() {
 	var all []cuexruntime.Package
-	paths := make([]string, 0, len(s.packages))
+	files := make([]string, 0, len(s.packages))
 	for p := range s.packages {
-		paths = append(paths, p)
+		files = append(files, p)
 	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		all = append(all, s.packages[p]...)
+	sort.Strings(files)
+	local := map[string]bool{}
+	for _, f := range files {
+		for _, p := range s.packages[f] {
+			local[p.GetPath()] = true
+			all = append(all, p)
+		}
+	}
+	for _, p := range s.clusterPackages {
+		if !local[p.GetPath()] {
+			all = append(all, p)
+		}
 	}
 	s.externals = analysis.NewExternals(all)
 }
@@ -315,21 +332,34 @@ type clusterState struct {
 	context string
 }
 
-// connectCluster reaches the kubeconfig's cluster once, on a goroutine, when
-// outputs may be checked, and hands what it found to the message loop.
+// connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
+// hands what it found to the message loop: the kinds it serves, for checking
+// outputs, and its Package resources.
 func (s *Server) connectCluster() {
-	if s.validateOutputs == validateOff || s.cluster != nil || s.connect == nil {
+	if s.cluster != nil || s.connect == nil {
 		return
 	}
 	s.cluster = &clusterState{}
 	connect := s.connect
 	go func() {
-		fetch, vela, context, err := connect()
+		c, err := connect()
+		var pkgs []cuexruntime.Package
+		for i := range c.Packages {
+			if p, err := cuexruntime.NewExternalPackage(&c.Packages[i]); err == nil {
+				pkgs = append(pkgs, p)
+			}
+		}
 		s.post(func() {
-			s.cluster = &clusterState{fetch: fetch, vela: vela && err == nil, context: context}
+			s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context}
+			s.clusterPackages = pkgs
+			if len(pkgs) > 0 {
+				s.rebuildExternals()
+			}
 			// Without KubeVela, the cluster adds no kinds to those already built.
 			if s.cluster.vela {
 				s.rebuildKinds()
+			}
+			if s.cluster.vela || len(pkgs) > 0 {
 				s.republish()
 			}
 		})

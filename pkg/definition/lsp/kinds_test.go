@@ -27,8 +27,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
 const deploymentTypo = `"web": {
@@ -72,18 +70,18 @@ spec:
 `
 
 // noCluster is a kube context that reaches nothing.
-func noCluster() (kubeschema.Fetch, bool, string, error) {
-	return nil, false, "", errors.New("no cluster")
+func noCluster() (Cluster, error) {
+	return Cluster{}, errors.New("no cluster")
 }
 
 // velaCluster is a cluster with KubeVela that serves the Gadget kind.
-func velaCluster() (kubeschema.Fetch, bool, string, error) {
-	return func(gv string) ([]byte, error) {
+func velaCluster() (Cluster, error) {
+	return Cluster{KubeVela: true, Context: "k3d-test", Fetch: func(gv string) ([]byte, error) {
 		if gv == "example.com/v1alpha1" {
 			return []byte(`{"components":{"schemas":{"com.example.v1alpha1.Gadget":{"type":"object","properties":{"apiVersion":{"type":"string"},"kind":{"type":"string"},"spec":{"type":"object","properties":{"color":{"type":"string"}}}},"x-kubernetes-group-version-kind":[{"group":"example.com","version":"v1alpha1","kind":"Gadget"}]}}}}`), nil
 		}
 		return nil, errors.New("not served")
-	}, true, "k3d-test", nil
+	}}, nil
 }
 
 // openWith opens a document on a server reaching cluster, with the setting
