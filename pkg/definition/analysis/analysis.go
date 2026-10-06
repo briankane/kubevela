@@ -131,6 +131,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	// Markers are read before the template is compiled, which rewrites it.
 	diags := d.checkMarkers()
 	diags = append(diags, d.checkHeader()...)
+	diags = append(diags, d.checkTemplateFields()...)
 	diags = append(diags, d.explainContext(d.checkTemplate())...)
 	res.Diagnostics = sortDiagnostics(firstPerPosition(diags))
 	return res
@@ -183,6 +184,7 @@ func (d *document) compileFile() *ast.File {
 	if _, ok := fieldIn(d.template, parameterLabel); ok {
 		decls = append(decls, closedParameterField())
 	}
+	decls = append(decls, d.templateConstraint()...)
 	return &ast.File{Filename: d.path, Decls: decls}
 }
 

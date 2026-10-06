@@ -163,9 +163,19 @@ func (d *document) unknownKeys(f *ast.Field, schema cue.Value, path []string) []
 			diags = append(diags, d.at(child.Label.Pos(), at+": field not allowed"))
 			continue
 		}
-		diags = append(diags, d.unknownKeys(child, schema.LookupPath(cue.MakePath(sel)), append(path, name))...)
+		diags = append(diags, d.unknownKeys(child, schemaChild(schema, sel), append(path, name))...)
 	}
 	return diags
+}
+
+// schemaChild is the schema of a field: declared, optional, or by pattern.
+func schemaChild(schema cue.Value, sel cue.Selector) cue.Value {
+	for _, path := range []cue.Path{cue.MakePath(sel), cue.MakePath(sel.Optional()), cue.MakePath(cue.AnyString)} {
+		if v := schema.LookupPath(path); v.Exists() {
+			return v
+		}
+	}
+	return cue.Value{}
 }
 
 // writtenAncestor is the position of the deepest field on path that the

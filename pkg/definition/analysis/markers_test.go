@@ -24,13 +24,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// stepHeader is a header as long as componentHeader for a type whose template
+// needs no particular field, so a case is about its markers alone.
+const stepHeader = `"my-step": {
+	type:        "workflow-step"
+	description: "A step"
+}
+`
+
 func TestMarkers(t *testing.T) {
 	cases := map[string]struct {
 		src  string
 		want []want
 	}{
 		"parameter markers in place": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	output: spec: replicas: parameter.replicas
 	parameter: {
 		// +usage=How many replicas to run
@@ -54,7 +62,7 @@ func TestMarkers(t *testing.T) {
 `,
 		},
 		"misspelt parameter marker": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	parameter: {
 		// +usge=How many replicas to run
 		replicas: *1 | int
@@ -64,7 +72,7 @@ func TestMarkers(t *testing.T) {
 			want: []want{{7, `unknown marker +usge: did you mean +usage?`}},
 		},
 		"misspelt ui key": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	parameter: {
 		// +ui:colspan=6
 		replicas: *1 | int
@@ -74,7 +82,7 @@ func TestMarkers(t *testing.T) {
 			want: []want{{7, `unknown marker +ui:colspan: did you mean +ui:colSpan?`}},
 		},
 		"bad ui values": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	parameter: {
 		// +ui:colSpan=wide
 		// +ui:optionsFrom=secrets
@@ -94,7 +102,7 @@ func TestMarkers(t *testing.T) {
 			},
 		},
 		"marker missing its value, or given one it does not take": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	parameter: {
 		// +usage
 		// +immutable=true
@@ -182,7 +190,7 @@ template: output: {}
 			want: []want{{7, "unknown marker +patchStratgy: did you mean +patchStrategy?"}},
 		},
 		"words that only look like markers": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	// +kubebuilder:validation:Optional
 	// +optional
 	output: {}
@@ -190,7 +198,7 @@ template: output: {}
 `,
 		},
 		"comments that are not markers": {
-			src: componentHeader + `template: {
+			src: stepHeader + `template: {
 	// a + b is fine
 	// +1 to this idea
 	parameter: {
@@ -221,7 +229,7 @@ template: output: {}
 
 // A marker's range is the marker itself, not the whole comment.
 func TestMarkerRange(t *testing.T) {
-	src := componentHeader + "template: parameter: {\n\t// +usge=x\n\ta: string\n}\n"
+	src := stepHeader + "template: parameter: {\n\t// +usge=x\n\ta: string\n}\n"
 	res := Analyze("def.cue", []byte(src))
 	require.Len(t, res.Diagnostics, 1)
 	assert.Equal(t, Range{Start: Position{Line: 6, Column: 5}, End: Position{Line: 6, Column: 10}}, res.Diagnostics[0].Range)
