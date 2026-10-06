@@ -131,8 +131,10 @@ type CompletionItemKind int
 
 // Kinds of completion.
 const (
-	CompletionItemKindField   CompletionItemKind = 5
-	CompletionItemKindKeyword CompletionItemKind = 14
+	CompletionItemKindFunction CompletionItemKind = 3
+	CompletionItemKindField    CompletionItemKind = 5
+	CompletionItemKindModule   CompletionItemKind = 9
+	CompletionItemKindKeyword  CompletionItemKind = 14
 )
 
 // MarkupContent is documentation, as Markdown.

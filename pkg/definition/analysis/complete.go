@@ -82,7 +82,8 @@ func CompleteMarker(before string) []Completion {
 
 var (
 	contextTyped = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.$#])context((?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z0-9_]*)$`)
-	headerType   = regexp.MustCompile(`(?m)^\s+type:\s*"([^"]+)"`)
+	// headerType reads a definition's type from text that may not parse.
+	headerType = regexp.MustCompile(`\btype:\s*"(component|trait|policy|workflow-step|source|workload)"`)
 )
 
 // CompleteContext completes a read of context, given the whole document,
@@ -147,4 +148,119 @@ func typeOf(v cue.Value) string {
 		return ""
 	}
 	return string(b)
+}
+
+var (
+	memberTyped = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.$#])([A-Za-z_][A-Za-z0-9_]*)\.(#?[A-Za-z0-9_]*)$`)
+	importSpec  = regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([A-Za-z_][A-Za-z0-9_]*)\s+)?"(vela/[^"]+)"`)
+	importTyped = regexp.MustCompile(`^\s*(?:import\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s+)?"([A-Za-z0-9/]*)$`)
+)
+
+// CompletePackageMember completes a member of an imported vela/* package,
+// given the whole document and its line up to the cursor: the package's
+// definitions after `kube.`, each with what its $params take.
+func CompletePackageMember(doc, before string) []Completion {
+	m := memberTyped.FindStringSubmatch(before)
+	if m == nil {
+		return nil
+	}
+	name, typed := m[1], m[2]
+	var path string
+	for _, spec := range importSpec.FindAllStringSubmatch(doc, -1) {
+		alias := spec[1]
+		if alias == "" {
+			alias = spec[2][strings.LastIndex(spec[2], "/")+1:]
+		}
+		if alias == name {
+			path = spec[2]
+		}
+	}
+	t := headerType.FindStringSubmatch(doc)
+	if path == "" || t == nil {
+		return nil
+	}
+	pkg, ok := packagesFor(t[1]).value(path)
+	if !ok {
+		return nil
+	}
+	it, err := pkg.Fields(cue.Definitions(true))
+	if err != nil {
+		return nil
+	}
+	var out []Completion
+	for it.Next() {
+		label := it.Selector().String()
+		if !strings.HasPrefix(label, "#") || !strings.HasPrefix(label, typed) {
+			continue
+		}
+		member := it.Value()
+		if documented, ok := packagesFor(t[1]).documented(path); ok {
+			if d := documented.LookupPath(cue.MakePath(cue.Def(label))); d.Exists() {
+				member = d
+			}
+		}
+		detail, doc := describeMember(member)
+		out = append(out, Completion{Label: label, Insert: label, Replace: len(typed), Detail: detail, Doc: doc})
+	}
+	return out
+}
+
+// describeMember summarises a provider function: the $params it takes, and
+// each one's +usage.
+func describeMember(v cue.Value) (detail, doc string) {
+	params := v.LookupPath(cue.MakePath(cue.Str("$params")))
+	it, err := params.Fields(cue.Optional(true))
+	if err != nil {
+		return "", ""
+	}
+	var names, lines []string
+	for it.Next() {
+		name := it.Selector().Unquoted()
+		if it.IsOptional() {
+			name += "?"
+		}
+		names = append(names, name)
+		line := "- `" + name + "`"
+		if usage := usageOf(it.Value()); usage != "" {
+			line += ": " + usage
+		}
+		lines = append(lines, line)
+	}
+	if returns := usageOf(v.LookupPath(cue.MakePath(cue.Str("$returns")))); returns != "" {
+		lines = append(lines, "", "Returns: "+returns)
+	}
+	return "$params: " + strings.Join(names, ", "), strings.Join(lines, "\n")
+}
+
+// CompleteImport completes the path of an import, given the whole document
+// and its text up to the cursor: the vela/* packages the definition type can
+// import, on an import line or inside an import block.
+func CompleteImport(doc, before string) []Completion {
+	lines := strings.Split(before, "\n")
+	last := lines[len(lines)-1]
+	m := importTyped.FindStringSubmatch(last)
+	if m == nil {
+		return nil
+	}
+	if !strings.Contains(last, "import") {
+		rest := strings.Join(lines[:len(lines)-1], "\n")
+		open := strings.LastIndex(rest, "import (")
+		if open < 0 || strings.Contains(rest[open:], ")") {
+			return nil
+		}
+	}
+	t := headerType.FindStringSubmatch(doc)
+	if t == nil {
+		return nil
+	}
+	typed := m[1]
+	var out []Completion
+	for _, p := range packagesFor(t[1]).Packages() {
+		path := p.GetPath()
+		if strings.HasPrefix(path, typed) {
+			out = append(out, Completion{Label: path, Insert: path, Replace: len(typed), Doc: "The " + p.GetName() + " package of KubeVela's CUE providers."})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
 }

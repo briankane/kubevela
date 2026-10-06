@@ -79,3 +79,20 @@ func itemLabels(l CompletionList) []string {
 	}
 	return out
 }
+
+func TestCompletesFunctionsAndImports(t *testing.T) {
+	c := newClient(t)
+	text := "import (\n\t\"vela/kube\"\n\t\"vela/\n)\n\"x\": {type: \"component\"}\ntemplate: {\n\tapply: kube.#Ap\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+
+	fns := complete(t, c, 6, 15)
+	require.Len(t, fns.Items, 1)
+	assert.Equal(t, "#Apply", fns.Items[0].Label)
+	assert.Equal(t, CompletionItemKindFunction, fns.Items[0].Kind)
+	assert.Contains(t, fns.Items[0].Documentation.Value, "The resource to apply")
+
+	imports := complete(t, c, 2, 7)
+	assert.Contains(t, itemLabels(imports), "vela/http")
+	assert.NotContains(t, itemLabels(imports), "vela/op")
+}

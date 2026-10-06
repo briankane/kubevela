@@ -125,7 +125,7 @@ func (s *Server) handle(msg message) error {
 					OpenClose: true,
 					Change:    TextDocumentSyncFull,
 				},
-				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", "."}},
+				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
 			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
 		}

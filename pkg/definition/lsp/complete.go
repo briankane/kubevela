@@ -31,7 +31,12 @@ func completions(text string, pos Position) CompletionList {
 		return list
 	}
 	before := prefixUTF16(lines[pos.Line], pos.Character)
-	candidates := append(analysis.CompleteMarker(before), analysis.CompleteContext(text, before)...)
+	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
+	var candidates []analysis.Completion
+	candidates = append(candidates, analysis.CompleteMarker(before)...)
+	candidates = append(candidates, analysis.CompleteContext(text, before)...)
+	candidates = append(candidates, analysis.CompletePackageMember(text, before)...)
+	candidates = append(candidates, analysis.CompleteImport(text, upToCursor)...)
 	for _, c := range candidates {
 		replaced := before[len(before)-c.Replace:]
 		start := pos
@@ -69,9 +74,15 @@ func utf16Len(s string) uint32 {
 }
 
 // kindOf is how the editor shows a candidate: a marker or its value as a
-// keyword, a context field as a field.
+// keyword, a package function as a function, an import as a module, a
+// context field as a field.
 func kindOf(c analysis.Completion) CompletionItemKind {
-	if strings.HasPrefix(c.Label, "+") || c.Detail == "" {
+	switch {
+	case strings.HasPrefix(c.Label, "#"):
+		return CompletionItemKindFunction
+	case strings.HasPrefix(c.Label, "vela/"):
+		return CompletionItemKindModule
+	case strings.HasPrefix(c.Label, "+") || c.Detail == "":
 		return CompletionItemKindKeyword
 	}
 	return CompletionItemKindField

@@ -20,8 +20,10 @@ import (
 	"sync"
 
 	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
+	"cuelang.org/go/cue/parser"
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
 
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
@@ -37,6 +39,7 @@ type packageSet struct {
 	pm     *cuexruntime.PackageManager
 	mu     sync.Mutex
 	values map[string]cue.Value
+	docs   map[string]cue.Value
 }
 
 var (
@@ -61,6 +64,7 @@ func (s *packageSet) manager() *cuexruntime.PackageManager {
 		s.pm = cuexruntime.NewPackageManager()
 		s.pm.LoadInternalPackages(s.list()...)
 		s.values = map[string]cue.Value{}
+		s.docs = map[string]cue.Value{}
 	})
 	return s.pm
 }
@@ -88,6 +92,41 @@ func (s *packageSet) value(path string) (cue.Value, bool) {
 			s.values[path] = v
 			return v, true
 		}
+	}
+	return cue.Value{}, false
+}
+
+// documented is the package at an import path compiled from its source with
+// comments kept, for the docs of its members; the value used to check a
+// template has none.
+func (s *packageSet) documented(path string) (cue.Value, bool) {
+	s.manager()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if v, ok := s.docs[path]; ok {
+		return v, true
+	}
+	for _, p := range s.manager().GetPackages() {
+		if p.GetPath() != path {
+			continue
+		}
+		var decls []ast.Decl
+		for _, src := range p.GetTemplates() {
+			f, err := parser.ParseFile(path, src, parser.ParseComments)
+			if err != nil {
+				return cue.Value{}, false
+			}
+			for _, d := range f.Decls {
+				if _, isPkg := d.(*ast.Package); !isPkg {
+					if _, isImport := d.(*ast.ImportDecl); !isImport {
+						decls = append(decls, d)
+					}
+				}
+			}
+		}
+		v := cuecontext.New().BuildFile(&ast.File{Decls: decls})
+		s.docs[path] = v
+		return v, true
 	}
 	return cue.Value{}, false
 }

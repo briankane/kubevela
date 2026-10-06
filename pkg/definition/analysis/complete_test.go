@@ -103,3 +103,49 @@ func TestCompleteContext(t *testing.T) {
 		assert.Empty(t, CompleteContext(component, "parameter."))
 	})
 }
+
+func TestCompletePackageMembers(t *testing.T) {
+	doc := "import (\n\t\"vela/kube\"\n\th \"vela/http\"\n)\n\n\"c\": {\n\ttype: \"component\"\n}\ntemplate: {\n\tapply: kube."
+	t.Run("the members of an imported package", func(t *testing.T) {
+		cs := CompletePackageMember(doc, "\tapply: kube.")
+		assert.Contains(t, labels(cs), "#Apply")
+		assert.Contains(t, labels(cs), "#Get")
+		for _, c := range cs {
+			if c.Label == "#Apply" {
+				assert.Contains(t, c.Detail, "resource")
+				assert.Contains(t, c.Doc, "The resource to apply")
+			}
+		}
+	})
+	t.Run("narrowed by what is typed, under the name it is imported as", func(t *testing.T) {
+		cs := CompletePackageMember(doc, "\treq: h.#Do")
+		assert.Equal(t, []string{"#Do"}, labels(cs))
+		assert.Equal(t, 3, cs[0].Replace)
+	})
+	t.Run("nothing for a name that is not an import", func(t *testing.T) {
+		assert.Empty(t, CompletePackageMember(doc, "\tx: parameter."))
+		assert.Empty(t, CompletePackageMember(doc, "\tx: other."))
+	})
+}
+
+func TestCompleteImports(t *testing.T) {
+	header := "\n\"c\": {\n\ttype: \"component\"\n}\n"
+	t.Run("the packages a component can import", func(t *testing.T) {
+		cs := CompleteImport(header, "import \"vela/")
+		assert.Contains(t, labels(cs), "vela/kube")
+		assert.Contains(t, labels(cs), "vela/http")
+		assert.NotContains(t, labels(cs), "vela/op", "workflow steps only")
+		assert.Equal(t, len("vela/"), cs[0].Replace)
+	})
+	t.Run("a workflow step's", func(t *testing.T) {
+		step := "\n\"s\": {\n\ttype: \"workflow-step\"\n}\n"
+		assert.Contains(t, labels(CompleteImport(step, "import \"vela/o")), "vela/op")
+	})
+	t.Run("inside an import block", func(t *testing.T) {
+		cs := CompleteImport(header, "import (\n\t\"vela/kube\"\n\t\"vela/ht")
+		assert.Equal(t, []string{"vela/http"}, labels(cs))
+	})
+	t.Run("not in a string outside imports", func(t *testing.T) {
+		assert.Empty(t, CompleteImport(header, "import (\n\t\"vela/kube\"\n)\ntemplate: x: \"vela/"))
+	})
+}
