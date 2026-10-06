@@ -118,6 +118,8 @@ type ServerCapabilities struct {
 	DefinitionProvider bool                    `json:"definitionProvider,omitempty"`
 	ReferencesProvider bool                    `json:"referencesProvider,omitempty"`
 	RenameProvider     bool                    `json:"renameProvider,omitempty"`
+	// DocumentSymbolProvider offers a document's outline.
+	DocumentSymbolProvider bool `json:"documentSymbolProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -472,4 +474,19 @@ type RenameParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Position     Position               `json:"position"`
 	NewName      string                 `json:"newName"`
+}
+
+// DocumentSymbol is an entry of a document's outline.
+type DocumentSymbol struct {
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail,omitempty"`
+	Kind           int              `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []DocumentSymbol `json:"children,omitempty"`
+}
+
+// DocumentSymbolParams name a document.
+type DocumentSymbolParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }

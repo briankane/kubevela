@@ -104,3 +104,16 @@ func TestRenameAParameter(t *testing.T) {
 	m = c.response(c.send("textDocument/rename", RenameParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: posOf(text, "name: string", 1), NewName: "app name"}, true))
 	assert.Contains(t, string(m["error"]), "not a name")
 }
+
+func TestOutlineRequest(t *testing.T) {
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: parentSrc}}, false)
+	c.diagnostics()
+	m := c.response(c.send("textDocument/documentSymbol", DocumentSymbolParams{TextDocument: TextDocumentIdentifier{URI: uri}}, true))
+	var syms []DocumentSymbol
+	require.NoError(t, json.Unmarshal(m["result"], &syms))
+	require.Len(t, syms, 2)
+	assert.Equal(t, "web", syms[0].Name)
+	assert.Equal(t, 5, syms[0].Kind)
+	assert.Equal(t, "template", syms[1].Name)
+}

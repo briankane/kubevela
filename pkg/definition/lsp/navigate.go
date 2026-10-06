@@ -29,6 +29,14 @@ import (
 // code actions.
 func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 	switch msg.Method {
+	case "textDocument/documentSymbol":
+		var p DocumentSymbolParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		text := s.docs[p.TextDocument.URI]
+		syms, _ := analysis.Outline(pathOf(p.TextDocument.URI), text)
+		return documentSymbols(text, syms), nil
 	case "textDocument/codeAction":
 		var p CodeActionParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
@@ -210,4 +218,29 @@ func (s *Server) textOf(path string) string {
 	//nolint:gosec // reading the workspace's own files is the point
 	data, _ := os.ReadFile(path)
 	return string(data)
+}
+
+// symbolKinds are the protocol's kinds for the outline's.
+var symbolKinds = map[analysis.SymbolKind]int{
+	analysis.SymbolDefinition: 5,  // Class
+	analysis.SymbolSection:    2,  // Module
+	analysis.SymbolParameter:  7,  // Property
+	analysis.SymbolObject:     19, // Object
+	analysis.SymbolHelper:     13, // Variable
+	analysis.SymbolField:      8,  // Field
+}
+
+func documentSymbols(text string, syms []analysis.Symbol) []DocumentSymbol {
+	out := make([]DocumentSymbol, 0, len(syms))
+	for _, sym := range syms {
+		out = append(out, DocumentSymbol{
+			Name:           sym.Name,
+			Detail:         sym.Detail,
+			Kind:           symbolKinds[sym.Kind],
+			Range:          protocolRange(text, sym.Range),
+			SelectionRange: protocolRange(text, sym.Selection),
+			Children:       documentSymbols(text, sym.Children),
+		})
+	}
+	return out
 }
