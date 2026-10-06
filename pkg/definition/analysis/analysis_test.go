@@ -178,6 +178,63 @@ func TestAnalyzeDiagnostics(t *testing.T) {
 `,
 			want: []want{{6, "nmae"}, {7, "parameter has no field imagee"}},
 		},
+		"field declared and read inside an undecided if": {
+			src: componentHeader + `template: {
+	output: spec: {
+		if parameter.outer != _|_ {
+			tmps: [1, 2]
+			items: [for x in tmps if parameter.outer {x}]
+		}
+	}
+	parameter: outer?: bool
+}
+`,
+		},
+		"misspelt header key": {
+			src: `"x": {
+	type:       "component"
+	descripton: "typo"
+}
+template: output: {}
+`,
+			want: []want{{3, "descripton"}},
+		},
+		"misspelt attributes key": {
+			src: `"x": {
+	type: "component"
+	attributes: workloadd: definition: {apiVersion: "apps/v1", kind: "Deployment"}
+}
+template: output: {}
+`,
+			want: []want{{3, "workloadd"}},
+		},
+		"attribute of the wrong type": {
+			src: `"x": {
+	type: "trait"
+	attributes: podDisruptive: "yes"
+}
+template: patch: {}
+`,
+			want: []want{{3, "podDisruptive"}},
+		},
+		"trait attribute on a component": {
+			src: `"x": {
+	type: "component"
+	attributes: appliesToWorkloads: ["deployments.apps"]
+}
+template: output: {}
+`,
+			want: []want{{3, "appliesToWorkloads"}},
+		},
+		"workload without a kind": {
+			src: `"x": {
+	type: "component"
+	attributes: workload: definition: apiVersion: "apps/v1"
+}
+template: output: {}
+`,
+			want: []want{{3, "kind"}},
+		},
 		"missing type": {
 			src: `"x": {
 	attributes: {}

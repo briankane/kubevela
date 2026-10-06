@@ -33,6 +33,7 @@ const (
 	policyType       = "policy"
 	workflowStepType = "workflow-step"
 	sourceType       = "source"
+	workloadType     = "workload"
 )
 
 // ContextField is a field the controller sets on context when it renders a

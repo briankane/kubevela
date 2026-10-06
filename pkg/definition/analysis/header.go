@@ -17,11 +17,16 @@ limitations under the License.
 package analysis
 
 import (
+	"embed"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 
+	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
+	cueerrors "cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
 
@@ -79,11 +84,79 @@ func (d *document) checkMetadata() []Diagnostic {
 	if err := v.Err(); err != nil {
 		return d.fromErrors(err, "")
 	}
+	if diags := d.checkHeaderSchema(h); len(diags) > 0 {
+		return diags
+	}
+	// The schema covers the header's shape; FromCUE also checks what it means.
 	def := definition.Definition{}
 	if err := def.FromCUE(&v, templateLabel); err != nil {
 		return []Diagnostic{d.at(h.Label.Pos(), err.Error())}
 	}
 	return nil
+}
+
+//go:embed header.cue header_attributes.cue
+var headerSchemaFS embed.FS
+
+// headerSchema is the declarations of #header and #attributes.
+var headerSchema = sync.OnceValue(func() []ast.Decl {
+	var decls []ast.Decl
+	for _, name := range []string{"header.cue", "header_attributes.cue"} {
+		src, err := headerSchemaFS.ReadFile(name)
+		if err == nil {
+			var f *ast.File
+			if f, err = parser.ParseFile(name, src); err == nil {
+				decls = append(decls, f.Decls...)
+				continue
+			}
+		}
+		panic(fmt.Sprintf("embedded %s: %v", name, err))
+	}
+	return decls
+})
+
+// checkHeaderSchema checks the header against #header, with attributes
+// closed to what the Definition CRD of its type allows, so a misspelt key or a
+// value of the wrong type is reported where it is written.
+func (d *document) checkHeaderSchema(h *ast.Field) []Diagnostic {
+	constraint := mustField(fmt.Sprintf("%s: #header & {attributes?: #attributes[%q]}", strconv.Quote(d.name), d.typ))
+	decls := append([]ast.Decl{h, constraint}, headerSchema()...)
+	v := cuecontext.New().BuildFile(&ast.File{Filename: d.path, Decls: decls})
+	err := v.Err()
+	if err == nil {
+		err = v.LookupPath(cue.MakePath(cue.Str(d.name))).Validate(cue.Concrete(true))
+	}
+	var diags []Diagnostic
+	for _, e := range cueerrors.Errors(err) {
+		found := d.fromErrors(e, d.name)
+		if len(found) == 0 {
+			// A missing required field is positioned in the schema: report it
+			// at the deepest field of its path that the header does write.
+			format, args := e.Msg()
+			msg := strings.Join(trimLabel(e.Path(), d.name), ".") + ": " + fmt.Sprintf(format, args...)
+			found = []Diagnostic{d.at(writtenAncestor(h, e.Path()), msg)}
+		}
+		diags = append(diags, found...)
+	}
+	return diags
+}
+
+// writtenAncestor is the position of the deepest field on path that the
+// header writes, or of the header's name; path starts with that name.
+func writtenAncestor(h *ast.Field, path []string) token.Pos {
+	pos := h.Label.Pos()
+	f := h
+	for _, label := range path[min(1, len(path)):] {
+		if u, err := strconv.Unquote(label); err == nil {
+			label = u
+		}
+		child, ok := fieldIn(f, label)
+		if !ok {
+			break
+		}
+		f, pos = child, child.Label.Pos()
+	}
+	return pos
 }
 
 // statusPos is the status field an EncodeMetadata error is about.
