@@ -706,6 +706,21 @@ var definitionVariants = map[string][]string{
 	v1beta1.PolicyDefinitionKind: {"standard", "application"},
 }
 
+// GetDefinitionDefaultSpecExtending returns the default spec of a Definition
+// of the given kind that extends parent: its template passes the parent its
+// properties through $super, and takes the parent's output.
+func GetDefinitionDefaultSpecExtending(kind, parent string) (map[string]interface{}, error) {
+	if kind != v1beta1.ComponentDefinitionKind && kind != v1beta1.TraitDefinitionKind {
+		return nil, errors.Errorf("a %s cannot extend another definition: only components and traits do", kind)
+	}
+	return map[string]interface{}{
+		"extends": parent,
+		"schematic": map[string]interface{}{"cue": map[string]interface{}{
+			"template": "$super: properties: {}\nparameter: {}\n",
+		}},
+	}, nil
+}
+
 // GetDefinitionDefaultSpecVariant returns the default spec of a Definition of
 // the given kind and variant: a trait that patches its component or adds
 // outputs beside it, a standard policy or one scoped to the Application. The

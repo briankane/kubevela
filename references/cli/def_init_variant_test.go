@@ -80,3 +80,26 @@ func TestDefinitionInitRefusesAVariantTheTypeHasNot(t *testing.T) {
 		assert.Contains(t, err.Error(), "variant")
 	}
 }
+
+// A component that extends another starts with $super and no output of its
+// own, and analyses without an error.
+func TestDefinitionInitExtends(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "tenant-web.cue")
+	cmd := NewDefinitionInitCommand(initArgs())
+	initCommand(cmd)
+	cmd.SetArgs([]string{"tenant-web", "-t", "component", "--extends", "webservice", "-o", out})
+	require.NoError(t, cmd.Execute())
+	src, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(src), `extends: "webservice"`)
+	assert.Contains(t, string(src), "$super:")
+	assert.NotContains(t, string(src), "output:")
+	for _, d := range analysis.Analyze(out, src).Diagnostics {
+		assert.NotEqual(t, analysis.SeverityError, d.Severity, d.Message)
+	}
+
+	cmd = NewDefinitionInitCommand(initArgs())
+	initCommand(cmd)
+	cmd.SetArgs([]string{"x", "-t", "policy", "--extends", "webservice", "-o", filepath.Join(t.TempDir(), "x.cue")})
+	assert.Error(t, cmd.Execute(), "only components and traits extend")
+}

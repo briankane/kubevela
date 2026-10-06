@@ -292,6 +292,9 @@ const FlagLang = "lang"
 // FlagVariant is the flag for the variant of a definition type to scaffold
 const FlagVariant = "variant"
 
+// FlagExtends is the flag naming the definition a new one extends
+const FlagExtends = "extends"
+
 // NewDefinitionInitCommand create the `vela def init` command to help user initialize a definition locally
 func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 	cmd := &cobra.Command{
@@ -336,10 +339,7 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 			if err != nil {
 				return errors.Wrapf(err, "failed to get `%s`", FlagTemplateYAML)
 			}
-			variant, err := cmd.Flags().GetString(FlagVariant)
-			if err != nil {
-				return errors.Wrapf(err, "failed to get `%s`", FlagVariant)
-			}
+
 			output, err := cmd.Flags().GetString(FlagOutput)
 			if err != nil {
 				return errors.Wrapf(err, "failed to get `%s`", FlagOutput)
@@ -420,7 +420,7 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 						pkgdef.AliasKey:       alias,
 					})
 					def.SetLabels(map[string]string{})
-					spec, err := pkgdef.GetDefinitionDefaultSpecVariant(def.GetKind(), variant)
+					spec, err := defaultSpec(cmd, def.GetKind())
 					if err != nil {
 						return err
 					}
@@ -454,12 +454,30 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 	cmd.Flags().StringP(FlagOutput, "o", "", "Specify the output path of the generated definition. If empty, the definition will be printed in the console.")
 	cmd.Flags().BoolP(FlagInteractive, "i", false, "Specify whether use interactive process to help generate definitions.")
 	cmd.Flags().StringP(FlagLang, "l", "cue", "Specify the language of the definition. Valid options: cue, go")
+	cmd.Flags().String(FlagExtends, "", "Specify the definition the new one extends, such as webservice: it passes its properties through $super and takes its parent's output. Components and traits only.")
 	cmd.Flags().String(FlagVariant, "", "Specify the variant of the definition type to scaffold: patch (default) or outputs for a trait, standard (default) or application for a policy.")
 	cmd.Flags().StringP(FlagProvider, "p", "", "Specify which provider the cloud resource definition belongs to. Only `alibaba`, `aws`, `azure`, `gcp`, `baidu`, `tencent`, `elastic`, `ucloud`, `vsphere` are supported.")
 	cmd.Flags().StringP(FlagGit, "", "", "Specify which git repository the configuration(HCL) is stored in. Valid when --provider/-p is set.")
 	cmd.Flags().StringP(FlagLocal, "", "", "Specify the local path of the configuration(HCL) file. Valid when --provider/-p is set.")
 	cmd.Flags().StringP(FlagPath, "", "", "Specify which path the configuration(HCL) is stored in the Git repository. Valid when --git is set.")
 	return cmd
+}
+
+// defaultSpec is the spec `vela def init` scaffolds a definition of kind
+// with: one extending the definition --extends names, or of the --variant.
+func defaultSpec(cmd *cobra.Command, kind string) (map[string]interface{}, error) {
+	variant, err := cmd.Flags().GetString(FlagVariant)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get `%s`", FlagVariant)
+	}
+	extends, err := cmd.Flags().GetString(FlagExtends)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get `%s`", FlagExtends)
+	}
+	if extends != "" {
+		return pkgdef.GetDefinitionDefaultSpecExtending(kind, extends)
+	}
+	return pkgdef.GetDefinitionDefaultSpecVariant(kind, variant)
 }
 
 // generateGoDefinition generates a Go-based definition scaffold
