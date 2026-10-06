@@ -17,6 +17,7 @@ limitations under the License.
 package lsp
 
 import (
+	"bufio"
 	"bytes"
 	"io/fs"
 	"os"
@@ -25,8 +26,10 @@ import (
 	"strings"
 
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 	"github.com/oam-dev/kubevela/pkg/utils"
 )
 
@@ -57,6 +60,7 @@ type indexed struct {
 	// name and defType name the definition the file holds, if any.
 	name, defType string
 	packages      []cuexruntime.Package
+	crds          [][]byte
 }
 
 // indexFile reads what a file contributes to the index, from src, or from
@@ -77,6 +81,9 @@ func indexFile(path string, src []byte) indexed {
 	case strings.HasSuffix(path, ".yaml"), strings.HasSuffix(path, ".yml"):
 		if bytes.Contains(src, []byte("kind: Package")) && bytes.Contains(src, []byte("cue.oam.dev")) {
 			out.packages, _ = analysis.ParsePackages(src)
+		}
+		if bytes.Contains(src, []byte("kind: CustomResourceDefinition")) {
+			out.crds = crdDocuments(src)
 		}
 	case strings.HasSuffix(path, ".cue") && !utils.IsCUETestFile(path):
 		out.name, out.defType, _ = analysis.DefinitionHeader(path, src)
@@ -141,6 +148,15 @@ func (s *Server) record(path string, entry indexed) {
 	} else {
 		delete(s.packages, path)
 	}
+	_, hadCRDs := s.crds[path]
+	if len(entry.crds) > 0 {
+		s.crds[path] = entry.crds
+	} else {
+		delete(s.crds, path)
+	}
+	if hadCRDs || len(entry.crds) > 0 {
+		s.rebuildKinds()
+	}
 	var all []cuexruntime.Package
 	paths := make([]string, 0, len(s.packages))
 	for p := range s.packages {
@@ -169,6 +185,7 @@ func (s *Server) options() analysis.Options {
 		open[uri] = text
 	}
 	return analysis.Options{
+		Kinds:     s.kinds,
 		Externals: s.externals,
 		Definitions: func(name string) (string, []byte, bool) {
 			path, ok := byName[name]
@@ -259,4 +276,81 @@ func publishedIn(path string, src []byte) (analysis.Published, bool) {
 		return analysis.Published{}, false
 	}
 	return analysis.PublishedContext(path, src)
+}
+
+// crdDocuments are the CustomResourceDefinitions in a YAML stream.
+func crdDocuments(src []byte) [][]byte {
+	r := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(src)))
+	var out [][]byte
+	for {
+		doc, err := r.Read()
+		if err != nil {
+			return out
+		}
+		if bytes.Contains(doc, []byte("kind: CustomResourceDefinition")) {
+			out = append(out, doc)
+		}
+	}
+}
+
+const (
+	validateAuto = "auto"
+	validateOn   = "on"
+	validateOff  = "off"
+)
+
+// clusterState is what reaching the kubeconfig's cluster found.
+type clusterState struct {
+	fetch   kubeschema.Fetch
+	vela    bool
+	context string
+}
+
+// connectCluster reaches the kubeconfig's cluster once, on a goroutine, when
+// outputs may be checked, and hands what it found to the message loop.
+func (s *Server) connectCluster() {
+	if s.validateOutputs == validateOff || s.cluster != nil || s.connect == nil {
+		return
+	}
+	s.cluster = &clusterState{}
+	connect := s.connect
+	go func() {
+		fetch, vela, context, err := connect()
+		s.post(func() {
+			s.cluster = &clusterState{fetch: fetch, vela: vela && err == nil, context: context}
+			s.rebuildKinds()
+			s.republish()
+		})
+	}()
+}
+
+// rebuildKinds builds the schemas outputs are checked against: Kubernetes'
+// own kinds, the workspace's CRDs, and, with a KubeVela cluster, the kinds it
+// serves. They are nil when the setting turns checking off, or when it is
+// auto and the kubeconfig reaches no KubeVela cluster.
+func (s *Server) rebuildKinds() {
+	vela := s.cluster != nil && s.cluster.vela
+	if s.validateOutputs == validateOff || (s.validateOutputs != validateOn && !vela) {
+		s.kinds = nil
+		return
+	}
+	kinds, err := kubeschema.Builtin()
+	if err != nil {
+		s.kinds = nil
+		return
+	}
+	paths := make([]string, 0, len(s.crds))
+	for p := range s.crds {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		for _, doc := range s.crds[p] {
+			_ = kinds.AddCRD(doc)
+		}
+	}
+	if vela && s.cluster.fetch != nil {
+		kinds.SetFallback(s.cluster.fetch)
+	}
+	s.kinds = kinds
 }

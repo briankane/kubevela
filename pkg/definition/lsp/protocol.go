@@ -282,8 +282,22 @@ type TestCase struct {
 
 // InitializeParams is what the server reads of initialize.
 type InitializeParams struct {
-	RootURI          string            `json:"rootUri"`
-	WorkspaceFolders []WorkspaceFolder `json:"workspaceFolders"`
+	RootURI               string            `json:"rootUri"`
+	WorkspaceFolders      []WorkspaceFolder `json:"workspaceFolders"`
+	InitializationOptions Settings          `json:"initializationOptions"`
+}
+
+// Settings are the client's kubevela settings the server acts on.
+type Settings struct {
+	// ValidateOutputs is auto, on or off.
+	ValidateOutputs string `json:"validateOutputs"`
+}
+
+// DidChangeConfigurationParams of workspace/didChangeConfiguration.
+type DidChangeConfigurationParams struct {
+	Settings struct {
+		KubeVela Settings `json:"kubevela"`
+	} `json:"settings"`
 }
 
 // WorkspaceFolder is one root of the editor's workspace.

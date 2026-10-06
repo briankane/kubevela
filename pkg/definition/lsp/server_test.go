@@ -59,10 +59,12 @@ type client struct {
 	out  *bufio.Reader
 	next int
 	done chan error
+	// pending carries messages once tryRead has taken over reading.
+	pending chan map[string]json.RawMessage
 }
 
 func newClient(t *testing.T) *client {
-	return newClientWith(t, NewServer())
+	return newClientWith(t, NewServer(WithCluster(noCluster)))
 }
 
 // newClientWith drives s.
@@ -114,6 +116,33 @@ func (c *client) read() map[string]json.RawMessage {
 	case <-time.After(10 * time.Second):
 		c.t.Fatal("timed out waiting for the server")
 		return nil
+	}
+}
+
+// tryRead returns the next message the server sends within wait, if any.
+// A read it gives up on is abandoned, so it ends the client's use.
+func (c *client) tryRead(wait time.Duration) (map[string]json.RawMessage, bool) {
+	if c.pending == nil {
+		c.pending = make(chan map[string]json.RawMessage, 1)
+		go func() {
+			for {
+				body, err := readMessage(c.out)
+				if err != nil {
+					close(c.pending)
+					return
+				}
+				var m map[string]json.RawMessage
+				if json.Unmarshal(body, &m) == nil {
+					c.pending <- m
+				}
+			}
+		}()
+	}
+	select {
+	case m, ok := <-c.pending:
+		return m, ok
+	case <-time.After(wait):
+		return nil, false
 	}
 }
 

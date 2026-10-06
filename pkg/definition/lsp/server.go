@@ -34,6 +34,7 @@ import (
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
+	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	"github.com/oam-dev/kubevela/version"
@@ -58,6 +59,15 @@ type Server struct {
 	definitions map[string]definitionEntry
 	packages    map[string][]cuexruntime.Package
 	externals   *analysis.Externals
+	// crds are the CustomResourceDefinitions each workspace file holds.
+	crds map[string][][]byte
+
+	// validateOutputs is the kubevela.validateOutputs setting: auto, on or
+	// off. kinds are the schemas outputs are checked against, nil when off.
+	validateOutputs string
+	connect         ClusterConnector
+	cluster         *clusterState
+	kinds           *kubeschema.Schemas
 	// events carries work back to the message loop from goroutines.
 	events chan func()
 
@@ -74,6 +84,11 @@ type GoRenderer func(path string) ([]goloader.LoadResult, error)
 // Option configures a Server.
 type Option func(*Server)
 
+// WithCluster replaces how the kubeconfig's cluster is reached.
+func WithCluster(c ClusterConnector) Option {
+	return func(s *Server) { s.connect = c }
+}
+
 // WithGoRenderer replaces the renderer of DefKit files, goloader.LoadFromFile.
 func WithGoRenderer(r GoRenderer) Option {
 	return func(s *Server) { s.renderGo = r }
@@ -82,13 +97,16 @@ func WithGoRenderer(r GoRenderer) Option {
 // NewServer returns a server for one client.
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		renderGo:    goloader.LoadFromFile,
-		renders:     map[string]int{},
-		docs:        map[string]string{},
-		published:   map[string]analysis.Published{},
-		definitions: map[string]definitionEntry{},
-		packages:    map[string][]cuexruntime.Package{},
-		events:      make(chan func(), 16),
+		renderGo:        goloader.LoadFromFile,
+		renders:         map[string]int{},
+		docs:            map[string]string{},
+		published:       map[string]analysis.Published{},
+		crds:            map[string][][]byte{},
+		validateOutputs: validateAuto,
+		connect:         connectKubeconfig,
+		definitions:     map[string]definitionEntry{},
+		packages:        map[string][]cuexruntime.Package{},
+		events:          make(chan func(), 16),
 	}
 	for _, o := range opts {
 		o(s)
@@ -150,6 +168,38 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 }
 
+// velaRequest answers the server's own vela/* requests that reply at once.
+func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseError) {
+	switch msg.Method {
+	case MethodPreviewOutput:
+		var p PreviewOutputParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = preview.Render(context.Background(), preview.Request{Path: pathOf(p.TextDocument.URI), Source: []byte(p.Text), Values: []byte(p.Values)})
+		}
+	case MethodPreviewValues:
+		var p PreviewValuesParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			yaml, err := preview.Skeleton(context.Background(), pathOf(p.TextDocument.URI), []byte(p.Text))
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = PreviewValuesResult{YAML: yaml}
+			}
+		}
+	case MethodDefinitions:
+		var p DefinitionsParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
+		}
+	case MethodTestCases:
+		var p TestCasesParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = testCases(p)
+		}
+	}
+	return result, rerr
+}
+
 // post hands work to the message loop.
 func (s *Server) post(work func()) {
 	s.events <- work
@@ -171,6 +221,9 @@ func (s *Server) handle(msg message) error {
 			_ = json.Unmarshal(msg.Params, &p)
 		}
 		s.folders = workspaceFolders(p)
+		if p.InitializationOptions.ValidateOutputs != "" {
+			s.validateOutputs = p.InitializationOptions.ValidateOutputs
+		}
 		result = InitializeResult{
 			Capabilities: ServerCapabilities{
 				TextDocumentSync: TextDocumentSyncOptions{
@@ -184,6 +237,15 @@ func (s *Server) handle(msg message) error {
 		}
 	case "initialized":
 		s.indexWorkspace()
+		s.connectCluster()
+	case "workspace/didChangeConfiguration":
+		var p DidChangeConfigurationParams
+		if rerr = decode(msg.Params, &p); rerr == nil && p.Settings.KubeVela.ValidateOutputs != "" {
+			s.validateOutputs = p.Settings.KubeVela.ValidateOutputs
+			s.connectCluster()
+			s.rebuildKinds()
+			s.republish()
+		}
 	case "workspace/didChangeWatchedFiles":
 		var p DidChangeWatchedFilesParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -210,31 +272,8 @@ func (s *Server) handle(msg message) error {
 			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
 			return nil
 		}
-	case MethodPreviewOutput:
-		var p PreviewOutputParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = preview.Render(context.Background(), preview.Request{Path: pathOf(p.TextDocument.URI), Source: []byte(p.Text), Values: []byte(p.Values)})
-		}
-	case MethodPreviewValues:
-		var p PreviewValuesParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			yaml, err := preview.Skeleton(context.Background(), pathOf(p.TextDocument.URI), []byte(p.Text))
-			if err != nil {
-				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
-			} else {
-				result = PreviewValuesResult{YAML: yaml}
-			}
-		}
-	case MethodDefinitions:
-		var p DefinitionsParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
-		}
-	case MethodTestCases:
-		var p TestCasesParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = testCases(p)
-		}
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases:
+		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
