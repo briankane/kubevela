@@ -695,36 +695,74 @@ func GetDefinitionFromDefinitionRevision(rev *v1beta1.DefinitionRevision) (*Defi
 
 // GetDefinitionDefaultSpec returns the default spec of Definition with given kind. This may be implemented with cue in the future.
 func GetDefinitionDefaultSpec(kind string) map[string]interface{} {
+	spec, _ := GetDefinitionDefaultSpecVariant(kind, "")
+	return spec
+}
+
+// Variants of a definition type that `vela def init` scaffolds differently.
+// The first of each type's is its default.
+var definitionVariants = map[string][]string{
+	v1beta1.TraitDefinitionKind:  {"patch", "outputs"},
+	v1beta1.PolicyDefinitionKind: {"standard", "application"},
+}
+
+// GetDefinitionDefaultSpecVariant returns the default spec of a Definition of
+// the given kind and variant: a trait that patches its component or adds
+// outputs beside it, a standard policy or one scoped to the Application. The
+// default template is one that can be applied as it is. An empty variant is
+// the kind's default.
+func GetDefinitionDefaultSpecVariant(kind, variant string) (map[string]interface{}, error) {
+	if variants := definitionVariants[kind]; variant != "" {
+		known := false
+		for _, v := range variants {
+			known = known || v == variant
+		}
+		if !known {
+			if len(variants) == 0 {
+				return nil, errors.Errorf("a %s has no variants", kind)
+			}
+			return nil, errors.Errorf("a %s's variant is one of %s, not %q", kind, strings.Join(variants, ", "), variant)
+		}
+	}
+	withTemplate := func(spec map[string]interface{}, template string) map[string]interface{} {
+		spec["schematic"] = map[string]interface{}{"cue": map[string]interface{}{"template": template}}
+		return spec
+	}
 	switch kind {
 	case v1beta1.ComponentDefinitionKind:
-		return map[string]interface{}{
+		return withTemplate(map[string]interface{}{
 			"workload": map[string]interface{}{
 				"definition": map[string]interface{}{
 					"apiVersion": "<change me> apps/v1",
 					"kind":       "<change me> Deployment",
 				},
 			},
-			"schematic": map[string]interface{}{
-				"cue": map[string]interface{}{
-					"template": "output: {}\nparameter: {}\n",
-				},
-			},
-		}
+		}, "output: {\n\tapiVersion: \"apps/v1\"\n\tkind:       \"Deployment\"\n}\nparameter: {}\n"), nil
 	case v1beta1.TraitDefinitionKind:
-		return map[string]interface{}{
+		template := "patch: {}\nparameter: {}\n"
+		if variant == "outputs" {
+			template = "outputs: {}\nparameter: {}\n"
+		}
+		return withTemplate(map[string]interface{}{
 			"appliesToWorkloads": []interface{}{},
 			"conflictsWith":      []interface{}{},
 			"workloadRefPath":    "",
 			"definitionRef":      map[string]interface{}{},
 			"podDisruptive":      false,
-			"schematic": map[string]interface{}{
-				"cue": map[string]interface{}{
-					"template": "patch: {}\nparameter: {}\n",
-				},
-			},
+		}, template), nil
+	case v1beta1.PolicyDefinitionKind:
+		if variant == "application" {
+			return withTemplate(map[string]interface{}{
+				"scope": string(v1beta1.ApplicationScope),
+			}, "output: {\n\tlabels: {}\n}\nparameter: {}\n"), nil
 		}
+		return withTemplate(map[string]interface{}{},
+			"output: {\n\tapiVersion: \"v1\"\n\tkind:       \"ConfigMap\"\n}\nparameter: {}\n"), nil
+	case v1beta1.SourceDefinitionKind:
+		return withTemplate(map[string]interface{}{},
+			"schema: value: string\noutput: value: parameter.value\nparameter: value: string\n"), nil
 	}
-	return map[string]interface{}{}
+	return map[string]interface{}{}, nil
 }
 
 // extractImportsFromFile extracts import paths from an AST file before fix.File() clears them.

@@ -289,6 +289,9 @@ func buildTemplateFromYAML(templateYAML string, def *pkgdef.Definition) error {
 // FlagLang is the flag for specifying the language of a definition
 const FlagLang = "lang"
 
+// FlagVariant is the flag for the variant of a definition type to scaffold
+const FlagVariant = "variant"
+
 // NewDefinitionInitCommand create the `vela def init` command to help user initialize a definition locally
 func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 	cmd := &cobra.Command{
@@ -332,6 +335,10 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 			templateYAML, err := cmd.Flags().GetString(FlagTemplateYAML)
 			if err != nil {
 				return errors.Wrapf(err, "failed to get `%s`", FlagTemplateYAML)
+			}
+			variant, err := cmd.Flags().GetString(FlagVariant)
+			if err != nil {
+				return errors.Wrapf(err, "failed to get `%s`", FlagVariant)
 			}
 			output, err := cmd.Flags().GetString(FlagOutput)
 			if err != nil {
@@ -413,7 +420,11 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 						pkgdef.AliasKey:       alias,
 					})
 					def.SetLabels(map[string]string{})
-					def.Object["spec"] = pkgdef.GetDefinitionDefaultSpec(def.GetKind())
+					spec, err := pkgdef.GetDefinitionDefaultSpecVariant(def.GetKind(), variant)
+					if err != nil {
+						return err
+					}
+					def.Object["spec"] = spec
 					if templateYAML != "" {
 						if err = buildTemplateFromYAML(templateYAML, &def); err != nil {
 							return err
@@ -443,6 +454,7 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 	cmd.Flags().StringP(FlagOutput, "o", "", "Specify the output path of the generated definition. If empty, the definition will be printed in the console.")
 	cmd.Flags().BoolP(FlagInteractive, "i", false, "Specify whether use interactive process to help generate definitions.")
 	cmd.Flags().StringP(FlagLang, "l", "cue", "Specify the language of the definition. Valid options: cue, go")
+	cmd.Flags().String(FlagVariant, "", "Specify the variant of the definition type to scaffold: patch (default) or outputs for a trait, standard (default) or application for a policy.")
 	cmd.Flags().StringP(FlagProvider, "p", "", "Specify which provider the cloud resource definition belongs to. Only `alibaba`, `aws`, `azure`, `gcp`, `baidu`, `tencent`, `elastic`, `ucloud`, `vsphere` are supported.")
 	cmd.Flags().StringP(FlagGit, "", "", "Specify which git repository the configuration(HCL) is stored in. Valid when --provider/-p is set.")
 	cmd.Flags().StringP(FlagLocal, "", "", "Specify the local path of the configuration(HCL) file. Valid when --provider/-p is set.")
