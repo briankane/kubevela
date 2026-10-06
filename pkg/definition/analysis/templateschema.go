@@ -59,13 +59,20 @@ func (d *document) templateKind() string {
 	return ""
 }
 
-// templateConstraint unifies the template with its type's schema.
+// templateConstraint unifies the template with its type's schema, and its
+// output with the schema it declares for it.
 func (d *document) templateConstraint() []ast.Decl {
-	kind := d.templateKind()
-	if kind == "" {
-		return nil
+	var decls []ast.Decl
+	declared := map[string]*ast.Field{}
+	topLevelFields(d.template.Value, declared)
+	if declared["schema"] != nil && declared["output"] != nil {
+		decls = append(decls, unbound(mustField(fmt.Sprintf("%s: output: %s.schema", templateLabel, templateLabel))))
 	}
-	return append([]ast.Decl{mustField(fmt.Sprintf("%s: #velaTemplates[%q]", templateLabel, kind))}, templateSchema()...)
+	if kind := d.templateKind(); kind != "" {
+		decls = append(decls, mustField(fmt.Sprintf("%s: #velaTemplates[%q]", templateLabel, kind)))
+		decls = append(decls, templateSchema()...)
+	}
+	return decls
 }
 
 // templateSchemaFor is the compiled schema of a template kind.
@@ -76,6 +83,18 @@ func templateSchemaFor(kind string) (cue.Value, bool) {
 	v := cuecontext.New().BuildFile(&ast.File{Decls: append([]ast.Decl{mustField(fmt.Sprintf("#this: #velaTemplates[%q]", kind))}, templateSchema()...)})
 	this := v.LookupPath(cue.ParsePath("#this"))
 	return this, this.Exists()
+}
+
+// unbound clears the references the parser bound within a snippet, so they
+// are resolved in the file the snippet is compiled into.
+func unbound(f *ast.Field) *ast.Field {
+	ast.Walk(f.Value, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			id.Node, id.Scope = nil, nil
+		}
+		return true
+	}, nil)
+	return f
 }
 
 // requiredFields are the fields a template of a type must declare.

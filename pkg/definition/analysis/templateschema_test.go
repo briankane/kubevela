@@ -59,6 +59,36 @@ func TestTemplateSchemas(t *testing.T) {
 }
 `,
 		},
+		"output that agrees with its schema": {
+			src: header("c", "component", "") + `template: {
+	schema: {replicas: int, image: string}
+	output: {apiVersion: "v1", kind: "ConfigMap", replicas: parameter.replicas, image: "nginx"}
+	parameter: replicas: *1 | int
+}
+`,
+		},
+		"output that disagrees with its schema": {
+			src: header("c", "component", "") + `template: {
+	schema: replicas: int
+	output: {apiVersion: "v1", kind: "ConfigMap", replicas: "two"}
+}
+`,
+			want: []wantSev{
+				{5, SeverityError, "output.replicas: conflicting values"},
+				{6, SeverityError, "output.replicas: conflicting values"},
+			},
+		},
+		"a source's output must match its schema": {
+			src: header("s", "source", "") + `template: {
+	schema: {region: string, zones: [...string]}
+	output: {region: "eu-west-1", zones: "a"}
+}
+`,
+			want: []wantSev{
+				{5, SeverityError, "output.zones: conflicting values"},
+				{6, SeverityError, "output.zones: conflicting values"},
+			},
+		},
 		"schema of the wrong shape": {
 			src: header("t", "trait", "") + `template: {
 	patch: {}
