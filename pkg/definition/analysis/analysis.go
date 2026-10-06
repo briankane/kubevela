@@ -54,6 +54,8 @@ type Severity int
 const (
 	// SeverityError is a mistake the controller would reject.
 	SeverityError Severity = 1
+	// SeverityWarning is accepted by the controller but does nothing.
+	SeverityWarning Severity = 2
 )
 
 // Diagnostic is one problem found in a definition file.
@@ -87,6 +89,7 @@ var (
 type document struct {
 	path     string
 	src      []byte
+	file     *ast.File
 	imports  []*ast.ImportDecl
 	headers  []*ast.Field
 	template *ast.Field
@@ -109,7 +112,9 @@ func Analyze(path string, src []byte) Result {
 		return Result{}
 	}
 	res := Result{IsDefinition: true, Name: d.name, Type: d.typ}
-	diags := d.checkHeader()
+	// Markers are read before the template is compiled, which rewrites it.
+	diags := d.checkMarkers()
+	diags = append(diags, d.checkHeader()...)
 	diags = append(diags, d.checkTemplate()...)
 	res.Diagnostics = sortDiagnostics(firstPerPosition(diags))
 	return res
@@ -118,7 +123,7 @@ func Analyze(path string, src []byte) Result {
 // newDocument recognises a definition: a top-level template struct beside at
 // least one other top-level struct, the header.
 func newDocument(path string, src []byte, f *ast.File) (*document, bool) {
-	d := &document{path: path, src: src}
+	d := &document{path: path, src: src, file: f}
 	for _, decl := range f.Decls {
 		switch x := decl.(type) {
 		case *ast.ImportDecl:

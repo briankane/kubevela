@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,8 +28,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The definitions KubeVela ships must analyse clean: a diagnostic on any of
-// them is a false positive, most likely a context key missing from context.go.
+// The definitions KubeVela ships must analyse clean: an error on any of them
+// is a false positive, most likely a context key missing from context.go. A
+// warning must be one of knownWarnings.
 func TestShippedDefinitionsAreClean(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "vela-templates", "definitions")
 	n := checkCorpus(t, root)
@@ -50,6 +52,15 @@ func TestExtraCorpus(t *testing.T) {
 
 // checkCorpus analyses every component and trait definition under root and
 // returns how many it checked.
+// knownWarnings are the warnings shipped definitions are known to have, by
+// path under the corpus root.
+var knownWarnings = map[string][]string{
+	// defkit emits +patchStrategy=open, which no patcher reads; vela-go-definitions
+	// generates the same command trait.
+	"internal/trait/command.cue": {"72: +patchStrategy=open is not a strategy: retainKeys, replace, jsonPatch or jsonMergePatch, so it has no effect"},
+	"trait/command.cue":          {"72: +patchStrategy=open is not a strategy: retainKeys, replace, jsonPatch or jsonMergePatch, so it has no effect"},
+}
+
 func checkCorpus(t *testing.T, root string) int {
 	n := 0
 	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
@@ -66,7 +77,11 @@ func checkCorpus(t *testing.T, root string) int {
 		}
 		n++
 		t.Run(path, func(t *testing.T) {
-			assert.Empty(t, lines(res.Diagnostics))
+			var got []string
+			for _, d := range res.Diagnostics {
+				got = append(got, fmt.Sprintf("%d: %s", d.Range.Start.Line, d.Message))
+			}
+			assert.Equal(t, knownWarnings[filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator)))], got)
 		})
 		return nil
 	})

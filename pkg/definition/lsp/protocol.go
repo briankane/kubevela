@@ -34,8 +34,11 @@ type Range struct {
 // DiagnosticSeverity of a Diagnostic.
 type DiagnosticSeverity int
 
-// SeverityError marks a diagnostic as an error.
-const SeverityError DiagnosticSeverity = 1
+// Severities of a diagnostic.
+const (
+	SeverityError   DiagnosticSeverity = 1
+	SeverityWarning DiagnosticSeverity = 2
+)
 
 // Diagnostic is a problem in a document.
 type Diagnostic struct {

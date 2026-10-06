@@ -241,12 +241,19 @@ func diagnose(uri, text string) []Diagnostic {
 				Start: toProtocolPosition(text, d.Range.Start.Line, d.Range.Start.Column),
 				End:   toProtocolPosition(text, d.Range.End.Line, d.Range.End.Column),
 			},
-			Severity: SeverityError,
+			Severity: severity(d.Severity),
 			Source:   diagnosticSource,
 			Message:  d.Message,
 		})
 	}
 	return diags
+}
+
+func severity(s analysis.Severity) DiagnosticSeverity {
+	if s == analysis.SeverityWarning {
+		return SeverityWarning
+	}
+	return SeverityError
 }
 
 // pathOf is the file path of a file URI, used only to name the file in

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,4 +195,15 @@ func TestToProtocolPositionCountsUTF16(t *testing.T) {
 	// x is at byte column 15, UTF-16 character 11.
 	got := toProtocolPosition(text, 1, 15)
 	assert.Equal(t, Position{Line: 0, Character: 11}, got)
+}
+
+func TestServerSendsMarkerProblemsAsWarnings(t *testing.T) {
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+		URI: uri, LanguageID: "cue", Version: 1, Text: strings.Replace(fixedDef, "template: {\n", "template: {\n\t// +usge=x\n\tparameter: a: string\n", 1),
+	}}, false)
+	p := c.diagnostics()
+	require.Len(t, p.Diagnostics, 1)
+	assert.Equal(t, SeverityWarning, p.Diagnostics[0].Severity)
+	assert.Contains(t, p.Diagnostics[0].Message, "did you mean +usage?")
 }
