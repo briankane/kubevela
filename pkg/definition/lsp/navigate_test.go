@@ -117,3 +117,16 @@ func TestOutlineRequest(t *testing.T) {
 	assert.Equal(t, 5, syms[0].Kind)
 	assert.Equal(t, "template", syms[1].Name)
 }
+
+func TestInlayHintRequest(t *testing.T) {
+	c := newClient(t)
+	text := "\"c\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\toutput: {apiVersion: \"apps/v1\", kind: \"Deployment\", spec: replicas: parameter.replicas}\n\tparameter: replicas: *2 | int\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	m := c.response(c.send("textDocument/inlayHint", InlayHintParams{TextDocument: TextDocumentIdentifier{URI: uri}, Range: Range{End: Position{Line: 100}}}, true))
+	var hints []InlayHint
+	require.NoError(t, json.Unmarshal(m["result"], &hints))
+	require.Len(t, hints, 1)
+	assert.Equal(t, "= 2", hints[0].Label)
+	assert.Equal(t, uint32(5), hints[0].Position.Line)
+}

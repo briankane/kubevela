@@ -125,6 +125,8 @@ type ServerCapabilities struct {
 	RenameProvider     bool                    `json:"renameProvider,omitempty"`
 	// DocumentSymbolProvider offers a document's outline.
 	DocumentSymbolProvider bool `json:"documentSymbolProvider,omitempty"`
+	// InlayHintProvider offers labels shown in the text.
+	InlayHintProvider bool `json:"inlayHintProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -503,4 +505,19 @@ type DocumentSymbolParams struct {
 type diagnosticFix struct {
 	Title string     `json:"title"`
 	Edits []TextEdit `json:"edits"`
+}
+
+// InlayHintParams ask for the hints in a range of a document.
+type InlayHintParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Range        Range                  `json:"range"`
+}
+
+// InlayHint is a label shown in the text.
+type InlayHint struct {
+	Position    Position `json:"position"`
+	Label       string   `json:"label"`
+	Kind        int      `json:"kind,omitempty"`
+	Tooltip     string   `json:"tooltip,omitempty"`
+	PaddingLeft bool     `json:"paddingLeft,omitempty"`
 }

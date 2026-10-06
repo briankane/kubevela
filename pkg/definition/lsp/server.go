@@ -361,7 +361,7 @@ func (s *Server) handle(msg message) error {
 				result = Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}
 			}
 		}
-	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol":
+	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint":
 		result, rerr = s.navigationRequest(msg)
 	case "textDocument/completion":
 		var p CompletionParams

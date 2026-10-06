@@ -29,6 +29,21 @@ import (
 // code actions.
 func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 	switch msg.Method {
+	case "textDocument/inlayHint":
+		var p InlayHintParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		text := s.docs[p.TextDocument.URI]
+		hints := []InlayHint{}
+		for _, h := range analysis.InlayHints(pathOf(p.TextDocument.URI), text, s.options()) {
+			pos := toProtocolPosition(text, h.Position.Line, h.Position.Column)
+			if pos.Line < p.Range.Start.Line || pos.Line > p.Range.End.Line {
+				continue
+			}
+			hints = append(hints, InlayHint{Position: pos, Label: h.Label, Kind: inlayHintType, Tooltip: h.Tooltip, PaddingLeft: true})
+		}
+		return hints, nil
 	case "textDocument/documentSymbol":
 		var p DocumentSymbolParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
@@ -244,3 +259,7 @@ func documentSymbols(text string, syms []analysis.Symbol) []DocumentSymbol {
 	}
 	return out
 }
+
+// inlayHintType is the protocol's kind for a hint about a value's type or
+// value.
+const inlayHintType = 1
