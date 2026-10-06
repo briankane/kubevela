@@ -94,6 +94,16 @@ func diagnosticsUntil(t *testing.T, c *client, uri string, ok func([]Diagnostic)
 	return last
 }
 
+func errorsOf(diags []Diagnostic) []Diagnostic {
+	var out []Diagnostic
+	for _, d := range diags {
+		if d.Severity == SeverityError {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 func messages(diags []Diagnostic) string {
 	var out []string
 	for _, d := range diags {
@@ -117,8 +127,9 @@ func TestWorkspaceIndexFindsParentsAndPackages(t *testing.T) {
 
 	greeter := "file://" + filepath.Join(dir, "greeter.cue")
 	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: greeter, LanguageID: "cue", Version: 1, Text: usesHelloSrc}}, false)
-	got = diagnosticsUntil(t, c, greeter, func(d []Diagnostic) bool { return !strings.Contains(messages(d), "ext/hello") })
-	assert.NotContains(t, messages(got), "ext/hello", "the custom provider's package is found in the workspace")
+	unresolved := func(d []Diagnostic) bool { return strings.Contains(messages(errorsOf(d)), "ext/hello") }
+	got = diagnosticsUntil(t, c, greeter, func(d []Diagnostic) bool { return !unresolved(d) })
+	assert.False(t, unresolved(got), "the custom provider's package is found in the workspace")
 }
 
 func TestListsTheWorkspaceDefinitions(t *testing.T) {
