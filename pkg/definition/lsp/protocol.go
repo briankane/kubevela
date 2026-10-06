@@ -544,5 +544,12 @@ const MethodDefinitionFiles = "vela/definitionFiles"
 
 // DefinitionFilesResult is the files, in order.
 type DefinitionFilesResult struct {
-	Files []string `json:"files"`
+	Files []DefinitionFile `json:"files"`
+}
+
+// DefinitionFile is a file of the workspace and the definition it defines.
+type DefinitionFile struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+	Type string `json:"type"`
 }

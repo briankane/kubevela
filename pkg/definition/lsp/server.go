@@ -188,11 +188,11 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseError) {
 	switch msg.Method {
 	case MethodDefinitionFiles:
-		files := make([]string, 0, len(s.definitions))
-		for path := range s.definitions {
-			files = append(files, path)
+		files := make([]DefinitionFile, 0, len(s.definitions))
+		for path, d := range s.definitions {
+			files = append(files, DefinitionFile{Path: path, Name: d.name, Type: d.defType})
 		}
-		sort.Strings(files)
+		sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 		result = DefinitionFilesResult{Files: files}
 	case MethodReconnectCluster:
 		s.reconnectCluster()

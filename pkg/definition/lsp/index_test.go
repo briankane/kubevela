@@ -268,11 +268,11 @@ func TestDefinitionFiles(t *testing.T) {
 	c.drain()
 	c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir}, true))
 	c.send("initialized", map[string]interface{}{}, false)
-	var files []string
+	var files []DefinitionFile
 	for end := time.Now().Add(10 * time.Second); time.Now().Before(end) && len(files) == 0; time.Sleep(50 * time.Millisecond) {
 		var r DefinitionFilesResult
 		require.NoError(t, json.Unmarshal(c.response(c.send(MethodDefinitionFiles, struct{}{}, true))["result"], &r))
 		files = r.Files
 	}
-	assert.Equal(t, []string{filepath.Join(dir, "web.cue")}, files, "definitions only")
+	assert.Equal(t, []DefinitionFile{{Path: filepath.Join(dir, "web.cue"), Name: "web", Type: "component"}}, files, "definitions only")
 }
