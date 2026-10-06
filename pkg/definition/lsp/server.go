@@ -193,6 +193,11 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
 		}
+	case MethodNewPackage:
+		var p NewPackageParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = NewPackageResult{YAML: analysis.NewPackage(p.Name, p.Path, p.Protocol)}
+		}
 	case MethodNewTest:
 		var p NewTestParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -291,7 +296,7 @@ func (s *Server) handle(msg message) error {
 			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
@@ -384,11 +389,16 @@ func diagnose(uri, text string, opts analysis.Options) []Diagnostic {
 	if utils.IsCUETestFile(path) {
 		return testDiagnostics(path, text)
 	}
-	if diags, ok := analysis.CheckAddonFile(path, []byte(text), opts); ok {
-		return toProtocol(text, diags)
-	}
+	found, addonFile := analysis.CheckAddonFile(path, []byte(text), opts)
 	if filepath.Ext(path) != ".cue" {
-		return []Diagnostic{}
+		// A Package may sit anywhere, an addon's resources included.
+		if pkgDiags, ok := analysis.CheckPackageFile(path, []byte(text), opts.Externals); ok {
+			found = append(found, pkgDiags...)
+		}
+		return toProtocol(text, found)
+	}
+	if addonFile {
+		return toProtocol(text, found)
 	}
 	res := analysis.AnalyzeWith(path, []byte(text), opts)
 	diags := make([]Diagnostic, 0, len(res.Diagnostics))

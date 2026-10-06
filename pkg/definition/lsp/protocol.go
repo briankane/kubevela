@@ -367,3 +367,20 @@ type NewTestResult struct {
 	Path    string `json:"path"`
 	Snippet string `json:"snippet"`
 }
+
+// MethodNewPackage scaffolds a Package resource. It is this server's own
+// request.
+const MethodNewPackage = "vela/newPackage"
+
+// NewPackageParams name the package, its import path, and the protocol its
+// provider speaks, or none for a package of plain CUE.
+type NewPackageParams struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Protocol string `json:"protocol,omitempty"`
+}
+
+// NewPackageResult is the Package resource's YAML.
+type NewPackageResult struct {
+	YAML string `json:"yaml"`
+}

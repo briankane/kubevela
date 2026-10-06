@@ -164,3 +164,17 @@ func TestAddonFiles(t *testing.T) {
 	assert.Contains(t, open("definitions/web.cue", "\"web\": {\n\ttype: \"component\"\n\tattributs: {}\n}\ntemplate: output: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n"), "attributs", "an addon's definitions are checked as definitions")
 	assert.Empty(t, open("values.yaml", "a: [unclosed\n"), "other YAML is not ours to check")
 }
+
+func TestPackageFiles(t *testing.T) {
+	dir := t.TempDir()
+	c := newClient(t)
+	bad := strings.Replace(helloPackageYAML, "path: ext/hello", "path: vela/hello", 1)
+	u := "file://" + filepath.Join(dir, "hello-package.yaml")
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "yaml", Version: 1, Text: bad}}, false)
+	assert.Contains(t, messages(c.diagnostics().Diagnostics), "vela/")
+
+	m := c.response(c.send(MethodNewPackage, NewPackageParams{Name: "greeter", Path: "ext/greeter", Protocol: "https"}, true))
+	var r NewPackageResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	assert.Contains(t, r.YAML, "protocol: https")
+}
