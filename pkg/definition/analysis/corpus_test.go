@@ -35,7 +35,7 @@ import (
 func TestShippedDefinitionsAreClean(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "vela-templates", "definitions")
 	n := checkCorpus(t, root)
-	require.NotZero(t, n, "no component or trait definitions found under %s", root)
+	require.NotZero(t, n, "no definitions found under %s", root)
 }
 
 // VELA_ANALYSIS_CORPUS names more directories of definitions to check, such
@@ -51,8 +51,8 @@ func TestExtraCorpus(t *testing.T) {
 	}
 }
 
-// checkCorpus analyses every component and trait definition under root and
-// returns how many it checked.
+// checkCorpus analyses every definition under root and returns how many it
+// checked.
 // knownWarnings are the warnings shipped definitions are known to have, by
 // path under the corpus root.
 var knownWarnings = map[string][]string{
@@ -60,6 +60,17 @@ var knownWarnings = map[string][]string{
 	// generates the same command trait.
 	"internal/trait/command.cue": {"72: +patchStrategy=open is not a strategy: retainKeys, replace, jsonPatch or jsonMergePatch, so it has no effect"},
 	"trait/command.cue":          {"72: +patchStrategy=open is not a strategy: retainKeys, replace, jsonPatch or jsonMergePatch, so it has no effect"},
+}
+
+// knownBroken are definitions known not to compile, by path under the corpus
+// root: vela-go-definitions generates these workflow steps with a field read
+// from an `if` block other than the one that declares it, which CUE rejects.
+var knownBroken = map[string]bool{
+	"workflowstep/collect-service-endpoints.cue": true,
+	"workflowstep/depends-on-app.cue":            true,
+	"workflowstep/export2secret.cue":             true,
+	"workflowstep/notification.cue":              true,
+	"workflowstep/webhook.cue":                   true,
 }
 
 func checkCorpus(t *testing.T, root string) int {
@@ -74,7 +85,8 @@ func checkCorpus(t *testing.T, root string) int {
 			return err
 		}
 		res := AnalyzeWith(path, src, opts)
-		if res.Type != componentType && res.Type != traitType {
+		rel := filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator)))
+		if !res.IsDefinition || knownBroken[rel] {
 			return nil
 		}
 		n++
@@ -83,7 +95,7 @@ func checkCorpus(t *testing.T, root string) int {
 			for _, d := range res.Diagnostics {
 				got = append(got, fmt.Sprintf("%d: %s", d.Range.Start.Line, d.Message))
 			}
-			assert.Equal(t, knownWarnings[filepath.ToSlash(strings.TrimPrefix(path, root+string(filepath.Separator)))], got)
+			assert.Equal(t, knownWarnings[rel], got)
 		})
 		return nil
 	})

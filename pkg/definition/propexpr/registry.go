@@ -159,6 +159,17 @@ func SurfacesOffering(field string) []string {
 	return out
 }
 
+// ExcludedFields are the fields the render context carries that no surface
+// offers to an expression, each with the reason. A definition's template can
+// still read them: the template runs against the whole render context.
+func ExcludedFields() map[string]string {
+	out := make(map[string]string, len(registry.excluded))
+	for name, reason := range registry.excluded {
+		out[name] = reason
+	}
+	return out
+}
+
 // SurfacePlural names a surface in the plural, for a message that reads
 // "unavailable in workflow steps" rather than naming one instance.
 func SurfacePlural(surface string) string {

@@ -18,12 +18,18 @@ package analysis
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+
+	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/format"
 
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/parser"
 
 	"github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // Definition types as the header spells them.
@@ -36,65 +42,85 @@ const (
 	workloadType     = "workload"
 )
 
-// ContextField is a field the controller sets on context when it renders a
-// template.
+// templateContexts are propexpr's registry entries for what each definition
+// type's template reads: the source of truth for which context fields exist
+// there, their types, and their docs.
+var templateContexts = map[string]propexpr.ContextSchema{
+	componentType:    propexpr.ComponentContext,
+	traitType:        propexpr.TraitContext,
+	workflowStepType: propexpr.WorkflowStepTemplateContext,
+	policyType:       propexpr.RenderedPolicyContext,
+}
+
+// contextOrder is the order types are named in a message.
+var contextOrder = []string{componentType, traitType, workflowStepType, policyType}
+
+// ContextField is a field on context when a template renders.
 type ContextField struct {
 	Name string
-	// Type is the field's CUE type. A trailing "?" in Name marks it optional.
+	// Type is the field's CUE type.
 	Type string
 	Doc  string
+	// Required is false for a field the render may leave out.
+	Required bool
 }
 
-// workloadContext is what process.NewContext sets for every component and trait.
-var workloadContext = []ContextField{
-	{process.ContextName, "string", "Name of the component being rendered."},
-	{process.ContextNamespace, "string", "Namespace the Application deploys to."},
-	{process.ContextAppName, "string", "Name of the Application."},
-	{process.ContextAppRevision, "string", "Name of the current ApplicationRevision."},
-	{process.ContextAppRevisionNum, "int", "Number of the current ApplicationRevision."},
-	{process.ContextCompRevisionName, "string", "Name of the component's revision."},
-	{process.ContextWorkflowName, "string", "Name of the Application's workflow."},
-	{process.ContextPublishVersion, "string", "The app.oam.dev/publishVersion annotation of the Application."},
-	{process.ContextComponents, "_", "Every component of the Application."},
-	{process.ContextAppLabels, "[string]: string", "Labels of the Application."},
-	{process.ContextAppAnnotations, "[string]: string", "Annotations of the Application."},
-	{process.ContextReplicaKey, "string", "Key of the replica being rendered by a replication policy."},
-	{process.ContextCluster, "string", "Cluster the component is dispatched to."},
-	{process.ContextClusterVersion, "{major: string, minor: int, gitVersion: string, platform: string}", "Kubernetes version of that cluster."},
-	{process.ContextComponentName, "string", "Name of the component, whichever definition is being rendered."},
-	{process.ContextComponentType, "string", "Type of the component."},
-	{process.ContextAppSources, "[string]: _", "Values of the Application's source bindings."},
-	{process.ContextAppSourceTypes, "[string]: string", "Definition type of each source binding."},
-	{process.ContextAppSourceTemplates, "[string]: string", "CUE template of each source definition type."},
-	{process.ContextAppSourceSensitivePaths, "[string]: [...string]", "Platform-sensitive paths of each source definition type."},
-	{process.ContextAppSourceCacheStore + "?", "_", "Cache the sources are read through."},
-	{"config?", "[...{name: string, value: string}]", "Configuration injected by the platform."},
-	{"custom?", "{...}", "Data a policy added for the components it applies to."},
-}
-
-// traitContext is what a trait sees on top of workloadContext.
-var traitContext = []ContextField{
-	{process.ContextTraitType, "string", "Type of the trait being rendered."},
-	{process.OutputFieldName, "{...}", "The component's rendered output."},
-	{process.OutputsFieldName, "[string]: {...}", "The component's rendered outputs, by name."},
-}
-
-// componentContext is what a component sees on top of workloadContext.
-var componentContext = []ContextField{
-	{process.OutputFieldName + "?", "{...}", "The component's own rendered output, once rendered."},
-	{process.OutputsFieldName + "?", "[string]: {...}", "The component's own rendered outputs, once rendered."},
-}
-
-// ContextFields lists the context fields of a definition type, or nil for a
-// type whose context is not modelled, which is then left open.
+// ContextFields lists the context fields a definition type's template can
+// read, sorted, or nil for a type whose context is not modelled.
+//
+// They are the registry's fields for the type, plus what the render context
+// carries that the registry offers no expression: a template runs against the
+// whole render context, so it may read those too, guarded. output and outputs
+// are the rendered objects: a trait always has its component's, other types
+// only once rendered.
 func ContextFields(defType string) []ContextField {
-	switch defType {
-	case componentType:
-		return append(append([]ContextField{}, workloadContext...), componentContext...)
-	case traitType:
-		return append(append([]ContextField{}, workloadContext...), traitContext...)
+	schema, ok := templateContexts[defType]
+	if !ok {
+		return nil
 	}
-	return nil
+	var fields []ContextField
+	for _, name := range schema.ReadableFields() {
+		v, _ := schema.FieldValue(name)
+		fields = append(fields, ContextField{Name: name, Type: registryType(v), Doc: usageOf(v), Required: true})
+	}
+	for name, reason := range propexpr.ExcludedFields() {
+		switch {
+		case schema.Offers(name), name == parameterLabel:
+			continue
+		case name == process.OutputFieldName:
+			fields = append(fields, ContextField{Name: name, Type: "{...}", Doc: "The rendered output.", Required: defType == traitType})
+		case name == process.OutputsFieldName:
+			fields = append(fields, ContextField{Name: name, Type: "[string]: {...}", Doc: "The rendered outputs, by name.", Required: defType == traitType})
+		default:
+			fields = append(fields, ContextField{Name: name, Type: "_", Doc: reason})
+		}
+	}
+	// BaseTemplate declares config, which the registry does not know.
+	if !schema.Offers("config") {
+		fields = append(fields, ContextField{Name: "config", Type: "[...{name: string, value: string}]", Doc: "Configuration the platform injects."})
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+	return fields
+}
+
+// registryType is a registry field's type as CUE source.
+func registryType(v cue.Value) string {
+	b, err := format.Node(v.Syntax(cue.Docs(false)))
+	if err != nil {
+		return "_"
+	}
+	return string(b)
+}
+
+// usageOf is the +usage text of a registry field's doc comment.
+func usageOf(v cue.Value) string {
+	var lines []string
+	for _, cg := range v.Doc() {
+		for _, line := range strings.Split(cg.Text(), "\n") {
+			lines = append(lines, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "+usage=")))
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, " "))
 }
 
 // contextField is the context declaration injected into a template: closed
@@ -105,11 +131,34 @@ func contextField(defType string) *ast.Field {
 	if fields != nil {
 		var b strings.Builder
 		for _, f := range fields {
-			fmt.Fprintf(&b, "%s: %s\n", f.Name, f.Type)
+			mark := "?"
+			if f.Required {
+				mark = ""
+			}
+			fmt.Fprintf(&b, "%s%s: %s\n", strconv.Quote(f.Name), mark, f.Type)
 		}
 		body = "close({\n" + b.String() + "})"
 	}
 	return mustField("context: " + body)
+}
+
+// explainContextField says which definition types can read a context field a
+// template of this type cannot.
+func explainContextField(defType, field string) (string, bool) {
+	here, ok := templateContexts[defType]
+	if !ok || here.Offers(field) {
+		return "", false
+	}
+	var offered []string
+	for _, t := range contextOrder {
+		if t != defType && templateContexts[t].Offers(field) {
+			offered = append(offered, templateContexts[t].Plural())
+		}
+	}
+	if len(offered) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("context.%s is available to %s, not %s", field, orList(offered), here.Plural()), true
 }
 
 // closedParameterPath is a closed copy of the template's parameter, so a

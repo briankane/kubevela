@@ -136,7 +136,58 @@ func TestAnalyzeDiagnostics(t *testing.T) {
 		"component has no traitType": {
 			src: componentHeader + `template: output: metadata: name: context.traitType
 `,
-			want: []want{{5, "traitType"}},
+			want: []want{{5, "context.traitType is available to traits, not components"}},
+		},
+		"a step field read from a component": {
+			src: componentHeader + `template: output: metadata: name: context.stepName
+`,
+			want: []want{{5, "context.stepName is available to workflow step templates, not components"}},
+		},
+		"a field no definition can read": {
+			src: componentHeader + `template: output: metadata: name: context.nosuch
+`,
+			want: []want{{5, "undefined field: nosuch"}},
+		},
+		"fields the render carries beyond the registry's": {
+			src: componentHeader + `template: output: {
+	if context.config != _|_ {
+		env: context.config
+	}
+	if context.components != _|_ {
+		n: len(context.components)
+	}
+	if context.custom != _|_ {
+		c: context.custom.region & string
+	}
+}
+`,
+		},
+		"a workflow step reads its own context": {
+			src: `"my-step": {
+	type: "workflow-step"
+}
+template: {
+	out: {
+		step:    context.stepName
+		session: context.stepSessionID
+		app:     context.appName
+		bad:     context.componentName
+	}
+}
+`,
+			want: []want{{9, "context.componentName is available to components"}},
+		},
+		"a policy reads its own context": {
+			src: `"my-policy": {
+	type: "policy"
+}
+template: output: {
+	name:    context.policyName
+	cluster: context.cluster
+	bad:     context.traitType
+}
+`,
+			want: []want{{7, "context.traitType is available to traits, not policies"}},
 		},
 		"parameter field not declared": {
 			src: componentHeader + `template: {

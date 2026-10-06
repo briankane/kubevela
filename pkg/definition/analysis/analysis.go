@@ -131,7 +131,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	// Markers are read before the template is compiled, which rewrites it.
 	diags := d.checkMarkers()
 	diags = append(diags, d.checkHeader()...)
-	diags = append(diags, d.checkTemplate()...)
+	diags = append(diags, d.explainContext(d.checkTemplate())...)
 	res.Diagnostics = sortDiagnostics(firstPerPosition(diags))
 	return res
 }
@@ -235,6 +235,36 @@ func (d *document) fromErrors(err error, trimPath string) []Diagnostic {
 		}
 	}
 	return diags
+}
+
+var undefinedField = regexp.MustCompile(`undefined field: ([A-Za-z_$][A-Za-z0-9_$]*)$`)
+
+// explainContext rewrites "undefined field" on a context read, when another
+// definition type's template has that field, to say which.
+func (d *document) explainContext(diags []Diagnostic) []Diagnostic {
+	for i, diag := range diags {
+		m := undefinedField.FindStringSubmatch(diag.Message)
+		if m == nil || !strings.HasSuffix(d.textBefore(diag.Range.Start), "context.") {
+			continue
+		}
+		if why, ok := explainContextField(d.typ, m[1]); ok {
+			diags[i].Message = why
+		}
+	}
+	return diags
+}
+
+// textBefore is the text of p's line up to p.
+func (d *document) textBefore(p Position) string {
+	lines := strings.SplitN(string(d.src), "\n", p.Line+1)
+	if p.Line < 1 || p.Line > len(lines) {
+		return ""
+	}
+	line := lines[p.Line-1]
+	if p.Column-1 > len(line) || p.Column < 1 {
+		return ""
+	}
+	return line[:p.Column-1]
 }
 
 // at builds a diagnostic spanning the token that starts at pos.
