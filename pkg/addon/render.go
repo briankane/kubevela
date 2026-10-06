@@ -447,3 +447,24 @@ func checkCueFileHasPackageHeader(cueTemplate ElementFile) (bool, error) {
 	}
 	return false, nil
 }
+
+// ErrRenderNeedsCluster is returned by RenderAppOffline for an addon whose
+// render reads the cluster.
+var ErrRenderNeedsCluster = errors.New("this addon deploys to runtime clusters through the topology policy KubeVela attaches from the cluster's list of clusters, so it renders only against a cluster")
+
+// RenderAppOffline renders an addon's Application and auxiliary objects as
+// RenderApp does, without a cluster. An addon whose render reads the cluster
+// returns ErrRenderNeedsCluster.
+func RenderAppOffline(addon *InstallPackage, args map[string]interface{}) (*v1beta1.Application, []*unstructured.Unstructured, error) {
+	if args == nil {
+		args = map[string]interface{}{}
+	}
+	app, _, err := generateAppFramework(addon, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	if checkNeedAttachTopologyPolicy(app, addon) {
+		return nil, nil, ErrRenderNeedsCluster
+	}
+	return RenderApp(context.Background(), addon, nil, args)
+}
