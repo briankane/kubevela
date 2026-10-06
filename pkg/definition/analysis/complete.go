@@ -350,15 +350,17 @@ func requiredParams(v cue.Value, indent string, n *int) string {
 	var b strings.Builder
 	for it.Next() {
 		f := it.Value()
-		if _, hasDefault := f.Default(); hasDefault {
+		if !isRequired(f) {
 			continue
 		}
 		name := snippetEscape(it.Selector().Unquoted())
-		if f.IncompleteKind() == cue.StructKind {
+		if f.IncompleteKind() == cue.StructKind && hasDeclaredFields(f) {
+			// A struct of declared fields is required only for those of its
+			// fields that are; one with none open is a value to give whole.
 			if nested := requiredParams(f, indent+"\t", n); nested != "" {
 				b.WriteString(indent + name + ": {\n" + nested + indent + "}\n")
-				continue
 			}
+			continue
 		}
 		*n++
 		b.WriteString(fmt.Sprintf("%s%s: ${%d}\n", indent, name, *n))
@@ -369,4 +371,11 @@ func requiredParams(v cue.Value, indent string, n *int) string {
 // snippetEscape escapes what a snippet would read as syntax.
 func snippetEscape(s string) string {
 	return strings.NewReplacer("\\", "\\\\", "$", "\\$", "}", "\\}").Replace(s)
+}
+
+// hasDeclaredFields reports whether a struct declares any field, optional
+// ones included.
+func hasDeclaredFields(v cue.Value) bool {
+	it, err := v.Fields(cue.Optional(true))
+	return err == nil && it.Next()
 }

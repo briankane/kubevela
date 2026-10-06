@@ -184,4 +184,5 @@ func TestFunctionsInsertTheirRequiredParameters(t *testing.T) {
 
 	apply := byLabel["#Apply"].Snippet
 	assert.Contains(t, apply, "resource: ${1}", "an open struct is one tab stop")
+	assert.NotContains(t, apply, "options", "a struct whose fields all have defaults is not required")
 }
