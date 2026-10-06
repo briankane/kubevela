@@ -39,6 +39,10 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
+const cueExt = ".cue"
+
+func isYAMLExt(ext string) bool { return ext == ".yaml" || ext == ".yml" }
+
 // The names pkg/addon reads an addon's files by.
 const (
 	addonMetadataFile    = "metadata.yaml"
@@ -53,16 +57,24 @@ const (
 //go:embed addon_application.cue
 var addonApplicationCUE string
 
-// addonContextCUE is what pkg/addon gives template.cue beside it: the addon's
-// metadata.yaml, as its Meta type decodes it, and the Application output must
-// be.
+// addonContextCUE is what pkg/addon gives an addon's CUE: the addon's
+// metadata.yaml, as its Meta type decodes it.
 const addonContextCUE = `
 context: #velaAddonContext
 #velaAddonContext: metadata: #velaAddonMeta
+`
+
+// addonOutputCUE is what template.cue's output must be: the Application the
+// addon installs.
+const addonOutputCUE = `
 output?: #addonApplication & {
 	apiVersion?: "core.oam.dev/v1beta1"
 	kind?:       "Application"
 }
+`
+
+// addonMetaCUE is pkg/addon's Meta type.
+const addonMetaCUE = `
 #velaAddonMeta: {
 	name:        string
 	version:     string
@@ -79,7 +91,7 @@ output?: #addonApplication & {
 	dependencies?: [...{name?: string, version?: string}]
 	needNamespace?: [...string]
 	invisible: bool
-	system?: {...}
+	system?: {vela?: string, kubernetes?: string}
 	annotations?: [string]: string
 }
 `
@@ -189,13 +201,21 @@ func CheckAddonFile(path string, src []byte, opts Options) ([]Diagnostic, bool) 
 	d := &document{path: path, src: src, opts: opts}
 	var diags []Diagnostic
 	switch {
+	case rel == addonMetadataFile:
+		diags = d.checkAddonMetadata()
+	case rel == "metadata.cue":
+		diags = []Diagnostic{d.warnFirstLine("KubeVela reads an addon's metadata from metadata.yaml: this file is not read")}
 	case rel == addonTemplateFile:
 		diags = d.checkAddonTemplate(root)
-	case len(parts) == 2 && parts[0] == addonConfigTemplates && ext == ".cue":
+	case len(parts) == 2 && parts[0] == addonResourcesDir && (isYAMLExt(ext)):
+		diags = d.checkObjectsYAML()
+	case len(parts) == 2 && parts[0] == addonResourcesDir && ext == cueExt && parts[1] != addonParameterFile:
+		diags = d.checkAddonResource(root)
+	case len(parts) == 2 && parts[0] == addonConfigTemplates && ext == cueExt:
 		diags = d.checkConfigTemplate()
-	case len(parts) == 2 && (parts[0] == addonUISchemas || parts[0] == "uischemas") && (ext == ".yaml" || ext == ".yml"):
+	case len(parts) == 2 && (parts[0] == addonUISchemas || parts[0] == "uischemas") && (isYAMLExt(ext)):
 		diags = d.checkUISchema(parts[0])
-	case len(parts) == 2 && parts[0] == addonViews && ext == ".cue":
+	case len(parts) == 2 && parts[0] == addonViews && ext == cueExt:
 		diags = d.checkView()
 	default:
 		return nil, false
@@ -401,26 +421,9 @@ func (d *document) checkAddonTemplate(root string) []Diagnostic {
 	if d.file.PackageName() == "" {
 		d.file.Decls = append([]ast.Decl{&ast.Package{Name: ast.NewIdent("main")}}, d.file.Decls...)
 	}
-	pkg := d.file.PackageName()
-	var files []*ast.File
-	param := filepath.Join(root, addonParameterFile)
-	if _, err := os.Stat(param); err != nil {
-		param = filepath.Join(root, addonResourcesDir, addonParameterFile)
-	}
-	extra := addonContextCUE + addonApplicationCUE
-	if f, ok := addonFile(param, pkg, true); ok {
-		files = append(files, f)
-		extra += "#velaAddonParameter: parameter\n"
-	}
-	resources, _ := filepath.Glob(filepath.Join(root, addonResourcesDir, "*.cue"))
-	for _, r := range resources {
-		if filepath.Base(r) == addonParameterFile {
-			continue
-		}
-		if f, ok := addonFile(r, pkg, false); ok {
-			files = append(files, f)
-		}
-	}
+	param, resources, extra := addonPackage(root, d.file.PackageName(), d.path)
+	files := withParam(param, resources...)
+	extra += addonOutputCUE
 	v, diags := d.build(cuecontext.New(), nil, extra, files...)
 	if !v.Exists() {
 		return diags
@@ -476,6 +479,39 @@ func (d *document) checkTyped(spec cue.Value) []Diagnostic {
 		check(spec.LookupPath(cue.ParsePath(l.path)), l.path, l.required)
 	}
 	return diags
+}
+
+// addonPackage is what pkg/addon compiles beside a file of package pkg:
+// parameter.cue, if there is one, and the resources/*.cue of the package,
+// less the file at self. extra is the context they are given.
+func addonPackage(root, pkg, self string) (param *ast.File, resources []*ast.File, extra string) {
+	extra = addonContextCUE + addonMetaCUE + addonApplicationCUE
+	paramPath := filepath.Join(root, addonParameterFile)
+	if _, err := os.Stat(paramPath); err != nil {
+		paramPath = filepath.Join(root, addonResourcesDir, addonParameterFile)
+	}
+	if f, ok := addonFile(paramPath, pkg, true); ok {
+		param = f
+		extra += "#velaAddonParameter: parameter\n"
+	}
+	paths, _ := filepath.Glob(filepath.Join(root, addonResourcesDir, "*.cue"))
+	for _, r := range paths {
+		if filepath.Base(r) == addonParameterFile || r == self {
+			continue
+		}
+		if f, ok := addonFile(r, pkg, false); ok {
+			resources = append(resources, f)
+		}
+	}
+	return param, resources, extra
+}
+
+// withParam is files with param first, when there is one.
+func withParam(param *ast.File, files ...*ast.File) []*ast.File {
+	if param == nil {
+		return files
+	}
+	return append([]*ast.File{param}, files...)
 }
 
 // addonFile is a CUE file pkg/addon compiles with template.cue: of its
@@ -611,4 +647,144 @@ func (d *document) warnFirstLine(msg string) Diagnostic {
 	diag := d.firstLine(msg)
 	diag.Severity = SeverityWarning
 	return diag
+}
+
+// addonMainPackage is the package whose resources pkg/addon merges into
+// template.cue rather than rendering on their own.
+const addonMainPackage = "main"
+
+// addonMetadataCUE is metadata.yaml as pkg/addon's Meta decodes it, with
+// what KubeVela needs of it.
+const addonMetadataCUE = `
+#metadata: #velaAddonMeta
+`
+
+// checkAddonMetadata checks metadata.yaml against the Meta type pkg/addon
+// decodes it into, which drops a key it does not know.
+func (d *document) checkAddonMetadata() []Diagnostic {
+	f, err := cueyaml.Extract(d.path, d.src)
+	if err != nil {
+		return d.fromErrors(err, "")
+	}
+	ctx := cuecontext.New()
+	data := ctx.BuildFile(f)
+	if data.Err() != nil {
+		return d.fromErrors(data.Err(), "")
+	}
+	var diags []Diagnostic
+	for _, field := range []string{"name", "version"} {
+		if !data.LookupPath(cue.ParsePath(field)).Exists() {
+			diags = append(diags, d.firstLine(field+" must be set: the addon is enabled and upgraded by its name and version"))
+		}
+	}
+	schema := ctx.CompileString(addonMetaCUE + addonMetadataCUE).LookupPath(cue.ParsePath("#metadata"))
+	return append(diags, d.fromErrors(schema.Unify(data).Validate(), "#metadata")...)
+}
+
+// checkObjectsYAML checks a stream of Kubernetes objects: each names its
+// apiVersion, kind and name, and matches its kind's schema where one is
+// known.
+func (d *document) checkObjectsYAML() []Diagnostic {
+	f, err := cueyaml.Extract(d.path, d.src)
+	if err != nil {
+		return d.fromErrors(err, "")
+	}
+	ctx := cuecontext.New()
+	data := ctx.BuildFile(f)
+	if data.Err() != nil {
+		return d.fromErrors(data.Err(), "")
+	}
+	objects := []cue.Value{data}
+	if it, err := data.List(); err == nil {
+		objects = nil
+		for it.Next() {
+			objects = append(objects, it.Value())
+		}
+	}
+	var diags []Diagnostic
+	for _, obj := range objects {
+		diags = append(diags, d.checkObject(ctx, obj)...)
+	}
+	return diags
+}
+
+// checkObject checks one Kubernetes object read from YAML.
+func (d *document) checkObject(ctx *cue.Context, obj cue.Value) []Diagnostic {
+	var diags []Diagnostic
+	var gvk [2]string
+	for i, field := range []string{"apiVersion", "kind"} {
+		s, err := obj.LookupPath(cue.ParsePath(field)).String()
+		if err != nil {
+			diags = append(diags, d.at(valuePos(obj), "a Kubernetes object needs a "+field))
+		}
+		gvk[i] = s
+	}
+	if _, err := obj.LookupPath(cue.ParsePath("metadata.name")).String(); err != nil {
+		pos := valuePos(obj.LookupPath(cue.ParsePath("metadata")))
+		if !pos.IsValid() {
+			pos = valuePos(obj)
+		}
+		diags = append(diags, d.at(pos, "a Kubernetes object needs a metadata.name"))
+	}
+	if len(diags) > 0 || d.opts.Kinds == nil {
+		return diags
+	}
+	kind := kubeschema.ParseGVK(gvk[0], gvk[1])
+	src, ok := d.opts.Kinds.CUE(kind)
+	if !ok {
+		return nil
+	}
+	root := kubeschema.Root(kind)
+	schema := ctx.CompileString(src).LookupPath(cue.ParsePath(root))
+	return d.fromErrors(schema.Unify(obj).Validate(), root)
+}
+
+// checkAddonResource checks a resources/*.cue file. One of template.cue's
+// package is part of it, so is checked with it; any other renders a
+// component of its own from its output.
+func (d *document) checkAddonResource(root string) []Diagnostic {
+	if diags, ok := d.parse(); !ok {
+		return diags
+	}
+	if diags := d.checkImports("an addon's CUE compiles with CUE's standard library only", nil); len(diags) > 0 {
+		return diags
+	}
+	if d.file.PackageName() == addonMainPackage {
+		tmpl := filepath.Join(root, addonTemplateFile)
+		main, ok := addonFile(tmpl, addonMainPackage, true)
+		if !ok {
+			return []Diagnostic{d.warnFirstLine("a file of package main is read only as part of template.cue, which this addon does not have in package main: it is not read")}
+		}
+		param, resources, extra := addonPackage(root, addonMainPackage, d.path)
+		_, diags := d.build(cuecontext.New(), nil, extra+addonOutputCUE, withParam(param, append(resources, main)...)...)
+		return diags
+	}
+	if !d.declares([]string{"output"}) {
+		return []Diagnostic{d.warnFirstLine("this file has no output: KubeVela renders a component from each resources/*.cue outside package main, and skips one without")}
+	}
+	pkg := d.file.PackageName()
+	if pkg == "" {
+		pkg = addonMainPackage
+	}
+	// Only parameter.cue joins a component's file: other resources do not.
+	param, _, extra := addonPackage(root, pkg, d.path)
+	extra += "#velaAddonComponent: (#addonApplication & {spec: components: [_]}).spec.components[0]\nvelaAddonComponent: #velaAddonComponent & output\n"
+	v, diags := d.build(cuecontext.New(), nil, extra, withParam(param)...)
+	if v.Exists() && !v.LookupPath(cue.ParsePath("output.type")).Exists() {
+		diags = append(diags, d.at(d.fieldPos([]string{"output"}), "output has no type: it is the component the file renders"))
+	}
+	return diags
+}
+
+// valuePos is where a value starts: its own position, or, for a struct read
+// from YAML, which has none, its first field's.
+func valuePos(v cue.Value) token.Pos {
+	if pos := v.Pos(); pos.IsValid() && pos.Line() > 0 {
+		return pos
+	}
+	it, err := v.Fields()
+	if err != nil || !it.Next() {
+		return token.NoPos
+	}
+	return valuePos(it.Value())
 }

@@ -25,6 +25,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
 // addonDir is an addon with metadata and a parameter, to check its files in.
@@ -292,4 +294,82 @@ func TestNotAnAddonFile(t *testing.T) {
 	root, ok := AddonRoot(filepath.Join(dir, "schemas", "a.yaml"))
 	assert.True(t, ok)
 	assert.Equal(t, dir, root)
+}
+
+// expectAddon checks src as the addon file at rel and asserts each want
+// appears in what it reports, or that nothing is, when want is empty.
+func expectAddon(t *testing.T, dir, rel, src string, want ...string) {
+	t.Helper()
+	got := checkAddon(t, dir, rel, src)
+	if len(want) == 0 {
+		assert.Empty(t, got)
+		return
+	}
+	require.NotEmpty(t, got, "want %v", want)
+	for _, w := range want {
+		assert.Contains(t, strings.Join(got, "\n"), w)
+	}
+}
+
+const goodMetadata = `name: my-addon
+version: 1.0.0
+description: An addon
+icon: https://example.com/icon.png
+tags:
+  - demo
+deployTo:
+  runtimeCluster: true
+dependencies:
+  - name: fluxcd
+system:
+  vela: ">=1.9.0"
+  kubernetes: ">=1.24"
+needNamespace:
+  - flux-system
+invisible: false
+`
+
+func TestAddonMetadata(t *testing.T) {
+	dir := addonDir(t)
+	expectAddon(t, dir, "metadata.yaml", goodMetadata)
+	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "tags:", "tag:", 1), "5: ", "tag")
+	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "runtimeCluster: true", "runtimeCluster: yes please", 1), "8: ", "runtimeCluster")
+	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "version: 1.0.0\n", "", 1), "version")
+	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "  vela:", "  velaa:", 1), "12: ", "velaa")
+	expectAddon(t, dir, "metadata.cue", "name: \"x\"\n", "metadata.yaml")
+}
+
+func TestAddonResources(t *testing.T) {
+	dir := addonDir(t)
+	t.Run("yaml objects", func(t *testing.T) {
+		good := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\ndata:\n  k: v\n---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: b\n"
+		expectAddon(t, dir, "resources/objects.yaml", good)
+		expectAddon(t, dir, "resources/objects.yaml", strings.Replace(good, "kind: Namespace\n", "", 1), "8: ", "kind")
+		expectAddon(t, dir, "resources/objects.yaml", strings.Replace(good, "  name: a\n", "", 1), "3: ", "metadata.name")
+	})
+	t.Run("yaml objects against their kinds", func(t *testing.T) {
+		kinds, err := kubeschema.Builtin()
+		require.NoError(t, err)
+		src := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\ndatta:\n  k: v\n"
+		diags, ok := CheckAddonFile(filepath.Join(dir, "resources", "cm.yaml"), []byte(src), Options{Kinds: kinds})
+		require.True(t, ok)
+		require.NotEmpty(t, diags)
+		assert.Equal(t, 5, diags[0].Range.Start.Line, diags[0].Message)
+		assert.Contains(t, diags[0].Message, "datta")
+		diags, _ = CheckAddonFile(filepath.Join(dir, "resources", "cm.yaml"), []byte(src), Options{})
+		assert.Empty(t, withoutInfo(diags), "no kinds, no schema check")
+	})
+	t.Run("a component of its own", func(t *testing.T) {
+		good := "output: {\n\tname: \"extra\"\n\ttype: \"k8s-objects\"\n\tproperties: objects: [{apiVersion: \"v1\", kind: \"Namespace\", metadata: name: context.metadata.name}]\n}\n"
+		expectAddon(t, dir, "resources/extra.cue", good)
+		expectAddon(t, dir, "resources/extra.cue", strings.Replace(good, "\ttype: \"k8s-objects\"\n", "", 1), "type")
+		expectAddon(t, dir, "resources/extra.cue", strings.Replace(good, "properties:", "propertes:", 1), "4: ", "propertes")
+		expectAddon(t, dir, "resources/extra.cue", "x: 1\n", "output")
+	})
+	t.Run("part of the template", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "template.cue"), []byte(goodAddonTemplate), 0o600))
+		good := "package main\n\n_shared: image: parameter.image\n"
+		expectAddon(t, dir, "resources/shared.cue", good)
+		expectAddon(t, dir, "resources/shared.cue", strings.Replace(good, "parameter.image", "parameter.imge", 1), "3: ", "imge")
+	})
 }

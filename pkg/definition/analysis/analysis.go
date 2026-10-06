@@ -301,8 +301,12 @@ func (d *document) textBefore(p Position) string {
 }
 
 // at builds a diagnostic spanning the token that starts at pos.
+// A position the source does not hold is its first line.
 func (d *document) at(pos token.Pos, msg string) Diagnostic {
-	start := Position{Line: pos.Line(), Column: pos.Column()}
+	start := Position{Line: 1, Column: 1}
+	if pos.IsValid() {
+		start = Position{Line: pos.Line(), Column: pos.Column()}
+	}
 	return Diagnostic{Range: Range{Start: start, End: tokenEnd(d.src, start)}, Severity: SeverityError, Message: msg}
 }
 
@@ -316,7 +320,7 @@ func tokenEnd(src []byte, p Position) Position {
 		}
 		off++
 	}
-	off += p.Column - 1
+	off += max(p.Column, 1) - 1
 	end := off
 	if end < len(src) && src[end] == '"' {
 		end++
