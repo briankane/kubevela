@@ -98,3 +98,12 @@ func TestCompletesFunctionsAndImports(t *testing.T) {
 	assert.Contains(t, itemLabels(imports), "vela/http")
 	assert.NotContains(t, itemLabels(imports), "vela/op")
 }
+
+func TestCompletesWhatAFunctionReturns(t *testing.T) {
+	c := newClient(t)
+	text := "import \"vela/http\"\n\"x\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\t_req: http.#Do & {$params: {method: \"GET\", url: \"https://x\"}}\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\", data: c: _req.$returns.}\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	line := "\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\", data: c: _req.$returns."
+	assert.Contains(t, itemLabels(complete(t, c, 7, uint32(len(line)))), "statusCode")
+}

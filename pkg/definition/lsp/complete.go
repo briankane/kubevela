@@ -38,6 +38,9 @@ func completions(text string, pos Position, published []analysis.Published) Comp
 	candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
 	candidates = append(candidates, analysis.CompletePackageMember(text, before)...)
 	candidates = append(candidates, analysis.CompleteImport(text, upToCursor)...)
+	if len(candidates) == 0 {
+		candidates = analysis.CompleteValueAt(text, len(upToCursor), nil)
+	}
 	for _, c := range candidates {
 		replaced := before[len(before)-c.Replace:]
 		start := pos
