@@ -118,10 +118,16 @@ func (c *client) read() map[string]json.RawMessage {
 }
 
 // response reads the next message, which must answer request id.
+// response reads up to the response to request id, past any notifications.
 func (c *client) response(id int) map[string]json.RawMessage {
-	m := c.read()
-	require.Equal(c.t, fmt.Sprint(id), string(m["id"]))
-	return m
+	for {
+		m := c.read()
+		if _, notification := m["method"]; notification {
+			continue
+		}
+		require.Equal(c.t, fmt.Sprint(id), string(m["id"]))
+		return m
+	}
 }
 
 func (c *client) diagnostics() PublishDiagnosticsParams {

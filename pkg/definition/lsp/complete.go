@@ -23,8 +23,9 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 )
 
-// completions are what can be typed at pos in text.
-func completions(text string, pos Position) CompletionList {
+// completions are what can be typed at pos in text, with what global
+// policies publish offered under context.custom.
+func completions(text string, pos Position, published []analysis.Published) CompletionList {
 	list := CompletionList{Items: []CompletionItem{}}
 	lines := strings.Split(text, "\n")
 	if int(pos.Line) >= len(lines) {
@@ -34,7 +35,7 @@ func completions(text string, pos Position) CompletionList {
 	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
 	var candidates []analysis.Completion
 	candidates = append(candidates, analysis.CompleteMarker(before)...)
-	candidates = append(candidates, analysis.CompleteContext(text, before)...)
+	candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
 	candidates = append(candidates, analysis.CompletePackageMember(text, before)...)
 	candidates = append(candidates, analysis.CompleteImport(text, upToCursor)...)
 	for _, c := range candidates {

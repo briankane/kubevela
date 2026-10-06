@@ -91,6 +91,12 @@ var (
 // fields that type's template can read after `context.`, or a struct field's
 // fields after `context.a.`.
 func CompleteContext(doc, before string) []Completion {
+	return CompleteContextWith(doc, before, nil)
+}
+
+// CompleteContextWith is CompleteContext, with what global policies publish
+// offered under context.custom.
+func CompleteContextWith(doc, before string, published []Published) []Completion {
 	m := contextTyped.FindStringSubmatch(before)
 	if m == nil {
 		return nil
@@ -115,6 +121,19 @@ func CompleteContext(doc, before string) []Completion {
 			}
 		}
 		return out
+	}
+	if path[0] == "custom" {
+		fields = customFields(published)
+		if len(path) == 1 {
+			var out []Completion
+			for _, f := range fields {
+				if strings.HasPrefix(f.Name, typed) {
+					out = append(out, Completion{Label: f.Name, Insert: f.Name, Replace: len(typed), Doc: f.Doc, Detail: f.Type})
+				}
+			}
+			return out
+		}
+		path = path[1:]
 	}
 	var root *ContextField
 	for i := range fields {
@@ -262,5 +281,21 @@ func CompleteImport(doc, before string) []Completion {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
+}
+
+// customFields are the fields global policies publish, each named once.
+func customFields(published []Published) []ContextField {
+	seen := map[string]bool{}
+	var out []ContextField
+	for _, p := range published {
+		for _, f := range p.Fields {
+			if !seen[f.Name] {
+				seen[f.Name] = true
+				out = append(out, f)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }

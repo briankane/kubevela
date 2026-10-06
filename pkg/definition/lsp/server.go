@@ -47,6 +47,12 @@ type Server struct {
 	shutdown bool
 	// docs is the text of each open document. Only the message loop uses it.
 	docs map[string]string
+	// folders are the workspace's roots; published is what each global policy
+	// in them publishes, by file path. Only the message loop uses them.
+	folders   []string
+	published map[string]analysis.Published
+	// events carries work back to the message loop from goroutines.
+	events chan func()
 
 	renderGo GoRenderer
 	// renders counts the renders asked of each Go file, so only the latest
@@ -68,7 +74,13 @@ func WithGoRenderer(r GoRenderer) Option {
 
 // NewServer returns a server for one client.
 func NewServer(opts ...Option) *Server {
-	s := &Server{renderGo: goloader.LoadFromFile, renders: map[string]int{}, docs: map[string]string{}}
+	s := &Server{
+		renderGo:  goloader.LoadFromFile,
+		renders:   map[string]int{},
+		docs:      map[string]string{},
+		published: map[string]analysis.Published{},
+		events:    make(chan func(), 16),
+	}
 	for _, o := range opts {
 		o(s)
 	}
@@ -76,36 +88,62 @@ func NewServer(opts ...Option) *Server {
 }
 
 // Serve answers messages from in on out until the client sends exit, in is
-// closed, or ctx is done. Messages are handled in order, so each document's
-// diagnostics are published for its latest text.
+// closed, or ctx is done. Messages, and work goroutines hand back, are handled
+// in order on one loop, so each document's diagnostics are published for its
+// latest text.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s.out = out
-	r := bufio.NewReader(in)
+	done := make(chan struct{})
+	defer close(done)
+	bodies := make(chan []byte)
+	readErr := make(chan error, 1)
+	go func() {
+		r := bufio.NewReader(in)
+		for {
+			body, err := readMessage(r)
+			if err != nil {
+				readErr <- err
+				return
+			}
+			select {
+			case bodies <- body:
+			case <-done:
+				return
+			}
+		}
+	}()
 	for {
-		if err := ctx.Err(); err != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-readErr:
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			return err
-		}
-		body, err := readMessage(r)
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		var msg message
-		if err := json.Unmarshal(body, &msg); err != nil {
-			if err := s.reply(nil, nil, &ResponseError{Code: CodeParseError, Message: err.Error()}); err != nil {
+		case work := <-s.events:
+			work()
+		case body := <-bodies:
+			var msg message
+			if err := json.Unmarshal(body, &msg); err != nil {
+				if err := s.reply(nil, nil, &ResponseError{Code: CodeParseError, Message: err.Error()}); err != nil {
+					return err
+				}
+				continue
+			}
+			if msg.Method == "exit" {
+				return nil
+			}
+			if err := s.handle(msg); err != nil {
 				return err
 			}
-			continue
-		}
-		if msg.Method == "exit" {
-			return nil
-		}
-		if err := s.handle(msg); err != nil {
-			return err
 		}
 	}
+}
+
+// post hands work to the message loop.
+func (s *Server) post(work func()) {
+	s.events <- work
 }
 
 func (s *Server) handle(msg message) error {
@@ -119,6 +157,11 @@ func (s *Server) handle(msg message) error {
 	}
 	switch msg.Method {
 	case "initialize":
+		var p InitializeParams
+		if len(msg.Params) > 0 {
+			_ = json.Unmarshal(msg.Params, &p)
+		}
+		s.folders = workspaceFolders(p)
 		result = InitializeResult{
 			Capabilities: ServerCapabilities{
 				TextDocumentSync: TextDocumentSyncOptions{
@@ -128,6 +171,13 @@ func (s *Server) handle(msg message) error {
 				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
 			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
+		}
+	case "initialized":
+		s.indexWorkspace()
+	case "workspace/didChangeWatchedFiles":
+		var p DidChangeWatchedFilesParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			s.watchedFilesChanged(p.Changes)
 		}
 	case "shutdown":
 		s.shutdown = true
@@ -173,12 +223,13 @@ func (s *Server) handle(msg message) error {
 	case "textDocument/completion":
 		var p CompletionParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = completions(s.docs[p.TextDocument.URI], p.Position)
+			result = completions(s.docs[p.TextDocument.URI], p.Position, s.publishedContext())
 		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			delete(s.docs, p.TextDocument.URI)
+			s.reindexFromDisk(pathOf(p.TextDocument.URI))
 			return s.publish(PublishDiagnosticsParams{URI: p.TextDocument.URI, Diagnostics: []Diagnostic{}})
 		}
 	default:
@@ -236,6 +287,7 @@ func renderGo(render GoRenderer, path string) RenderDefKitResult {
 // update keeps a document's new text and publishes its diagnostics.
 func (s *Server) update(uri, text string, version *int) error {
 	s.docs[uri] = text
+	s.index(pathOf(uri), []byte(text))
 	return s.publish(PublishDiagnosticsParams{URI: uri, Version: version, Diagnostics: diagnose(uri, text)})
 }
 

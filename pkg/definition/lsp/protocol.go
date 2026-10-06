@@ -276,3 +276,36 @@ type TestCase struct {
 	Pending       bool     `json:"pending,omitempty"`
 	PendingReason string   `json:"pendingReason,omitempty"`
 }
+
+// InitializeParams is what the server reads of initialize.
+type InitializeParams struct {
+	RootURI          string            `json:"rootUri"`
+	WorkspaceFolders []WorkspaceFolder `json:"workspaceFolders"`
+}
+
+// WorkspaceFolder is one root of the editor's workspace.
+type WorkspaceFolder struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+}
+
+// FileChangeType says what happened to a watched file.
+type FileChangeType int
+
+// Watched file changes.
+const (
+	FileChangeCreated FileChangeType = 1
+	FileChangeChanged FileChangeType = 2
+	FileChangeDeleted FileChangeType = 3
+)
+
+// FileEvent is one change to a watched file.
+type FileEvent struct {
+	URI  string         `json:"uri"`
+	Type FileChangeType `json:"type"`
+}
+
+// DidChangeWatchedFilesParams of workspace/didChangeWatchedFiles.
+type DidChangeWatchedFilesParams struct {
+	Changes []FileEvent `json:"changes"`
+}
