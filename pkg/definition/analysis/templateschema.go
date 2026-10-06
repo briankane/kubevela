@@ -28,6 +28,8 @@ import (
 	"cuelang.org/go/cue/literal"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 )
 
 //go:embed template.cue
@@ -192,10 +194,35 @@ func (d *document) extends() bool {
 	return d.headerString("extends") != "" || d.headerString("attributes", "extends") != ""
 }
 
-// requiredFields are the fields a template of a type must declare.
-var requiredFields = map[string][]string{
-	componentType: {"output"},
-	sourceType:    {"schema", "output"},
+// requiredFields are what a template of a type must declare: each group is
+// satisfied by any one of its fields, and is named in a message by its label.
+var requiredFields = map[string][]struct {
+	any   []string
+	label string
+}{
+	componentType:     {{[]string{"output"}, "output"}},
+	traitType:         {{[]string{"patch", "patchOutputs", "outputs"}, "patch or outputs"}},
+	policyType:        {{[]string{"output"}, "output"}},
+	applicationPolicy: {{[]string{"output"}, "output"}},
+	sourceType:        {{[]string{"schema"}, "schema"}, {[]string{"output"}, "output"}},
+}
+
+// builtinPolicies are the policies KubeVela implements in Go: their
+// definitions declare only parameters, and need no output.
+var builtinPolicies = map[string]bool{
+	v1alpha1.TopologyPolicyType:       true,
+	v1alpha1.OverridePolicyType:       true,
+	v1alpha1.DebugPolicyType:          true,
+	v1alpha1.ReplicationPolicyType:    true,
+	v1alpha1.GarbageCollectPolicyType: true,
+	v1alpha1.ReadOnlyPolicyType:       true,
+	v1alpha1.ResourceUpdatePolicyType: true,
+	v1alpha1.TakeOverPolicyType:       true,
+	v1alpha1.SharedResourcePolicyType: true,
+	v1alpha1.ApplyOncePolicyType:      true,
+	v1alpha1.EnvBindingPolicyType:     true,
+	// The deprecated definition of env-binding is named without the hyphen.
+	"envbinding": true,
 }
 
 // unreadFields are the fields a template of a type may declare that its
@@ -218,6 +245,15 @@ var typeNames = map[string]string{
 	sourceType:        "source",
 }
 
+// templateOf names a type's template in a message, with its article.
+func templateOf(kind string) string {
+	name := typeNames[kind]
+	if strings.IndexAny(name[:1], "aeiou") == 0 {
+		return "an " + name + "'s template"
+	}
+	return "a " + name + "'s template"
+}
+
 // checkTemplateFields reports a field the template's type needs and it does
 // not declare, and one it declares that its type never reads.
 func (d *document) checkTemplateFields() []Diagnostic {
@@ -227,18 +263,28 @@ func (d *document) checkTemplateFields() []Diagnostic {
 	var diags []Diagnostic
 
 	var missing []string
-	for _, name := range requiredFields[kind] {
-		if declared[name] == nil {
-			missing = append(missing, name)
+	for _, group := range requiredFields[kind] {
+		found := false
+		for _, name := range group.any {
+			found = found || declared[name] != nil
+		}
+		if !found {
+			missing = append(missing, group.label)
 		}
 	}
-	// A component that extends another inherits its output.
-	if kind == componentType && d.extends() {
+	// A component that extends another inherits its output; KubeVela's own
+	// policies are implemented in Go.
+	if (kind == componentType && d.extends()) || (kind == policyType && builtinPolicies[d.name]) {
 		missing = nil
 	}
 	if len(missing) > 0 {
 		diags = append(diags, d.at(d.template.Label.Pos(),
-			fmt.Sprintf("a %s's template must declare %s", typeNames[kind], strings.Join(missing, " and "))))
+			fmt.Sprintf("%s must declare %s", templateOf(kind), strings.Join(missing, " and "))))
+	}
+	// A global policy applies to every Application unasked, so nothing can
+	// set its parameters.
+	if f := declared[parameterLabel]; f != nil && (kind == policyType || kind == applicationPolicy) && d.headerBool("attributes", "global") {
+		diags = append(diags, d.at(f.Label.Pos(), "a global policy applies to every Application unasked, so nothing sets its parameters: remove parameter"))
 	}
 	if f := declared[parameterLabel]; f != nil {
 		switch f.Value.(type) {
@@ -251,7 +297,7 @@ func (d *document) checkTemplateFields() []Diagnostic {
 	}
 	for _, name := range unreadFields[kind] {
 		if f := declared[name]; f != nil {
-			diag := d.at(f.Label.Pos(), fmt.Sprintf("%s has no effect in a %s's template", name, typeNames[kind]))
+			diag := d.at(f.Label.Pos(), fmt.Sprintf("%s has no effect in %s", name, templateOf(kind)))
 			diag.Severity = SeverityWarning
 			diags = append(diags, diag)
 		}

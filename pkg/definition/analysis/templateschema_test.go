@@ -122,6 +122,43 @@ func TestTemplateSchemas(t *testing.T) {
 `,
 			want: []wantSev{{1, SeverityError, "vela/op"}},
 		},
+		"a trait that neither patches nor outputs": {
+			src: header("t", "trait", "") + `template: {
+	parameter: replicas: int
+}
+`,
+			want: []wantSev{{4, SeverityError, "a trait's template must declare patch or outputs"}},
+		},
+		"an outputs trait": {
+			src: header("t", "trait", "") + `template: outputs: svc: {apiVersion: "v1", kind: "Service"}
+`,
+		},
+		"a trait that patches other traits' outputs": {
+			src: header("t", "trait", "") + `template: patchOutputs: svc: metadata: labels: a: "b"
+`,
+		},
+		"a standard policy without output": {
+			src: header("p", "policy", "") + `template: parameter: replicas: int
+`,
+			want: []wantSev{{4, SeverityError, "a policy's template must declare output"}},
+		},
+		"an application-scoped policy without output": {
+			src: header("p", "policy", "\tattributes: scope: \"Application\"\n") + `template: parameter: team: string
+`,
+			want: []wantSev{{5, SeverityError, "an application-scoped policy's template must declare output"}},
+		},
+		"a built-in policy declares only its parameters": {
+			src: header("topology", "policy", "") + `template: parameter: clusters?: [...string]
+`,
+		},
+		"a global policy with parameters": {
+			src: header("p", "policy", "\tattributes: {scope: \"Application\", global: true}\n") + `template: {
+	output: labels: team: "platform"
+	parameter: team: *"platform" | string
+}
+`,
+			want: []wantSev{{7, SeverityError, "a global policy applies to every Application unasked"}},
+		},
 		"schema of the wrong shape": {
 			src: header("t", "trait", "") + `template: {
 	patch: {}
@@ -181,7 +218,10 @@ func TestTemplateSchemas(t *testing.T) {
 	output: {apiVersion: "v1", kind: "ConfigMap"}
 }
 `,
-			want: []wantSev{{5, SeverityWarning, "output has no effect in a trait's template"}},
+			want: []wantSev{
+				{4, SeverityError, "a trait's template must declare patch or outputs"},
+				{5, SeverityWarning, "output has no effect in a trait's template"},
+			},
 		},
 		"an application-scoped policy's output is closed": {
 			src: header("p", "policy", "\tattributes: scope: \"Application\"\n") + `template: {
