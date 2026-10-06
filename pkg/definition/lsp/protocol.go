@@ -311,3 +311,17 @@ type FileEvent struct {
 type DidChangeWatchedFilesParams struct {
 	Changes []FileEvent `json:"changes"`
 }
+
+// MethodDefinitions lists the workspace's definitions of a type, by name.
+// It is this server's own request.
+const MethodDefinitions = "vela/definitions"
+
+// DefinitionsParams names the type to list.
+type DefinitionsParams struct {
+	Type string `json:"type"`
+}
+
+// DefinitionsResult is the names of the definitions found.
+type DefinitionsResult struct {
+	Names []string `json:"names"`
+}

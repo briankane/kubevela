@@ -224,6 +224,11 @@ func (s *Server) handle(msg message) error {
 				result = PreviewValuesResult{YAML: yaml}
 			}
 		}
+	case MethodDefinitions:
+		var p DefinitionsParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
+		}
 	case MethodTestCases:
 		var p TestCasesParams
 		if rerr = decode(msg.Params, &p); rerr == nil {

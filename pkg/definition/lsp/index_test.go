@@ -17,6 +17,7 @@ limitations under the License.
 package lsp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,4 +119,20 @@ func TestWorkspaceIndexFindsParentsAndPackages(t *testing.T) {
 	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: greeter, LanguageID: "cue", Version: 1, Text: usesHelloSrc}}, false)
 	got = diagnosticsUntil(t, c, greeter, func(d []Diagnostic) bool { return !strings.Contains(messages(d), "ext/hello") })
 	assert.NotContains(t, messages(got), "ext/hello", "the custom provider's package is found in the workspace")
+}
+
+func TestListsTheWorkspaceDefinitions(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "web.cue"), []byte(parentSrc), 0o600))
+	c := newClient(t)
+	c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	var names []string
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end) && len(names) == 0; time.Sleep(50 * time.Millisecond) {
+		m := c.response(c.send(MethodDefinitions, DefinitionsParams{Type: "component"}, true))
+		var r DefinitionsResult
+		require.NoError(t, json.Unmarshal(m["result"], &r))
+		names = r.Names
+	}
+	assert.Equal(t, []string{"web"}, names)
 }
