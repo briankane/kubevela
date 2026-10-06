@@ -17,6 +17,7 @@ limitations under the License.
 package kubeschema
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -198,4 +199,52 @@ func TestSeveralKindsShareDefinitions(t *testing.T) {
 
 	_, ok = s.CUE(widget, GVK{Kind: "Missing"})
 	assert.False(t, ok)
+}
+
+func TestFallbackFetchesAGroupVersionOnce(t *testing.T) {
+	s := New()
+	require.NoError(t, s.AddCRD([]byte(gadgetCRD)))
+	var fetched []string
+	s.SetFallback(func(gv string) ([]byte, error) {
+		fetched = append(fetched, gv)
+		if gv == "example.com/v1" {
+			return []byte(widgets), nil
+		}
+		return nil, errors.New("not served")
+	})
+	assert.True(t, s.Has(widget))
+	assert.True(t, s.Has(widget))
+	assert.False(t, s.Has(GVK{Group: "other.io", Version: "v1", Kind: "Thing"}))
+	assert.False(t, s.Has(GVK{Group: "other.io", Version: "v1", Kind: "Thing"}))
+	assert.Equal(t, []string{"example.com/v1", "other.io/v1"}, fetched)
+	assert.NoError(t, unify(t, s, widget, `{spec: size: 1}`))
+
+	// A known kind is not fetched, and a fetched document does not replace it.
+	gadget := GVK{Group: "example.com", Version: "v1alpha1", Kind: "Gadget"}
+	assert.True(t, s.Has(gadget))
+	assert.Len(t, fetched, 2)
+}
+
+func TestFallbackKeepsKindsAlreadyKnown(t *testing.T) {
+	s := New()
+	require.NoError(t, s.AddCRD([]byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata: {name: widgets.example.com}
+spec:
+  group: example.com
+  names: {kind: Widget, plural: widgets}
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec: {type: object, properties: {colour: {type: string}}}
+`)))
+	s.SetFallback(func(string) ([]byte, error) { return []byte(widgets), nil })
+	// Widget is known from the workspace's CRD, so the cluster's is not used.
+	assert.NoError(t, unify(t, s, widget, `{spec: colour: "red"}`))
 }

@@ -63,6 +63,21 @@ type Schemas struct {
 	resources map[string]GVK
 	// converted caches each definition's CUE, and the definitions it refers to.
 	converted map[string]convertedDef
+	fallback  Fetch
+	fetched   map[string]bool
+}
+
+// Fetch returns the OpenAPI v3 document of a group-version, "apps/v1", or "v1"
+// for the core group.
+type Fetch func(groupVersion string) ([]byte, error)
+
+// SetFallback sets where the schemas of kinds the set does not have are
+// fetched from, each group-version once. A fetched document adds the kinds
+// the set does not have and replaces none: what was added directly wins.
+func (s *Schemas) SetFallback(f Fetch) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fallback, s.fetched = f, map[string]bool{}
 }
 
 type convertedDef struct {
@@ -78,6 +93,12 @@ func New() *Schemas {
 // AddDocument adds the kinds of an OpenAPI v3 document: each component
 // schema marked with x-kubernetes-group-version-kind.
 func (s *Schemas) AddDocument(data []byte) error {
+	return s.addDocument(data, true)
+}
+
+// addDocument adds a document's schemas; replace says whether its kinds
+// replace ones the set already has.
+func (s *Schemas) addDocument(data []byte, replace bool) error {
 	var doc struct {
 		Components struct {
 			Schemas map[string]schema `json:"schemas"`
@@ -89,6 +110,9 @@ func (s *Schemas) AddDocument(data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name, sch := range doc.Components.Schemas {
+		if _, known := s.defs[name]; known && !replace {
+			continue
+		}
 		s.defs[name] = sch
 		gvks, _ := sch["x-kubernetes-group-version-kind"].([]any)
 		for _, g := range gvks {
@@ -96,8 +120,9 @@ func (s *Schemas) AddDocument(data []byte) error {
 			group, _ := m["group"].(string)
 			version, _ := m["version"].(string)
 			kind, _ := m["kind"].(string)
-			if version != "" && kind != "" {
-				s.kinds[GVK{Group: group, Version: version, Kind: kind}] = name
+			gvk := GVK{Group: group, Version: version, Kind: kind}
+			if _, known := s.kinds[gvk]; version != "" && kind != "" && (replace || !known) {
+				s.kinds[gvk] = name
 			}
 		}
 	}
@@ -160,8 +185,31 @@ func withObjectFields(root schema) {
 	}
 }
 
-// Has reports whether the set has the kind's schema.
+// Has reports whether the set has the kind's schema, fetching its
+// group-version from the fallback when it has not been yet.
 func (s *Schemas) Has(gvk GVK) bool {
+	s.mu.Lock()
+	if _, ok := s.kinds[gvk]; ok {
+		s.mu.Unlock()
+		return true
+	}
+	gv := gvk.Version
+	if gvk.Group != "" {
+		gv = gvk.Group + "/" + gvk.Version
+	}
+	fetch := s.fallback
+	if fetch == nil || s.fetched[gv] {
+		s.mu.Unlock()
+		return false
+	}
+	s.fetched[gv] = true
+	s.mu.Unlock()
+
+	data, err := fetch(gv)
+	if err != nil {
+		return false
+	}
+	_ = s.addDocument(data, false)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok := s.kinds[gvk]
