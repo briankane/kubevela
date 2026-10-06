@@ -30,6 +30,7 @@ import (
 	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
 	cueerrors "cuelang.org/go/cue/errors"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/literal"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
@@ -319,4 +320,35 @@ func fieldIn(f *ast.Field, name string) (*ast.Field, bool) {
 // lookup is cue.Value.LookupPath for one selector.
 func lookup(v cue.Value, s cue.Selector) cue.Value {
 	return v.LookupPath(cue.MakePath(s))
+}
+
+// Template is a definition's template as the controller stores it in
+// spec.schematic.cue.template: the file's imports and the template's body.
+type Template struct {
+	Name string
+	Type string
+	Body string
+}
+
+// TemplateSource reads the template of the definition in src. It is false for
+// a file that is not a definition or does not parse.
+func TemplateSource(path string, src []byte) (Template, bool) {
+	f, err := parser.ParseFile(path, src, parser.ParseComments)
+	if err != nil {
+		return Template{}, false
+	}
+	d, ok := newDocument(path, src, f)
+	if !ok {
+		return Template{}, false
+	}
+	decls := make([]ast.Decl, 0, len(d.imports)+len(d.template.Value.(*ast.StructLit).Elts))
+	for _, imp := range d.imports {
+		decls = append(decls, imp)
+	}
+	decls = append(decls, d.template.Value.(*ast.StructLit).Elts...)
+	body, err := format.Node(&ast.File{Decls: decls})
+	if err != nil {
+		return Template{}, false
+	}
+	return Template{Name: d.name, Type: d.typ, Body: string(body)}, true
 }
