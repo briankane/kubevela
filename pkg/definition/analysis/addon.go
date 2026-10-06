@@ -27,6 +27,7 @@ import (
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
+	"cuelang.org/go/cue/ast/astutil"
 	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
 	cueerrors "cuelang.org/go/cue/errors"
@@ -47,6 +48,8 @@ func isYAMLExt(ext string) bool { return ext == ".yaml" || ext == ".yml" }
 const (
 	addonMetadataFile    = "metadata.yaml"
 	addonTemplateFile    = "template.cue"
+	addonTemplateYAML    = "template.yaml"
+	addonNotesFile       = "NOTES.cue"
 	addonParameterFile   = "parameter.cue"
 	addonResourcesDir    = "resources"
 	addonConfigTemplates = "config-templates"
@@ -112,7 +115,7 @@ template: #velaConfigTemplate
 	alias?:       string
 	description?: string
 	sensitive?:   bool
-	scope?:       "system" | "namespace"
+	scope?:       "system" | "namespace" | "project"
 }
 #velaConfigTemplate: {
 	output?: #velaConfigSecret
@@ -160,17 +163,22 @@ const uiSchemaCUE = `
 }
 `
 
-// uiSchemaName is the name VelaUX finds a definition's UI schema by: an
-// addon installs each file as a ConfigMap named after it.
-var uiSchemaName = regexp.MustCompile(`^(component|trait|policy|workflowstep)-uischema-[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+// uiSchemaName is the name VelaUX finds a UI schema by: a definition's, a
+// config template's or an addon's own. An addon installs each file as a
+// ConfigMap named after it.
+var uiSchemaName = regexp.MustCompile(`^(component|trait|policy|workflowstep|config|addon)-uischema-[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 var configPackages = &packageSet{list: func() []cuexruntime.Package { return []cuexruntime.Package{config.Package} }}
 
-// AddonRoot is the addon a file belongs to: the nearest folder above it, at
-// most three up, holding a metadata.yaml.
+// addonDepth is how far above a file its addon's root may be: resources/
+// can nest a chart's layout several folders deep.
+const addonDepth = 8
+
+// AddonRoot is the addon a file belongs to: the nearest folder above it
+// holding a metadata.yaml.
 func AddonRoot(path string) (string, bool) {
 	dir := filepath.Dir(path)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < addonDepth; i++ {
 		if _, err := os.Stat(filepath.Join(dir, addonMetadataFile)); err == nil {
 			return dir, true
 		}
@@ -207,13 +215,19 @@ func CheckAddonFile(path string, src []byte, opts Options) ([]Diagnostic, bool) 
 		diags = []Diagnostic{d.warnFirstLine("KubeVela reads an addon's metadata from metadata.yaml: this file is not read")}
 	case rel == addonTemplateFile:
 		diags = d.checkAddonTemplate(root)
-	case len(parts) == 2 && parts[0] == addonResourcesDir && (isYAMLExt(ext)):
+	case rel == addonTemplateYAML:
+		diags = d.checkTemplateYAML(root)
+	case rel == addonParameterFile || rel == addonResourcesDir+"/"+addonParameterFile:
+		diags = d.checkAddonParameter()
+	case rel == addonNotesFile:
+		diags = d.checkNotes(root)
+	case len(parts) >= 2 && parts[0] == addonResourcesDir && isYAMLExt(ext):
 		diags = d.checkObjectsYAML()
-	case len(parts) == 2 && parts[0] == addonResourcesDir && ext == cueExt && parts[1] != addonParameterFile:
+	case len(parts) >= 2 && parts[0] == addonResourcesDir && ext == cueExt:
 		diags = d.checkAddonResource(root)
 	case len(parts) == 2 && parts[0] == addonConfigTemplates && ext == cueExt:
 		diags = d.checkConfigTemplate()
-	case len(parts) == 2 && (parts[0] == addonUISchemas || parts[0] == "uischemas") && (isYAMLExt(ext)):
+	case len(parts) == 2 && (parts[0] == addonUISchemas || parts[0] == "uischemas") && isYAMLExt(ext):
 		diags = d.checkUISchema(parts[0])
 	case len(parts) == 2 && parts[0] == addonViews && ext == cueExt:
 		diags = d.checkView()
@@ -459,7 +473,7 @@ func (d *document) checkTyped(spec cue.Value) []Diagnostic {
 				if it.Value().LookupPath(cue.ParsePath(field)).Exists() {
 					continue
 				}
-				pos := it.Value().Pos()
+				pos := valuePos(it.Value())
 				if !pos.IsValid() || pos.Filename() != d.path {
 					pos = d.fieldPos([]string{"output"})
 				}
@@ -469,7 +483,7 @@ func (d *document) checkTyped(spec cue.Value) []Diagnostic {
 				traits, _ := it.Value().LookupPath(cue.ParsePath("traits")).List()
 				for j := 0; traits.Next(); j++ {
 					if !traits.Value().LookupPath(cue.ParsePath("type")).Exists() {
-						diags = append(diags, d.at(traits.Value().Pos(), fmt.Sprintf("output.spec.components[%d].traits[%d] has no type", i, j)))
+						diags = append(diags, d.at(valuePos(traits.Value()), fmt.Sprintf("output.spec.components[%d].traits[%d] has no type", i, j)))
 					}
 				}
 			}
@@ -482,7 +496,7 @@ func (d *document) checkTyped(spec cue.Value) []Diagnostic {
 }
 
 // addonPackage is what pkg/addon compiles beside a file of package pkg:
-// parameter.cue, if there is one, and the resources/*.cue of the package,
+// parameter.cue, if there is one, and the CUE under resources/ of the package,
 // less the file at self. extra is the context they are given.
 func addonPackage(root, pkg, self string) (param *ast.File, resources []*ast.File, extra string) {
 	extra = addonContextCUE + addonMetaCUE + addonApplicationCUE
@@ -490,13 +504,23 @@ func addonPackage(root, pkg, self string) (param *ast.File, resources []*ast.Fil
 	if _, err := os.Stat(paramPath); err != nil {
 		paramPath = filepath.Join(root, addonResourcesDir, addonParameterFile)
 	}
+	// pkg/addon always gives parameter the enable's arguments, among them
+	// the clusters --clusters names, which no parameter.cue need declare.
 	if f, ok := addonFile(paramPath, pkg, true); ok {
 		param = f
-		extra += "#velaAddonParameter: parameter\n"
+		extra += "#velaAddonParameter: parameter & {clusters?: [...string]}\n"
+	} else {
+		extra += "parameter: {...}\n"
 	}
-	paths, _ := filepath.Glob(filepath.Join(root, addonResourcesDir, "*.cue"))
+	var paths []string
+	_ = filepath.WalkDir(filepath.Join(root, addonResourcesDir), func(p string, e os.DirEntry, err error) error {
+		if err == nil && !e.IsDir() && filepath.Ext(p) == cueExt {
+			paths = append(paths, p)
+		}
+		return nil
+	})
 	for _, r := range paths {
-		if filepath.Base(r) == addonParameterFile || r == self {
+		if r == filepath.Join(root, addonResourcesDir, addonParameterFile) || r == self {
 			continue
 		}
 		if f, ok := addonFile(r, pkg, false); ok {
@@ -589,6 +613,7 @@ func (d *document) checkConfigTemplate() []Diagnostic {
 		extra += "#velaAddonParameter: template.parameter\n"
 	}
 	v, diags := d.build(cuecontext.New(), configPackages.imports(), extra)
+	diags = ignoredKeys(diags, "metadata.")
 	if !v.Exists() {
 		return diags
 	}
@@ -599,8 +624,9 @@ func (d *document) checkConfigTemplate() []Diagnostic {
 	return diags
 }
 
-// checkView checks a VelaQL view: it compiles with the workflow packages, and
-// returns its status or export.
+// checkView checks a VelaQL view: it compiles with the workflow packages.
+// A query returns status unless it names another field, or the view's
+// export names one, which must exist.
 func (d *document) checkView() []Diagnostic {
 	if diags, ok := d.parse(); !ok {
 		return diags
@@ -609,8 +635,20 @@ func (d *document) checkView() []Diagnostic {
 	if !v.Exists() {
 		return diags
 	}
-	if !v.LookupPath(cue.ParsePath("status")).Exists() && !v.LookupPath(cue.ParsePath("export")).Exists() {
-		diags = append(diags, d.firstLine("a view must set status or export: it is what the query returns"))
+	if export := v.LookupPath(cue.ParsePath("export")); export.Exists() {
+		name, err := export.String()
+		switch {
+		case err != nil:
+			diags = append(diags, d.at(d.fieldPos([]string{"export"}), "export names the field a query returns: it is a string"))
+		case !v.LookupPath(cue.ParsePath(name)).Exists():
+			diags = append(diags, d.at(d.fieldPos([]string{"export"}), fmt.Sprintf("export names %s, which the view does not set", name)))
+		}
+		return diags
+	}
+	if !v.LookupPath(cue.ParsePath("status")).Exists() {
+		diag := d.firstLine("the view has no status, which a query returns unless it names another field, as in view{...}.result")
+		diag.Severity = SeverityInfo
+		diags = append(diags, diag)
 	}
 	return diags
 }
@@ -630,7 +668,7 @@ func (d *document) checkUISchema(dir string) []Diagnostic {
 		}
 		diags = append(diags, d.warnFirstLine(fmt.Sprintf("VelaUX finds a UI schema by its name, %s: this file installs as %s, which nothing reads", want, name)))
 	}
-	f, err := cueyaml.Extract(d.path, d.src)
+	f, err := d.extractYAML()
 	if err != nil {
 		return append(diags, d.fromErrors(err, "")...)
 	}
@@ -662,7 +700,7 @@ const addonMetadataCUE = `
 // checkAddonMetadata checks metadata.yaml against the Meta type pkg/addon
 // decodes it into, which drops a key it does not know.
 func (d *document) checkAddonMetadata() []Diagnostic {
-	f, err := cueyaml.Extract(d.path, d.src)
+	f, err := d.extractYAML()
 	if err != nil {
 		return d.fromErrors(err, "")
 	}
@@ -678,14 +716,28 @@ func (d *document) checkAddonMetadata() []Diagnostic {
 		}
 	}
 	schema := ctx.CompileString(addonMetaCUE + addonMetadataCUE).LookupPath(cue.ParsePath("#metadata"))
-	return append(diags, d.fromErrors(schema.Unify(data).Validate(), "#metadata")...)
+	return append(diags, ignoredKeys(d.fromErrors(schema.Unify(data).Validate(), "#metadata"), "")...)
+}
+
+// ignoredKeys turns each unknown key under prefix into a warning: the Go
+// type KubeVela decodes it into drops a key it does not know, so it does
+// nothing rather than fails.
+func ignoredKeys(diags []Diagnostic, prefix string) []Diagnostic {
+	for i, diag := range diags {
+		key, ok := strings.CutSuffix(diag.Message, ": field not allowed")
+		if ok && strings.HasPrefix(key, prefix) && !strings.Contains(strings.TrimPrefix(key, prefix), ".") {
+			diags[i].Severity = SeverityWarning
+			diags[i].Message = "KubeVela does not read " + key + ": it is ignored"
+		}
+	}
+	return diags
 }
 
 // checkObjectsYAML checks a stream of Kubernetes objects: each names its
 // apiVersion, kind and name, and matches its kind's schema where one is
 // known.
 func (d *document) checkObjectsYAML() []Diagnostic {
-	f, err := cueyaml.Extract(d.path, d.src)
+	f, err := d.extractYAML()
 	if err != nil {
 		return d.fromErrors(err, "")
 	}
@@ -787,4 +839,84 @@ func valuePos(v cue.Value) token.Pos {
 		return token.NoPos
 	}
 	return valuePos(it.Value())
+}
+
+// checkTemplateYAML checks template.yaml as pkg/addon decodes it: an
+// Application, beside no template.cue.
+func (d *document) checkTemplateYAML(root string) []Diagnostic {
+	var diags []Diagnostic
+	if _, err := os.Stat(filepath.Join(root, addonTemplateFile)); err == nil {
+		diags = append(diags, d.firstLine("an addon has template.cue or template.yaml, not both: KubeVela will not enable it"))
+	}
+	f, err := d.extractYAML()
+	if err != nil {
+		return append(diags, d.fromErrors(err, "")...)
+	}
+	ctx := cuecontext.New()
+	data := ctx.BuildFile(f)
+	if data.Err() != nil {
+		return append(diags, d.fromErrors(data.Err(), "")...)
+	}
+	schema := ctx.CompileString(addonApplicationCUE + "#output: #addonApplication & {\n\tapiVersion?: \"core.oam.dev/v1beta1\"\n\tkind?: \"Application\"\n}\n").LookupPath(cue.ParsePath("#output"))
+	diags = append(diags, d.fromErrors(schema.Unify(data).Validate(), "#output")...)
+	return append(diags, d.checkTyped(data.LookupPath(cue.ParsePath("spec")))...)
+}
+
+// checkAddonParameter checks an addon's parameter.cue: it compiles and
+// declares parameter, which the addon's form is generated from.
+func (d *document) checkAddonParameter() []Diagnostic {
+	if diags, ok := d.parse(); !ok {
+		return diags
+	}
+	_, diags := d.build(cuecontext.New(), nil, "")
+	return append(diags, d.requireFields("the addon's parameters, and its form, are read from it", parameterLabel)...)
+}
+
+// checkNotes checks NOTES.cue as an addon's install renders it: with its
+// parameter and the installer's context, its notes a string. A failure
+// there is only logged, so each problem is a warning.
+func (d *document) checkNotes(root string) []Diagnostic {
+	if diags, ok := d.parse(); !ok {
+		return asWarnings(diags)
+	}
+	param, _, _ := addonPackage(root, addonMainPackage, d.path)
+	extra := addonMetaCUE + "context: {\n\tmetadata?: #velaAddonMeta\n\tinstaller: {...}\n}\n"
+	if param != nil {
+		extra += "#velaAddonParameter: parameter\n"
+	}
+	v, diags := d.build(cuecontext.New(), nil, extra, withParam(param)...)
+	if v.Exists() {
+		// What the installer passes is known only at install, so an
+		// interpolation of it is incomplete here, not wrong.
+		notes := v.LookupPath(cue.ParsePath("notes"))
+		if !notes.Exists() || (notes.Err() == nil && notes.IncompleteKind() != cue.StringKind) {
+			diags = append(diags, d.firstLine("notes must be a string: it is what an install prints"))
+		}
+	}
+	return asWarnings(diags)
+}
+
+func asWarnings(diags []Diagnostic) []Diagnostic {
+	for i := range diags {
+		diags[i].Severity = SeverityWarning
+	}
+	return diags
+}
+
+// extractYAML reads the document as YAML, without its null values: the Go
+// types KubeVela decodes into read a null as the zero value, as if absent.
+func (d *document) extractYAML() (*ast.File, error) {
+	f, err := cueyaml.Extract(d.path, d.src)
+	if err != nil {
+		return nil, err
+	}
+	astutil.Apply(f, func(c astutil.Cursor) bool {
+		if field, ok := c.Node().(*ast.Field); ok {
+			if lit, ok := field.Value.(*ast.BasicLit); ok && lit.Kind == token.NULL {
+				c.Delete()
+			}
+		}
+		return true
+	}, nil)
+	return f, nil
 }

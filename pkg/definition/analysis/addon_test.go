@@ -156,9 +156,9 @@ func TestAddonConfigTemplate(t *testing.T) {
 			src:  strings.Replace(goodConfigTemplate, `"system"`, `"cluster"`, 1),
 			want: []string{"7: ", "scope"},
 		},
-		"a metadata key misspelt": {
+		"a metadata key misspelt, which is ignored": {
 			src:  strings.Replace(goodConfigTemplate, "alias:", "alais:", 1),
-			want: []string{"5: ", "alais"},
+			want: []string{"5: KubeVela does not read metadata.alais"},
 		},
 		"no parameter": {
 			src:  "metadata: name: \"x\"\ntemplate: output: type: \"Opaque\"\n",
@@ -254,6 +254,8 @@ func TestAddonUISchema(t *testing.T) {
 			src:  strings.Replace(goodUISchema, "sort: 1", "sort: first", 1),
 			want: []string{"3: ", "sort"},
 		},
+		"a config template's form":  {file: "config-uischema-image-registry.yaml", src: goodUISchema},
+		"an addon's parameter form": {file: "addon-uischema-my-addon.yaml", src: goodUISchema},
 		"a name KubeVela does not read": {
 			file: "webservice.yaml",
 			src:  goodUISchema,
@@ -280,9 +282,11 @@ func TestAddonView(t *testing.T) {
 	dir := addonDir(t)
 	good := "import \"vela/ql\"\n\nparameter: name: string\nresources: ql.#ListResourcesInApp & {app: name: parameter.name}\nstatus: resources.list\n"
 	assert.Empty(t, checkAddon(t, dir, "views/app-resources.cue", good))
-	assert.Empty(t, checkAddon(t, dir, "views/app-resources.cue", strings.Replace(good, "status:", "export:", 1)))
-	got := checkAddon(t, dir, "views/app-resources.cue", strings.Replace(good, "status:", "result:", 1))
-	assert.Contains(t, strings.Join(got, "\n"), "status")
+	assert.Empty(t, checkAddon(t, dir, "views/app-resources.cue", strings.Replace(good, "status:", "result:", 1)), "a query may name the field it exports")
+	diags, _ := CheckAddonFile(filepath.Join(dir, "views", "app-resources.cue"), []byte(strings.Replace(good, "status:", "result:", 1)), Options{})
+	require.Len(t, diags, 1)
+	assert.Equal(t, SeverityInfo, diags[0].Severity)
+	expectAddon(t, dir, "views/app-resources.cue", strings.Replace(good, "status:", "export: \"result\"\nresults:", 1), "5: ", "result")
 }
 
 func TestNotAnAddonFile(t *testing.T) {
@@ -333,6 +337,9 @@ func TestAddonMetadata(t *testing.T) {
 	dir := addonDir(t)
 	expectAddon(t, dir, "metadata.yaml", goodMetadata)
 	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "tags:", "tag:", 1), "5: ", "tag")
+	diags, _ := CheckAddonFile(filepath.Join(dir, "metadata.yaml"), []byte(strings.Replace(goodMetadata, "tags:", "tag:", 1)), Options{})
+	require.NotEmpty(t, diags)
+	assert.Equal(t, SeverityWarning, diags[0].Severity, "KubeVela drops a key it does not know, so it is a warning")
 	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "runtimeCluster: true", "runtimeCluster: yes please", 1), "8: ", "runtimeCluster")
 	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "version: 1.0.0\n", "", 1), "version")
 	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "  vela:", "  velaa:", 1), "12: ", "velaa")
@@ -345,7 +352,7 @@ func TestAddonResources(t *testing.T) {
 		good := "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: a\ndata:\n  k: v\n---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: b\n"
 		expectAddon(t, dir, "resources/objects.yaml", good)
 		expectAddon(t, dir, "resources/objects.yaml", strings.Replace(good, "kind: Namespace\n", "", 1), "8: ", "kind")
-		expectAddon(t, dir, "resources/objects.yaml", strings.Replace(good, "  name: a\n", "", 1), "3: ", "metadata.name")
+		expectAddon(t, dir, "resources/objects.yaml", strings.Replace(good, "  name: a\n", "", 1), "1: ", "metadata.name")
 	})
 	t.Run("yaml objects against their kinds", func(t *testing.T) {
 		kinds, err := kubeschema.Builtin()
@@ -372,4 +379,38 @@ func TestAddonResources(t *testing.T) {
 		expectAddon(t, dir, "resources/shared.cue", good)
 		expectAddon(t, dir, "resources/shared.cue", strings.Replace(good, "parameter.image", "parameter.imge", 1), "3: ", "imge")
 	})
+}
+
+func TestAddonTemplateYAML(t *testing.T) {
+	dir := addonDir(t)
+	good := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: my-addon\nspec:\n  components:\n  - name: a\n    type: webservice\n"
+	expectAddon(t, dir, "template.yaml", good)
+	expectAddon(t, dir, "template.yaml", strings.Replace(good, "components:", "componets:", 1), "6: ", "componets")
+	expectAddon(t, dir, "template.yaml", strings.Replace(good, "    type: webservice\n", "", 1), "type")
+	expectAddon(t, dir, "template.yaml", strings.Replace(good, "kind: Application", "kind: Deployment", 1), "2: ", "Application")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "template.cue"), []byte(goodAddonTemplate), 0o600))
+	expectAddon(t, dir, "template.yaml", good, "template.cue")
+}
+
+func TestAddonParameterAndNotes(t *testing.T) {
+	dir := addonDir(t)
+	expectAddon(t, dir, "parameter.cue", "parameter: {\n\timage: *\"nginx\" | string\n}\nconst: x: 1\n")
+	expectAddon(t, dir, "parameter.cue", "params: image: string\n", "parameter")
+	expectAddon(t, dir, "parameter.cue", "parameter: image: string & 1\n", "1: ")
+	expectAddon(t, dir, "NOTES.cue", "notes: \"Installed \\(parameter.image) on \\(context.installer.cluster)\"\n")
+	diags, ok := CheckAddonFile(filepath.Join(dir, "NOTES.cue"), []byte("info: \"x\"\n"), Options{})
+	require.True(t, ok)
+	require.Len(t, diags, 1)
+	assert.Equal(t, SeverityWarning, diags[0].Severity, "notes never fail an install")
+	assert.Contains(t, diags[0].Message, "notes")
+}
+
+func TestAddonNestedResources(t *testing.T) {
+	dir := addonDir(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "resources", "components", "deep"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "resources", "components", "deep", "shared.cue"), []byte("package main\n\n_controller: {name: \"c\", type: \"webservice\"}\n"), 0o600))
+	tmpl := "package main\n\noutput: {apiVersion: \"core.oam.dev/v1beta1\", kind: \"Application\", spec: components: [_controller]}\n"
+	expectAddon(t, dir, "template.cue", tmpl)
+	expectAddon(t, dir, "resources/components/deep/objects.yaml", "apiVersion: v1\nkind: Namespace\n", "metadata.name")
+	expectAddon(t, dir, "resources/components/deep/objects.yaml", "---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: a\n")
 }
