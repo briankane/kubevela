@@ -97,20 +97,20 @@ func TestAnalyzeDiagnostics(t *testing.T) {
 		"unknown vela package": {
 			src: `import "vela/nope"
 
-` + componentHeader + `template: output: kind: nope.#X
+` + componentHeader + `template: output: {apiVersion: "v1", kind: "ConfigMap"} & {kind: nope.#X}
 `,
 			want: []want{{1, "vela/nope"}},
 		},
 		"workflow-only package is not available to a component": {
 			src: `import "vela/op"
 
-` + componentHeader + `template: output: op.#Apply
+` + componentHeader + `template: output: {apiVersion: "v1", kind: "ConfigMap"} & {op.#Apply}
 `,
 			want: []want{{1, "vela/op"}},
 		},
 		"syntax error": {
 			src: componentHeader + `template: {
-	output: {
+	output: {apiVersion: "v1", kind: "ConfigMap"
 		kind: "Deployment"
 }
 `,
@@ -118,7 +118,7 @@ func TestAnalyzeDiagnostics(t *testing.T) {
 		},
 		"optional context field tested for existence": {
 			src: componentHeader + `template: {
-	output: {
+	output: {apiVersion: "v1", kind: "ConfigMap"
 		if context.config != _|_ {
 			env: context.config
 		}
@@ -129,27 +129,42 @@ func TestAnalyzeDiagnostics(t *testing.T) {
 		"trait reads the component's output": {
 			src: traitHeader + `template: {
 	patch: metadata: labels: app: context.output.metadata.name
-	outputs: svc: metadata: name: context.name
+	outputs: svc: {apiVersion: "v1", kind: "Service"}, outputs: svc: metadata: name: context.name
 }
 `,
 		},
 		"component has no traitType": {
-			src: componentHeader + `template: output: metadata: name: context.traitType
+			src: componentHeader + `template: output: {apiVersion: "v1", kind: "ConfigMap"} & {metadata: name: context.traitType}
 `,
 			want: []want{{5, "context.traitType is available to traits, not components"}},
 		},
 		"a step field read from a component": {
-			src: componentHeader + `template: output: metadata: name: context.stepName
+			src: componentHeader + `template: output: {apiVersion: "v1", kind: "ConfigMap"} & {metadata: name: context.stepName}
 `,
 			want: []want{{5, "context.stepName is available to workflow step templates, not components"}},
 		},
+		"context read inside an undecided if": {
+			src: componentHeader + `template: {
+	output: {
+		apiVersion: "v1"
+		kind:       "ConfigMap"
+		if parameter.on {
+			metadata: name: context.nmae
+		}
+		data: v: "\(context.clusterVersion.majr)"
+	}
+	parameter: on: *false | bool
+}
+`,
+			want: []want{{10, "context has no field nmae"}, {12, "context.clusterVersion has no field majr"}},
+		},
 		"a field no definition can read": {
-			src: componentHeader + `template: output: metadata: name: context.nosuch
+			src: componentHeader + `template: output: {apiVersion: "v1", kind: "ConfigMap"} & {metadata: name: context.nosuch}
 `,
 			want: []want{{5, "undefined field: nosuch"}},
 		},
 		"fields the render carries beyond the registry's": {
-			src: componentHeader + `template: output: {
+			src: componentHeader + `template: output: {apiVersion: "v1", kind: "ConfigMap"
 	if context.config != _|_ {
 		env: context.config
 	}
@@ -181,7 +196,7 @@ template: {
 			src: `"my-policy": {
 	type: "policy"
 }
-template: output: {
+template: output: {apiVersion: "v1", kind: "ConfigMap"
 	name:    context.policyName
 	cluster: context.cluster
 	bad:     context.traitType
@@ -191,7 +206,7 @@ template: output: {
 		},
 		"parameter field not declared": {
 			src: componentHeader + `template: {
-	output: spec: {
+	output: {apiVersion: "v1", kind: "ConfigMap"}, output: spec: {
 		replicas: parameter.replcas
 		image:    parameter.nested.b
 		labels:   parameter.labels.anything
@@ -209,7 +224,7 @@ template: output: {
 		},
 		"parameter field read inside a list comprehension": {
 			src: componentHeader + `template: {
-	output: spec: containers: [for c in parameter.containers {
+	output: {apiVersion: "v1", kind: "ConfigMap"}, output: spec: containers: [for c in parameter.containers {
 		image: parameter.imagee
 	}]
 	parameter: {
@@ -222,8 +237,8 @@ template: output: {
 		},
 		"context typo does not hide a parameter typo": {
 			src: componentHeader + `template: {
-	output: metadata: name: context.nmae
-	output: spec: image: parameter.imagee
+	output: {apiVersion: "v1", kind: "ConfigMap"}, output: metadata: name: context.nmae
+	output: {apiVersion: "v1", kind: "ConfigMap"}, output: spec: image: parameter.imagee
 	parameter: image: string
 }
 `,
@@ -231,7 +246,7 @@ template: output: {
 		},
 		"field declared and read inside an undecided if": {
 			src: componentHeader + `template: {
-	output: spec: {
+	output: {apiVersion: "v1", kind: "ConfigMap"}, output: spec: {
 		if parameter.outer != _|_ {
 			tmps: [1, 2]
 			items: [for x in tmps if parameter.outer {x}]
@@ -246,7 +261,7 @@ template: output: {
 	type:       "component"
 	descripton: "typo"
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{3, "descripton"}},
 		},
@@ -265,7 +280,7 @@ template: patch: {}
 	type: "component"
 	attributes: workloadd: definition: {apiVersion: "apps/v1", kind: "Deployment"}
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{3, "workloadd"}},
 		},
@@ -283,7 +298,7 @@ template: patch: {}
 	type: "component"
 	attributes: appliesToWorkloads: ["deployments.apps"]
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{3, "appliesToWorkloads"}},
 		},
@@ -291,7 +306,7 @@ template: output: {}
 			src: `"x": {
 	attributes: {}
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{1, "type"}},
 		},
@@ -299,7 +314,7 @@ template: output: {}
 			src: `"x": {
 	type: "widget"
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{2, "widget"}},
 		},
@@ -310,7 +325,7 @@ template: output: {}
 		phase: "ok"
 		"""#
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{3, "message"}},
 		},

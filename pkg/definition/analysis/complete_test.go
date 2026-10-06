@@ -70,3 +70,36 @@ func TestCompleteMarkers(t *testing.T) {
 		assert.Empty(t, CompleteMarker("// +usage=How many"))
 	})
 }
+
+func TestCompleteContext(t *testing.T) {
+	component := "\"c\": {\n\ttype: \"component\"\n}\ntemplate: output: metadata: name: "
+	t.Run("the fields a type's template can read", func(t *testing.T) {
+		cs := CompleteContext(component, "context.")
+		assert.Contains(t, labels(cs), "appName")
+		assert.Contains(t, labels(cs), "componentName")
+		assert.NotContains(t, labels(cs), "traitType")
+		for _, c := range cs {
+			if c.Label == "appName" {
+				assert.Equal(t, "The Application's name", c.Doc)
+				assert.Equal(t, "string", c.Detail)
+			}
+		}
+	})
+	t.Run("narrowed by what is typed", func(t *testing.T) {
+		cs := CompleteContext(component, "\t\tname: context.appR")
+		assert.ElementsMatch(t, []string{"appRevision", "appRevisionNum"}, labels(cs))
+		assert.Equal(t, 4, cs[0].Replace)
+	})
+	t.Run("the fields of a struct field", func(t *testing.T) {
+		cs := CompleteContext(component, "context.clusterVersion.")
+		assert.ElementsMatch(t, []string{"gitVersion", "major", "minor", "platform"}, labels(cs))
+	})
+	t.Run("a trait's own fields", func(t *testing.T) {
+		trait := "\"t\": {\n\ttype: \"trait\"\n}\ntemplate: patch: {}\n"
+		assert.Contains(t, labels(CompleteContext(trait, "context.")), "traitType")
+	})
+	t.Run("nothing but after context", func(t *testing.T) {
+		assert.Empty(t, CompleteContext(component, "mycontext."))
+		assert.Empty(t, CompleteContext(component, "parameter."))
+	})
+}

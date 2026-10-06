@@ -38,6 +38,7 @@ const brokenDef = `"my-worker": {
 }
 template: {
 	output: metadata: name: context.nmae
+	output: {apiVersion: "v1", kind: "ConfigMap"}
 }
 `
 
@@ -47,6 +48,7 @@ const fixedDef = `"my-worker": {
 }
 template: {
 	output: metadata: name: context.name
+	output: {apiVersion: "v1", kind: "ConfigMap"}
 }
 `
 

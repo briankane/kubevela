@@ -135,8 +135,9 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkUsage()...)
 	diags = append(diags, d.checkHeader()...)
 	diags = append(diags, d.checkTemplateFields()...)
+	diags = append(diags, d.checkObjects()...)
 	diags = append(diags, d.explainContext(d.checkTemplate())...)
-	res.Diagnostics = sortDiagnostics(firstPerPosition(diags))
+	res.Diagnostics = sortDiagnostics(firstPerPosition(withoutVagueInterpolation(diags)))
 	return res
 }
 
@@ -184,6 +185,7 @@ func (d *document) compileFile() *ast.File {
 		decls = append(decls, imp)
 	}
 	decls = append(decls, d.template)
+	decls = append(decls, contextType(d.typ)...)
 	if _, ok := fieldIn(d.template, parameterLabel); ok {
 		decls = append(decls, closedParameterField())
 	}
@@ -319,6 +321,25 @@ func trimLabel(path []string, label string) []string {
 		return path[1:]
 	}
 	return path
+}
+
+// withoutVagueInterpolation drops CUE's "invalid interpolation" on a line
+// that has a diagnostic saying what in the interpolation is wrong.
+func withoutVagueInterpolation(diags []Diagnostic) []Diagnostic {
+	specific := map[int]bool{}
+	for _, d := range diags {
+		if !strings.HasSuffix(d.Message, "invalid interpolation") {
+			specific[d.Range.Start.Line] = true
+		}
+	}
+	out := diags[:0]
+	for _, d := range diags {
+		if strings.HasSuffix(d.Message, "invalid interpolation") && specific[d.Range.Start.Line] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // firstPerPosition keeps one diagnostic per position: CUE often reports one

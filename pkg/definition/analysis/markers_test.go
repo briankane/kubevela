@@ -174,7 +174,7 @@ func TestMarkers(t *testing.T) {
 	// +usage=not read here
 	type: "component"
 }
-template: output: {}
+template: output: {apiVersion: "v1", kind: "ConfigMap"}
 `,
 			want: []want{{2, "markers have no effect in the definition's header"}},
 		},

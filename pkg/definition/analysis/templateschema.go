@@ -97,6 +97,101 @@ func unbound(f *ast.Field) *ast.Field {
 	return f
 }
 
+// objectFields are the template fields each type renders Kubernetes objects
+// from: a single object, or a map of them.
+var objectFields = map[string]struct{ single, many bool }{
+	componentType: {single: true, many: true},
+	traitType:     {many: true},
+	policyType:    {single: true, many: true},
+}
+
+// checkObjects reports output, or an entry of outputs, written as a struct
+// in the template without an apiVersion or kind, so not a Kubernetes object.
+// Only what the template spells out is judged: an object read from a
+// parameter or a helper, or one with an embedding, is filled in at render.
+// A definition that extends another inherits what it leaves out.
+func (d *document) checkObjects() []Diagnostic {
+	which, ok := objectFields[d.templateKind()]
+	if !ok || d.extends() {
+		return nil
+	}
+	var diags []Diagnostic
+	// check judges an object from every declaration of it, which a template
+	// may split, as in `output: {...}` and later `output: kind: "X"`.
+	check := func(path string, decls []*ast.Field) {
+		declared := map[string]*ast.Field{}
+		for _, f := range decls {
+			s, ok := f.Value.(*ast.StructLit)
+			if !ok || hasEmbedding(s) {
+				return
+			}
+			topLevelFields(s, declared)
+		}
+		var missing []string
+		for _, name := range []string{"apiVersion", "kind"} {
+			if declared[name] == nil {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			diags = append(diags, d.at(decls[0].Label.Pos(), fmt.Sprintf("%s is not a Kubernetes object: it has no %s", path, strings.Join(missing, " or "))))
+		}
+	}
+	all := map[string][]*ast.Field{}
+	allTopLevelFields(d.template.Value, all)
+	if decls := all["output"]; which.single && len(decls) > 0 {
+		check("output", decls)
+	}
+	if decls := all["outputs"]; which.many {
+		entries := map[string][]*ast.Field{}
+		for _, f := range decls {
+			allTopLevelFields(f.Value, entries)
+		}
+		for name, e := range entries {
+			check("outputs."+name, e)
+		}
+	}
+	return diags
+}
+
+// allTopLevelFields collects every declaration of each field a struct
+// declares, including those under an if or for at its top level.
+func allTopLevelFields(n ast.Node, into map[string][]*ast.Field) {
+	s, ok := n.(*ast.StructLit)
+	if !ok {
+		return
+	}
+	for _, elt := range s.Elts {
+		switch x := elt.(type) {
+		case *ast.Field:
+			name := labelName(x.Label)
+			into[name] = append(into[name], x)
+		case *ast.Comprehension:
+			allTopLevelFields(x.Value, into)
+		}
+	}
+}
+
+// hasEmbedding reports whether a struct takes fields from elsewhere: an
+// embedded value, at its top level or under an if or for, or a `...`.
+func hasEmbedding(s *ast.StructLit) bool {
+	for _, elt := range s.Elts {
+		switch x := elt.(type) {
+		case *ast.EmbedDecl, *ast.Ellipsis:
+			return true
+		case *ast.Comprehension:
+			if body, ok := x.Value.(*ast.StructLit); ok && hasEmbedding(body) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (d *document) extends() bool {
+	return d.headerString("extends") != "" || d.headerString("attributes", "extends") != ""
+}
+
 // requiredFields are the fields a template of a type must declare.
 var requiredFields = map[string][]string{
 	componentType: {"output"},
@@ -138,7 +233,7 @@ func (d *document) checkTemplateFields() []Diagnostic {
 		}
 	}
 	// A component that extends another inherits its output.
-	if kind == componentType && (d.headerString("extends") != "" || d.headerString("attributes", "extends") != "") {
+	if kind == componentType && d.extends() {
 		missing = nil
 	}
 	if len(missing) > 0 {

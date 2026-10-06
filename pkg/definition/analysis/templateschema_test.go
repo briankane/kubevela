@@ -89,6 +89,34 @@ func TestTemplateSchemas(t *testing.T) {
 				{6, SeverityError, "output.zones: conflicting values"},
 			},
 		},
+		"an output that is not a Kubernetes object": {
+			src: header("c", "component", "") + `template: {
+	output: {}
+	outputs: {
+		svc: {apiVersion: "v1"}
+		cm: {apiVersion: "v1", kind: "ConfigMap"}
+	}
+}
+`,
+			want: []wantSev{
+				{5, SeverityError, "output is not a Kubernetes object: it has no apiVersion or kind"},
+				{7, SeverityError, "outputs.svc is not a Kubernetes object: it has no kind"},
+			},
+		},
+		"objects whose kind comes from a parameter": {
+			src: header("c", "component", "") + `template: {
+	output: {apiVersion: parameter.apiVersion, kind: parameter.kind}
+	parameter: {apiVersion: string, kind: string}
+}
+`,
+		},
+		"a trait's outputs are objects too": {
+			src: header("t", "trait", "") + `template: {
+	outputs: ingress: spec: rules: []
+}
+`,
+			want: []wantSev{{5, SeverityError, "outputs.ingress is not a Kubernetes object: it has no apiVersion or kind"}},
+		},
 		"schema of the wrong shape": {
 			src: header("t", "trait", "") + `template: {
 	patch: {}

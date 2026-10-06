@@ -32,6 +32,8 @@ import (
 func (d *document) checkSelectors(v cue.Value) []Diagnostic {
 	pkgs := d.importNames()
 	param := v.LookupPath(cue.MakePath(cue.Def(closedParameterPath)))
+	ctx := v.LookupPath(cue.ParsePath(templateLabel + ".context"))
+	modelled := ContextFields(d.typ) != nil
 	var diags []Diagnostic
 	ast.Walk(d.template.Value, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
@@ -45,6 +47,10 @@ func (d *document) checkSelectors(v cue.Value) []Diagnostic {
 		switch {
 		case root.Name == parameterLabel && param.Exists():
 			if diag, bad := d.checkParameter(param, chain); bad {
+				diags = append(diags, diag)
+			}
+		case root.Name == "context" && modelled && ctx.Exists():
+			if diag, bad := d.checkContext(ctx, chain); bad {
 				diags = append(diags, diag)
 			}
 		case pkgs[root.Name] != "":
@@ -75,6 +81,32 @@ func (d *document) checkParameter(param cue.Value, chain []*ast.Ident) (Diagnost
 				fmt.Sprintf("%s has no field %s", strings.Join(walked, "."), id.Name)), true
 		}
 		cur = lookup(cur, s)
+		walked = append(walked, id.Name)
+	}
+	return Diagnostic{}, false
+}
+
+// checkContext walks a context.a.b chain through the closed context, which
+// catches a read CUE does not evaluate, such as one under an undecided if.
+func (d *document) checkContext(ctx cue.Value, chain []*ast.Ident) (Diagnostic, bool) {
+	cur := ctx
+	walked := []string{"context"}
+	for _, id := range chain {
+		if cur.IncompleteKind() != cue.StructKind {
+			return Diagnostic{}, false
+		}
+		s, ok := selectorFor(id.Name)
+		if !ok {
+			return Diagnostic{}, false
+		}
+		if !cur.Allows(s) {
+			msg := fmt.Sprintf("%s has no field %s", strings.Join(walked, "."), id.Name)
+			if why, ok := explainContextField(d.typ, id.Name); ok && len(walked) == 1 {
+				msg = why
+			}
+			return d.at(id.Pos(), msg), true
+		}
+		cur = schemaChild(cur, s)
 		walked = append(walked, id.Name)
 	}
 	return Diagnostic{}, false

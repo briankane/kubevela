@@ -20,6 +20,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/cuecontext"
+	"cuelang.org/go/cue/format"
 )
 
 // Completion is one candidate to complete the text before the cursor with.
@@ -30,6 +34,8 @@ type Completion struct {
 	Insert  string
 	Replace int
 	Doc     string
+	// Detail is the candidate's type, when it has one.
+	Detail string
 }
 
 var (
@@ -72,4 +78,73 @@ func CompleteMarker(before string) []Completion {
 		return out
 	}
 	return nil
+}
+
+var (
+	contextTyped = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.$#])context((?:\.[A-Za-z_][A-Za-z0-9_]*)*)\.([A-Za-z0-9_]*)$`)
+	headerType   = regexp.MustCompile(`(?m)^\s+type:\s*"([^"]+)"`)
+)
+
+// CompleteContext completes a read of context, given the whole document,
+// whose header names the definition type, and its line up to the cursor: the
+// fields that type's template can read after `context.`, or a struct field's
+// fields after `context.a.`.
+func CompleteContext(doc, before string) []Completion {
+	m := contextTyped.FindStringSubmatch(before)
+	if m == nil {
+		return nil
+	}
+	t := headerType.FindStringSubmatch(doc)
+	if t == nil {
+		return nil
+	}
+	fields := ContextFields(t[1])
+	if fields == nil {
+		return nil
+	}
+	path, typed := strings.Split(strings.TrimPrefix(m[1], "."), "."), m[2]
+	if m[1] == "" {
+		path = nil
+	}
+	var out []Completion
+	if len(path) == 0 {
+		for _, f := range fields {
+			if strings.HasPrefix(f.Name, typed) {
+				out = append(out, Completion{Label: f.Name, Insert: f.Name, Replace: len(typed), Doc: f.Doc, Detail: f.Type})
+			}
+		}
+		return out
+	}
+	var root *ContextField
+	for i := range fields {
+		if fields[i].Name == path[0] {
+			root = &fields[i]
+		}
+	}
+	if root == nil {
+		return nil
+	}
+	v := cuecontext.New().CompileString("x: " + root.Type).LookupPath(cue.ParsePath("x"))
+	for _, p := range path[1:] {
+		v = v.LookupPath(cue.MakePath(cue.Str(p)))
+	}
+	it, err := v.Fields(cue.Optional(true))
+	if err != nil {
+		return nil
+	}
+	for it.Next() {
+		name := it.Selector().Unquoted()
+		if strings.HasPrefix(name, typed) {
+			out = append(out, Completion{Label: name, Insert: name, Replace: len(typed), Detail: typeOf(it.Value())})
+		}
+	}
+	return out
+}
+
+func typeOf(v cue.Value) string {
+	b, err := format.Node(v.Syntax())
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

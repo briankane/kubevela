@@ -123,23 +123,34 @@ func usageOf(v cue.Value) string {
 	return strings.TrimSpace(strings.Join(lines, " "))
 }
 
+// contextDefinition names the context's type: a definition, so every struct
+// in it is closed and a misspelt key is an error at any depth.
+const contextDefinition = "#velaContext"
+
 // contextField is the context declaration injected into a template: closed
 // for a modelled type, so a misspelt key is an error, and open otherwise.
 func contextField(defType string) *ast.Field {
-	fields := ContextFields(defType)
-	body := "{...}"
-	if fields != nil {
-		var b strings.Builder
-		for _, f := range fields {
-			mark := "?"
-			if f.Required {
-				mark = ""
-			}
-			fmt.Fprintf(&b, "%s%s: %s\n", strconv.Quote(f.Name), mark, f.Type)
-		}
-		body = "close({\n" + b.String() + "})"
+	if ContextFields(defType) == nil {
+		return mustField("context: {...}")
 	}
-	return mustField("context: " + body)
+	return mustField("context: " + contextDefinition)
+}
+
+// contextType declares contextDefinition for a modelled type.
+func contextType(defType string) []ast.Decl {
+	fields := ContextFields(defType)
+	if fields == nil {
+		return nil
+	}
+	var b strings.Builder
+	for _, f := range fields {
+		mark := "?"
+		if f.Required {
+			mark = ""
+		}
+		fmt.Fprintf(&b, "%s%s: %s\n", strconv.Quote(f.Name), mark, f.Type)
+	}
+	return []ast.Decl{mustField(contextDefinition + ": {\n" + b.String() + "}")}
 }
 
 // explainContextField says which definition types can read a context field a
