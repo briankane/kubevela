@@ -122,12 +122,14 @@ func (d *document) checkHeaderSchema(h *ast.Field) []Diagnostic {
 	constraint := mustField(fmt.Sprintf("%s: #header & {attributes?: #attributes[%q]}", strconv.Quote(d.name), d.typ))
 	decls := append([]ast.Decl{h, constraint}, headerSchema()...)
 	v := cuecontext.New().BuildFile(&ast.File{Filename: d.path, Decls: decls})
-	err := v.Err()
-	if err == nil {
-		err = v.LookupPath(cue.MakePath(cue.Str(d.name))).Validate(cue.Concrete(true))
-	}
-	var diags []Diagnostic
-	for _, e := range cueerrors.Errors(err) {
+	// Err stops at the first error; Validate walks the whole header, so a
+	// misspelt key is reported beside a value of the wrong type.
+	errs := append(cueerrors.Errors(v.Err()), cueerrors.Errors(v.LookupPath(cue.MakePath(cue.Str(d.name))).Validate(cue.Concrete(true)))...)
+	// CUE stops at a header's first error, so keys are checked on their own:
+	// a misspelt key is reported beside a value of the wrong type.
+	schema := cuecontext.New().BuildFile(&ast.File{Decls: append([]ast.Decl{mustField(fmt.Sprintf("#this: #header & {attributes?: #attributes[%q]}", d.typ))}, headerSchema()...)})
+	diags := d.unknownKeys(h, schema.LookupPath(cue.ParsePath("#this")), nil)
+	for _, e := range errs {
 		found := d.fromErrors(e, d.name)
 		if len(found) == 0 {
 			// A missing required field is positioned in the schema: report it
@@ -137,6 +139,31 @@ func (d *document) checkHeaderSchema(h *ast.Field) []Diagnostic {
 			found = []Diagnostic{d.at(writtenAncestor(h, e.Path()), msg)}
 		}
 		diags = append(diags, found...)
+	}
+	return diags
+}
+
+// unknownKeys reports each key under f that schema does not allow, at every
+// depth the header writes as a struct.
+func (d *document) unknownKeys(f *ast.Field, schema cue.Value, path []string) []Diagnostic {
+	s, ok := f.Value.(*ast.StructLit)
+	if !ok || schema.IncompleteKind() != cue.StructKind {
+		return nil
+	}
+	var diags []Diagnostic
+	for _, elt := range s.Elts {
+		child, ok := elt.(*ast.Field)
+		if !ok {
+			continue
+		}
+		name := labelName(child.Label)
+		sel := cue.Str(name)
+		at := strings.Join(append(append([]string{}, path...), name), ".")
+		if !schema.Allows(sel) {
+			diags = append(diags, d.at(child.Label.Pos(), at+": field not allowed"))
+			continue
+		}
+		diags = append(diags, d.unknownKeys(child, schema.LookupPath(cue.MakePath(sel)), append(path, name))...)
 	}
 	return diags
 }

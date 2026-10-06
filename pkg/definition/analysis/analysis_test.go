@@ -199,6 +199,16 @@ template: output: {}
 `,
 			want: []want{{3, "descripton"}},
 		},
+		"misspelt key beside a value of the wrong type": {
+			src: `"x": {
+	type:       "trait"
+	descripton: "typo"
+	attributes: podDisruptive: "yes"
+}
+template: patch: {}
+`,
+			want: []want{{3, "descripton"}, {4, "podDisruptive"}},
+		},
 		"misspelt attributes key": {
 			src: `"x": {
 	type: "component"
