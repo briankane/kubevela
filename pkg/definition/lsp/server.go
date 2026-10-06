@@ -31,6 +31,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 	"github.com/oam-dev/kubevela/version"
 )
 
@@ -42,11 +43,32 @@ type Server struct {
 	mu       sync.Mutex
 	out      io.Writer
 	shutdown bool
+
+	renderGo GoRenderer
+	// renders counts the renders asked of each Go file, so only the latest
+	// one's result is sent.
+	renders   map[string]int
+	rendersMu sync.Mutex
+}
+
+// GoRenderer generates the CUE of each definition in a DefKit Go file.
+type GoRenderer func(path string) ([]goloader.LoadResult, error)
+
+// Option configures a Server.
+type Option func(*Server)
+
+// WithGoRenderer replaces the renderer of DefKit files, goloader.LoadFromFile.
+func WithGoRenderer(r GoRenderer) Option {
+	return func(s *Server) { s.renderGo = r }
 }
 
 // NewServer returns a server for one client.
-func NewServer() *Server {
-	return &Server{}
+func NewServer(opts ...Option) *Server {
+	s := &Server{renderGo: goloader.LoadFromFile, renders: map[string]int{}}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Serve answers messages from in on out until the client sends exit, in is
@@ -113,6 +135,14 @@ func (s *Server) handle(msg message) error {
 			text := p.ContentChanges[len(p.ContentChanges)-1].Text
 			return s.update(p.TextDocument.URI, text, &p.TextDocument.Version)
 		}
+	case MethodRenderDefKit:
+		var p RenderDefKitParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			// A render runs Go and takes seconds, so it answers when it is done
+			// while other messages are handled.
+			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
+			return nil
+		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -127,6 +157,47 @@ func (s *Server) handle(msg message) error {
 		return nil
 	}
 	return s.reply(msg.ID, result, rerr)
+}
+
+// renderDefKit answers a render request for path, unless a newer one for the
+// same file was made while it ran.
+func (s *Server) renderDefKit(id json.RawMessage, path string) {
+	s.rendersMu.Lock()
+	s.renders[path]++
+	n := s.renders[path]
+	s.rendersMu.Unlock()
+
+	result := renderGo(s.renderGo, path)
+
+	s.rendersMu.Lock()
+	latest := s.renders[path] == n
+	s.rendersMu.Unlock()
+	if !latest {
+		_ = s.reply(id, nil, &ResponseError{Code: CodeRequestCancelled, Message: "a newer render of " + path + " was asked for"})
+		return
+	}
+	_ = s.reply(id, result, nil)
+}
+
+// renderGo renders a DefKit file and checks each definition's CUE as a
+// hand-written definition is checked.
+func renderGo(render GoRenderer, path string) RenderDefKitResult {
+	loaded, err := render(path)
+	if err != nil {
+		return RenderDefKitResult{Error: err.Error(), Definitions: []RenderedDefinition{}}
+	}
+	out := RenderDefKitResult{Definitions: make([]RenderedDefinition, 0, len(loaded))}
+	for _, l := range loaded {
+		d := RenderedDefinition{Name: l.Definition.Name, Type: l.Definition.Type, Diagnostics: []Diagnostic{}}
+		if l.Error != nil {
+			d.Error = l.Error.Error()
+		} else {
+			d.CUE = l.CUE
+			d.Diagnostics = diagnose(path+"#"+l.Definition.Name+".cue", l.CUE)
+		}
+		out.Definitions = append(out.Definitions, d)
+	}
+	return out
 }
 
 // update publishes the diagnostics of a document's new text.

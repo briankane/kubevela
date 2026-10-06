@@ -134,4 +134,33 @@ const (
 	CodeInvalidParams  = -32602
 	CodeMethodNotFound = -32601
 	CodeInvalidRequest = -32600
+	// CodeRequestCancelled answers a request that a newer one replaced.
+	CodeRequestCancelled = -32800
 )
+
+// MethodRenderDefKit renders a DefKit (Go) definition file to CUE. It is this
+// server's own request, not part of LSP.
+const MethodRenderDefKit = "vela/renderDefKit"
+
+// RenderDefKitParams names the Go file to render. It is read from disk, so it
+// renders as last saved.
+type RenderDefKitParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// RenderDefKitResult is what a Go file renders to: an error when the file
+// could not be loaded at all, otherwise one entry per definition in it.
+type RenderDefKitResult struct {
+	Error       string               `json:"error,omitempty"`
+	Definitions []RenderedDefinition `json:"definitions"`
+}
+
+// RenderedDefinition is one definition's CUE, or why it could not be
+// generated, with the diagnostics of that CUE at positions within it.
+type RenderedDefinition struct {
+	Name        string       `json:"name"`
+	Type        string       `json:"type"`
+	CUE         string       `json:"cue,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}

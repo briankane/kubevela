@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -58,11 +59,16 @@ type client struct {
 }
 
 func newClient(t *testing.T) *client {
+	return newClientWith(t, NewServer())
+}
+
+// newClientWith drives s.
+func newClientWith(t *testing.T, s *Server) *client {
 	cr, sw := io.Pipe()
 	sr, cw := io.Pipe()
 	c := &client{t: t, in: cw, out: bufio.NewReader(cr), done: make(chan error, 1)}
 	go func() {
-		c.done <- NewServer().Serve(context.Background(), sr, sw)
+		c.done <- s.Serve(context.Background(), sr, sw)
 		_ = sw.Close()
 	}()
 	return c
@@ -106,6 +112,13 @@ func (c *client) read() map[string]json.RawMessage {
 		c.t.Fatal("timed out waiting for the server")
 		return nil
 	}
+}
+
+// response reads the next message, which must answer request id.
+func (c *client) response(id int) map[string]json.RawMessage {
+	m := c.read()
+	require.Equal(c.t, fmt.Sprint(id), string(m["id"]))
+	return m
 }
 
 func (c *client) diagnostics() PublishDiagnosticsParams {
