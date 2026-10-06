@@ -114,6 +114,7 @@ type ServerCapabilities struct {
 	TextDocumentSync   TextDocumentSyncOptions `json:"textDocumentSync"`
 	CompletionProvider *CompletionOptions      `json:"completionProvider,omitempty"`
 	HoverProvider      bool                    `json:"hoverProvider,omitempty"`
+	CodeActionProvider bool                    `json:"codeActionProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -383,4 +384,30 @@ type NewPackageParams struct {
 // NewPackageResult is the Package resource's YAML.
 type NewPackageResult struct {
 	YAML string `json:"yaml"`
+}
+
+// CodeActionParams asks for the actions at a range.
+type CodeActionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Range        Range                  `json:"range"`
+	Context      CodeActionContext      `json:"context"`
+}
+
+// CodeActionContext holds the diagnostics at the range.
+type CodeActionContext struct {
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}
+
+// CodeAction is an action the client may take, as an edit.
+type CodeAction struct {
+	Title       string        `json:"title"`
+	Kind        string        `json:"kind"`
+	Diagnostics []Diagnostic  `json:"diagnostics,omitempty"`
+	IsPreferred bool          `json:"isPreferred,omitempty"`
+	Edit        WorkspaceEdit `json:"edit"`
+}
+
+// WorkspaceEdit is a set of edits, by document.
+type WorkspaceEdit struct {
+	Changes map[string][]TextEdit `json:"changes"`
 }

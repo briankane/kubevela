@@ -319,6 +319,11 @@ func (s *Server) handle(msg message) error {
 				result = Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}
 			}
 		}
+	case "textDocument/codeAction":
+		var p CodeActionParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = upgradeActions(p, s.docs[p.TextDocument.URI])
+		}
 	case "textDocument/completion":
 		var p CompletionParams
 		if rerr = decode(msg.Params, &p); rerr == nil {

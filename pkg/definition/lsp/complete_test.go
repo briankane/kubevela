@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -135,4 +136,39 @@ func TestHoverAContextField(t *testing.T) {
 	var h Hover
 	require.NoError(t, json.Unmarshal(m["result"], &h))
 	assert.Contains(t, h.Contents.Value, "appName: string")
+}
+
+func TestUpgradeQuickFix(t *testing.T) {
+	c := newClient(t)
+	text := "\"c\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\t_base: [\"a\"]\n\t_more: _base + [\"b\"]\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\", data: {for i, v in _more {\"k\\(i)\": v}}}\n\tparameter: {}\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	var upgrades []Diagnostic
+	for _, d := range c.diagnostics().Diagnostics {
+		if strings.Contains(d.Message, "CUE upgrader") {
+			upgrades = append(upgrades, d)
+		}
+	}
+	require.Len(t, upgrades, 1)
+
+	m := c.response(c.send("textDocument/codeAction", CodeActionParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+		Range:        upgrades[0].Range,
+		Context:      CodeActionContext{Diagnostics: upgrades},
+	}, true))
+	var actions []CodeAction
+	require.NoError(t, json.Unmarshal(m["result"], &actions))
+	require.Len(t, actions, 1)
+	assert.Equal(t, "quickfix", actions[0].Kind)
+	edits := actions[0].Edit.Changes[uri]
+	require.NotEmpty(t, edits)
+	var newTexts []string
+	for _, e := range edits {
+		newTexts = append(newTexts, e.NewText)
+	}
+	joined := strings.Join(newTexts, "")
+	assert.Contains(t, joined, `import "list"`)
+	assert.Contains(t, joined, "list.Concat")
+
+	m = c.response(c.send("textDocument/codeAction", CodeActionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Range: Range{}, Context: CodeActionContext{}}, true))
+	assert.JSONEq(t, "[]", string(m["result"]), "no fix where there is no upgrade warning")
 }

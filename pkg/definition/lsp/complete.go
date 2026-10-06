@@ -154,3 +154,37 @@ func byteOffset(text string, pos Position) int {
 	}
 	return offset
 }
+
+// upgradeActions offers, where KubeVela's CUE upgrader would rewrite the
+// document, the edits that make its upgrades: all of them, as one may need
+// another, such as list.Concat needs its import.
+func upgradeActions(p CodeActionParams, text string) []CodeAction {
+	var upgrades []Diagnostic
+	for _, d := range p.Context.Diagnostics {
+		if strings.Contains(d.Message, "CUE upgrader") {
+			upgrades = append(upgrades, d)
+		}
+	}
+	actions := []CodeAction{}
+	if len(upgrades) == 0 {
+		return actions
+	}
+	edits := analysis.UpgradeEdits(text)
+	if len(edits) == 0 {
+		return actions
+	}
+	changes := make([]TextEdit, 0, len(edits))
+	for _, e := range edits {
+		changes = append(changes, TextEdit{
+			Range:   Range{Start: Position{Line: uint32(e.Start)}, End: Position{Line: uint32(e.End)}},
+			NewText: e.Text,
+		})
+	}
+	return append(actions, CodeAction{
+		Title:       "Apply KubeVela's CUE upgrades",
+		Kind:        "quickfix",
+		Diagnostics: upgrades,
+		IsPreferred: true,
+		Edit:        WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}},
+	})
+}
