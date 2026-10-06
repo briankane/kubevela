@@ -205,3 +205,28 @@ func ApplyEdits(src string, edits []Edit) string {
 	}
 	return b.String()
 }
+
+// supersededByUpgrade is CUE's error for list arithmetic, which KubeVela's
+// upgrader rewrites before the controller compiles a definition.
+var supersededByUpgrade = regexp.MustCompile(`of lists is superseded by list\.`)
+
+// withoutUpgraded drops CUE's errors for what the upgrader rewrites, where
+// the upgrade's own warning says so on the same line.
+func withoutUpgraded(diags []Diagnostic) []Diagnostic {
+	upgraded := map[int]bool{}
+	for _, d := range diags {
+		if strings.Contains(d.Message, "CUE upgrader") {
+			for l := d.Range.Start.Line; l <= d.Range.End.Line; l++ {
+				upgraded[l] = true
+			}
+		}
+	}
+	out := diags[:0]
+	for _, d := range diags {
+		if supersededByUpgrade.MatchString(d.Message) && upgraded[d.Range.Start.Line] {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}

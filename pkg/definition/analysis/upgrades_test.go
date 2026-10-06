@@ -80,3 +80,13 @@ func TestUpgradeEdits(t *testing.T) {
 	assert.Empty(t, upgradeWarnings(fixed), "the fixed file needs no more")
 	assert.Empty(t, UpgradeEdits(fixed))
 }
+
+// The controller upgrades list arithmetic before compiling a definition, so
+// CUE's own error for it is not one there: the upgrade warning says it.
+func TestUpgradedPatternsAreNotErrors(t *testing.T) {
+	src := strings.Replace(needsUpgrades, `_more: _base + ["b"]`, "_more: _base + parameter.extra", 1)
+	src = strings.Replace(src, "parameter: {}", "parameter: extra: [...string]", 1)
+	for _, d := range Analyze("def.cue", []byte(src)).Diagnostics {
+		assert.NotEqual(t, SeverityError, d.Severity, d.Message)
+	}
+}
