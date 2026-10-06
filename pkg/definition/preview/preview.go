@@ -176,6 +176,9 @@ func stripComments(doc []byte) []byte {
 
 // render renders the definition in req with one input.
 func render(ctx context.Context, req Request) Result {
+	if root, ok := addonPreviewed(req.Path); ok {
+		return renderAddon(root, req)
+	}
 	tmpl, ok := analysis.TemplateSource(req.Path, req.Source)
 	if !ok {
 		return Result{Error: fmt.Sprintf("%s is not a definition, or does not parse", req.Path)}
@@ -327,6 +330,9 @@ func sampleWorkload(name string) map[string]interface{} {
 // Skeleton is a values file for the definition in src: every required
 // parameter named, with its usage, and every default filled in.
 func Skeleton(ctx context.Context, path string, src []byte) (string, error) {
+	if root, ok := addonPreviewed(path); ok {
+		return addonSkeleton(root, path, src)
+	}
 	tmpl, ok := analysis.TemplateSource(path, src)
 	if !ok {
 		return "", fmt.Errorf("%s is not a definition, or does not parse", path)
