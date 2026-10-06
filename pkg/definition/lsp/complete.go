@@ -30,7 +30,11 @@ import (
 
 // completions are what can be typed at pos in text, with what global
 // policies publish offered under context.custom.
-func completions(uri, text string, pos Position, published []analysis.Published) CompletionList {
+func (s *Server) completions(uri, text string, pos Position) CompletionList {
+	return completions(uri, text, pos, s.publishedContext(), s.options(), s.definitionNames)
+}
+
+func completions(uri, text string, pos Position, published []analysis.Published, opts analysis.Options, names func(defType string) []string) CompletionList {
 	list := CompletionList{Items: []CompletionItem{}}
 	lines := strings.Split(text, "\n")
 	if int(pos.Line) >= len(lines) {
@@ -39,7 +43,7 @@ func completions(uri, text string, pos Position, published []analysis.Published)
 	before := prefixUTF16(lines[pos.Line], pos.Character)
 	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
 	var candidates []analysis.Completion
-	var ext *analysis.Externals
+	ext := opts.Externals
 	if utils.IsCUETestFile(pathOf(uri)) {
 		ext = testExternals()
 		candidates = analysis.CompleteTestFile(upToCursor, pathOf(uri), before, ext)
@@ -50,6 +54,8 @@ func completions(uri, text string, pos Position, published []analysis.Published)
 		candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
 		candidates = append(candidates, analysis.CompletePackageMemberWith(text, before, ext)...)
 		candidates = append(candidates, analysis.CompleteImportWith(text, upToCursor, ext)...)
+		candidates = append(candidates, analysis.CompleteExtends(before, names("component"))...)
+		candidates = append(candidates, analysis.CompleteSuperProperties(text, before, opts)...)
 	}
 	if len(candidates) == 0 {
 		candidates = analysis.CompleteValueAt(text, len(upToCursor), ext)

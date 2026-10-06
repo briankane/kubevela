@@ -30,6 +30,8 @@ import (
 	"sync"
 	"unicode/utf16"
 
+	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
+
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
@@ -51,6 +53,11 @@ type Server struct {
 	// in them publishes, by file path. Only the message loop uses them.
 	folders   []string
 	published map[string]analysis.Published
+	// definitions and packages are what each workspace file holds of them;
+	// externals are all the packages, for checks to import.
+	definitions map[string]definitionEntry
+	packages    map[string][]cuexruntime.Package
+	externals   *analysis.Externals
 	// events carries work back to the message loop from goroutines.
 	events chan func()
 
@@ -75,11 +82,13 @@ func WithGoRenderer(r GoRenderer) Option {
 // NewServer returns a server for one client.
 func NewServer(opts ...Option) *Server {
 	s := &Server{
-		renderGo:  goloader.LoadFromFile,
-		renders:   map[string]int{},
-		docs:      map[string]string{},
-		published: map[string]analysis.Published{},
-		events:    make(chan func(), 16),
+		renderGo:    goloader.LoadFromFile,
+		renders:     map[string]int{},
+		docs:        map[string]string{},
+		published:   map[string]analysis.Published{},
+		definitions: map[string]definitionEntry{},
+		packages:    map[string][]cuexruntime.Package{},
+		events:      make(chan func(), 16),
 	}
 	for _, o := range opts {
 		o(s)
@@ -223,7 +232,7 @@ func (s *Server) handle(msg message) error {
 	case "textDocument/completion":
 		var p CompletionParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = completions(p.TextDocument.URI, s.docs[p.TextDocument.URI], p.Position, s.publishedContext())
+			result = s.completions(p.TextDocument.URI, s.docs[p.TextDocument.URI], p.Position)
 		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams
@@ -277,7 +286,7 @@ func renderGo(render GoRenderer, path string) RenderDefKitResult {
 			d.Error = l.Error.Error()
 		} else {
 			d.CUE = l.CUE
-			d.Diagnostics = diagnose(path+"#"+l.Definition.Name+".cue", l.CUE)
+			d.Diagnostics = diagnose(path+"#"+l.Definition.Name+".cue", l.CUE, analysis.Options{})
 		}
 		out.Definitions = append(out.Definitions, d)
 	}
@@ -288,16 +297,21 @@ func renderGo(render GoRenderer, path string) RenderDefKitResult {
 func (s *Server) update(uri, text string, version *int) error {
 	s.docs[uri] = text
 	s.index(pathOf(uri), []byte(text))
-	return s.publish(PublishDiagnosticsParams{URI: uri, Version: version, Diagnostics: diagnose(uri, text)})
+	return s.publish(PublishDiagnosticsParams{URI: uri, Version: version, Diagnostics: s.diagnose(uri, text)})
+}
+
+// diagnose checks a document with what the workspace offers.
+func (s *Server) diagnose(uri, text string) []Diagnostic {
+	return diagnose(uri, text, s.options())
 }
 
 // diagnose analyses a document and converts the result to protocol positions.
 // A CUE test file is checked by loading it, as `vela def test` would.
-func diagnose(uri, text string) []Diagnostic {
+func diagnose(uri, text string, opts analysis.Options) []Diagnostic {
 	if utils.IsCUETestFile(pathOf(uri)) {
 		return testDiagnostics(pathOf(uri), text)
 	}
-	res := analysis.Analyze(pathOf(uri), []byte(text))
+	res := analysis.AnalyzeWith(pathOf(uri), []byte(text), opts)
 	diags := make([]Diagnostic, 0, len(res.Diagnostics))
 	for _, d := range res.Diagnostics {
 		diags = append(diags, Diagnostic{

@@ -24,6 +24,8 @@ import (
 	"sort"
 	"strings"
 
+	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
+
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/utils"
 )
@@ -49,12 +51,48 @@ func workspaceFolders(p InitializeParams) []string {
 	return folders
 }
 
-// indexWorkspace reads every CUE file in the workspace for what it publishes,
-// on a goroutine, and hands the result to the message loop.
+// indexed is what the workspace index learned of one file.
+type indexed struct {
+	published *analysis.Published
+	// name and defType name the definition the file holds, if any.
+	name, defType string
+	packages      []cuexruntime.Package
+}
+
+// indexFile reads what a file contributes to the index, from src, or from
+// disk when src is nil.
+func indexFile(path string, src []byte) indexed {
+	var out indexed
+	if src == nil {
+		info, err := os.Stat(path)
+		if err != nil || info.Size() > maxIndexedSize {
+			return out
+		}
+		//nolint:gosec // reading the workspace's own files is the point
+		if src, err = os.ReadFile(path); err != nil {
+			return out
+		}
+	}
+	switch {
+	case strings.HasSuffix(path, ".yaml"), strings.HasSuffix(path, ".yml"):
+		if bytes.Contains(src, []byte("kind: Package")) && bytes.Contains(src, []byte("cue.oam.dev")) {
+			out.packages, _ = analysis.ParsePackages(src)
+		}
+	case strings.HasSuffix(path, ".cue") && !utils.IsCUETestFile(path):
+		out.name, out.defType, _ = analysis.DefinitionHeader(path, src)
+		if p, ok := publishedIn(path, src); ok {
+			out.published = &p
+		}
+	}
+	return out
+}
+
+// indexWorkspace reads every CUE and YAML file in the workspace, on a
+// goroutine, and hands what it found to the message loop.
 func (s *Server) indexWorkspace() {
 	folders := append([]string{}, s.folders...)
 	go func() {
-		found := map[string]analysis.Published{}
+		found := map[string]indexed{}
 		n := 0
 		for _, root := range folders {
 			_ = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
@@ -67,46 +105,118 @@ func (s *Server) indexWorkspace() {
 					}
 					return nil
 				}
-				if !strings.HasSuffix(path, ".cue") || utils.IsCUETestFile(path) {
+				if !strings.HasSuffix(path, ".cue") && !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
 					return nil
 				}
 				n++
-				if p, ok := publishedIn(path, nil); ok {
-					found[path] = p
-				}
+				found[path] = indexFile(path, nil)
 				return nil
 			})
 		}
 		s.post(func() {
-			for path, p := range found {
+			for path, entry := range found {
 				if _, open := s.docs["file://"+path]; !open {
-					s.published[path] = p
+					s.record(path, entry)
 				}
 			}
+			s.republish()
 		})
 	}()
 }
 
-// index records what a file publishes, from its text.
-func (s *Server) index(path string, src []byte) {
-	if p, ok := publishedIn(path, src); ok {
-		s.published[path] = p
+// record keeps what a file contributes to the index, replacing what it did.
+func (s *Server) record(path string, entry indexed) {
+	if entry.published != nil {
+		s.published[path] = *entry.published
 	} else {
 		delete(s.published, path)
+	}
+	if entry.name != "" {
+		s.definitions[path] = definitionEntry{name: entry.name, defType: entry.defType}
+	} else {
+		delete(s.definitions, path)
+	}
+	if len(entry.packages) > 0 {
+		s.packages[path] = entry.packages
+	} else {
+		delete(s.packages, path)
+	}
+	var all []cuexruntime.Package
+	paths := make([]string, 0, len(s.packages))
+	for p := range s.packages {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		all = append(all, s.packages[p]...)
+	}
+	s.externals = analysis.NewExternals(all)
+}
+
+// definitionEntry is a definition the workspace holds.
+type definitionEntry struct{ name, defType string }
+
+// options are what a check of an open document draws on from the
+// workspace: its definitions, by name, and its custom provider packages. The
+// lookup reads a snapshot, so it is safe off the message loop.
+func (s *Server) options() analysis.Options {
+	byName := map[string]string{}
+	for path, d := range s.definitions {
+		byName[d.name] = path
+	}
+	open := map[string]string{}
+	for uri, text := range s.docs {
+		open[uri] = text
+	}
+	return analysis.Options{
+		Externals: s.externals,
+		Definitions: func(name string) (string, []byte, bool) {
+			path, ok := byName[name]
+			if !ok {
+				return "", nil, false
+			}
+			if text, ok := open["file://"+path]; ok {
+				return path, []byte(text), true
+			}
+			//nolint:gosec // reading the workspace's own files is the point
+			src, err := os.ReadFile(path)
+			return path, src, err == nil
+		},
 	}
 }
 
-// reindexFromDisk records what a file publishes as saved, or forgets it.
-func (s *Server) reindexFromDisk(path string) {
-	if p, ok := publishedIn(path, nil); ok {
-		s.published[path] = p
-	} else {
-		delete(s.published, path)
+// definitionNames are the names of the workspace's definitions of a type.
+func (s *Server) definitionNames(defType string) []string {
+	var out []string
+	for _, d := range s.definitions {
+		if d.defType == defType {
+			out = append(out, d.name)
+		}
 	}
+	sort.Strings(out)
+	return out
+}
+
+// republish checks every open document again, as what it draws on from the
+// workspace has changed.
+func (s *Server) republish() {
+	for uri, text := range s.docs {
+		_ = s.publish(PublishDiagnosticsParams{URI: uri, Diagnostics: s.diagnose(uri, text)})
+	}
+}
+
+// index records what a file contributes, from its text.
+func (s *Server) index(path string, src []byte) {
+	s.record(path, indexFile(path, src))
+}
+
+// reindexFromDisk records what a file contributes as saved, or forgets it.
+func (s *Server) reindexFromDisk(path string) {
+	s.record(path, indexFile(path, nil))
 }
 
 // watchedFilesChanged keeps the index in step with files changed outside an
-// open editor.
+// open editor, and checks the open documents again.
 func (s *Server) watchedFilesChanged(changes []FileEvent) {
 	for _, c := range changes {
 		if _, open := s.docs[c.URI]; open {
@@ -114,6 +224,7 @@ func (s *Server) watchedFilesChanged(changes []FileEvent) {
 		}
 		s.reindexFromDisk(pathOf(c.URI))
 	}
+	s.republish()
 }
 
 // publishedContext is what every global policy indexed publishes, in a

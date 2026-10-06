@@ -230,3 +230,35 @@ func CompleteSuperProperties(doc, before string, opts Options) []Completion {
 	}
 	return out
 }
+
+// DefinitionHeader is the name and type of the definition in src, for
+// indexing a workspace.
+func DefinitionHeader(path string, src []byte) (name, defType string, ok bool) {
+	f, err := parser.ParseFile(path, src)
+	if err != nil {
+		return "", "", false
+	}
+	d, ok := newDocument(path, src, f)
+	if !ok || d.typ == "" {
+		return "", "", false
+	}
+	return d.name, d.typ, true
+}
+
+var extendsTyped = regexp.MustCompile(`\bextends:\s*"([A-Za-z0-9-]*)$`)
+
+// CompleteExtends completes the name a definition extends, from the
+// definitions of its type given.
+func CompleteExtends(before string, names []string) []Completion {
+	m := extendsTyped.FindStringSubmatch(before)
+	if m == nil {
+		return nil
+	}
+	var out []Completion
+	for _, n := range names {
+		if strings.HasPrefix(n, m[1]) {
+			out = append(out, Completion{Label: n, Insert: n, Replace: len(m[1]), Doc: "Extends the " + n + " definition: $super.properties is what it receives."})
+		}
+	}
+	return out
+}
