@@ -32,6 +32,7 @@ import (
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
+	"github.com/oam-dev/kubevela/pkg/definition/preview"
 	"github.com/oam-dev/kubevela/version"
 )
 
@@ -142,6 +143,21 @@ func (s *Server) handle(msg message) error {
 			// while other messages are handled.
 			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
 			return nil
+		}
+	case MethodPreviewOutput:
+		var p PreviewOutputParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = preview.Render(context.Background(), preview.Request{Path: pathOf(p.TextDocument.URI), Source: []byte(p.Text), Values: []byte(p.Values)})
+		}
+	case MethodPreviewValues:
+		var p PreviewValuesParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			yaml, err := preview.Skeleton(context.Background(), pathOf(p.TextDocument.URI), []byte(p.Text))
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = PreviewValuesResult{YAML: yaml}
+			}
 		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams

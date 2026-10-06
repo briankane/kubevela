@@ -164,3 +164,30 @@ type RenderedDefinition struct {
 	Error       string       `json:"error,omitempty"`
 	Diagnostics []Diagnostic `json:"diagnostics"`
 }
+
+// MethodPreviewOutput renders a definition with sample values: what it
+// produces, as the controller would render it. It is this server's own request.
+const MethodPreviewOutput = "vela/previewOutput"
+
+// PreviewOutputParams is a definition's current text and the values, YAML, to
+// render it with. The answer is a preview.Result.
+type PreviewOutputParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+	Values       string                 `json:"values"`
+}
+
+// MethodPreviewValues writes a values file for a definition: its defaults
+// filled in and each required parameter named.
+const MethodPreviewValues = "vela/previewValues"
+
+// PreviewValuesParams is a definition's current text.
+type PreviewValuesParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+}
+
+// PreviewValuesResult is a values file, YAML.
+type PreviewValuesResult struct {
+	YAML string `json:"yaml"`
+}
