@@ -24,6 +24,7 @@ import (
 
 	"github.com/kubevela/pkg/apis/cue/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
@@ -45,6 +47,9 @@ type Cluster struct {
 	// Packages are its Package resources, in every namespace, as the
 	// controller loads them.
 	Packages []v1alpha1.Package
+	// Definition reads the definition of a kind and name applied to it,
+	// and the namespace it is in.
+	Definition func(kind, name string) (*unstructured.Unstructured, string, error)
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -86,6 +91,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	if packages {
 		out.Packages = listPackages(cfg)
+	}
+	out.Definition = func(kind, name string) (*unstructured.Unstructured, string, error) {
+		return getDefinition(cfg, kind, name)
 	}
 	if !out.KubeVela {
 		return out, nil
@@ -129,4 +137,31 @@ func listPackages(cfg *rest.Config) []v1alpha1.Package {
 		}
 	}
 	return out
+}
+
+// definitionNamespace is where vela def apply puts a definition by default.
+const definitionNamespace = "vela-system"
+
+// getDefinition reads the definition of a kind and name: from vela-system,
+// where vela def apply puts one by default, or else from any namespace.
+func getDefinition(cfg *rest.Config, kind, name string) (*unstructured.Unstructured, string, error) {
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	gvr := v1beta1.SchemeGroupVersion.WithResource(strings.ToLower(kind) + "s")
+	ctx, cancel := context.WithTimeout(context.Background(), clusterTimeout)
+	defer cancel()
+	if obj, err := client.Resource(gvr).Namespace(definitionNamespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+		return obj, definitionNamespace, nil
+	}
+	list, err := client.Resource(gvr).List(ctx, metav1.ListOptions{FieldSelector: "metadata.name=" + name})
+	if err != nil {
+		return nil, "", err
+	}
+	if len(list.Items) == 0 {
+		return nil, "", fmt.Errorf("no %s named %s is applied", kind, name)
+	}
+	obj := list.Items[0]
+	return &obj, obj.GetNamespace(), nil
 }

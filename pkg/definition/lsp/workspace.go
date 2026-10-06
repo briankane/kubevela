@@ -19,6 +19,7 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -27,8 +28,10 @@ import (
 	"strings"
 
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
+	"github.com/oam-dev/kubevela/pkg/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 	"github.com/oam-dev/kubevela/pkg/utils"
@@ -436,10 +439,11 @@ const (
 
 // clusterState is what reaching the kubeconfig's cluster found.
 type clusterState struct {
-	fetch   kubeschema.Fetch
-	vela    bool
-	context string
-	err     error
+	fetch      kubeschema.Fetch
+	vela       bool
+	context    string
+	err        error
+	definition func(kind, name string) (*unstructured.Unstructured, string, error)
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -485,7 +489,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition}
 	s.clusterPackages = pkgs
 	if len(pkgs) > 0 {
 		s.rebuildExternals()
@@ -605,4 +609,45 @@ func (s *Server) duplicateDefinition(path, text string) []Diagnostic {
 			Message: fmt.Sprintf("%s is also the name of %s: a different kind, but the name no longer says which is meant", own.name, strings.Join(other, ", "))})
 	}
 	return diags
+}
+
+// clusterDefinition answers vela/clusterDefinition: the definition the
+// document defines, as applied to the cluster, in CUE. It is read off the
+// message loop, and turned into CUE on it.
+func (s *Server) clusterDefinition(id json.RawMessage, p ClusterDefinitionParams) {
+	fail := func(msg string) {
+		_ = s.reply(id, nil, &ResponseError{Code: CodeInvalidParams, Message: msg})
+	}
+	switch {
+	case !s.clusterEnabled:
+		fail("reading the cluster is off (kubevela.readCluster)")
+		return
+	case s.cluster == nil || s.cluster.err != nil || s.cluster.definition == nil:
+		fail("the cluster was not reached")
+		return
+	}
+	path := pathOf(p.TextDocument.URI)
+	name, typ, ok := analysis.DefinitionHeader(path, []byte(s.docs[p.TextDocument.URI]))
+	kind := definition.DefinitionTypeToKind[typ]
+	if !ok || kind == "" {
+		fail("this file defines no definition")
+		return
+	}
+	read, kubeContext := s.cluster.definition, s.cluster.context
+	go func() {
+		obj, namespace, err := read(kind, name)
+		s.post(func() {
+			if err != nil {
+				fail(fmt.Sprintf("%s %s is not applied to %s: %v", kind, name, kubeContext, err))
+				return
+			}
+			def := definition.Definition{Unstructured: *obj}
+			src, err := def.ToCUEString()
+			if err != nil {
+				fail(err.Error())
+				return
+			}
+			_ = s.reply(id, ClusterDefinitionResult{CUE: src, Namespace: namespace, Context: kubeContext}, nil)
+		})
+	}()
 }

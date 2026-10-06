@@ -19,6 +19,7 @@ package lsp
 import (
 	"encoding/json"
 	"errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,4 +230,49 @@ func TestReadClusterOff(t *testing.T) {
 	u := "file://" + filepath.Join(t.TempDir(), "gadget.cue")
 	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "cue", Version: 1, Text: gadgetDef}}, false)
 	assert.False(t, colour(settled(c, u)))
+}
+
+// appliedWeb is a cluster with KubeVela holding a web ComponentDefinition
+// whose template differs from the workspace's.
+func appliedWeb() (Cluster, error) {
+	c, err := velaCluster()
+	c.Definition = func(kind, name string) (*unstructured.Unstructured, string, error) {
+		if kind != "ComponentDefinition" || name != "web" {
+			return nil, "", errors.New("not found")
+		}
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "core.oam.dev/v1beta1",
+			"kind":       "ComponentDefinition",
+			"metadata":   map[string]interface{}{"name": "web", "namespace": "vela-system", "annotations": map[string]interface{}{"definition.oam.dev/description": "applied"}},
+			"spec": map[string]interface{}{
+				"workload":  map[string]interface{}{"type": "autodetects.core.oam.dev"},
+				"schematic": map[string]interface{}{"cue": map[string]interface{}{"template": "output: {apiVersion: \"v1\", kind: \"ConfigMap\"}\nparameter: {}\n"}},
+			},
+		}}, "vela-system", nil
+	}
+	return c, err
+}
+
+func TestClusterDefinition(t *testing.T) {
+	c := newClientWith(t, NewServer(WithCluster(appliedWeb)))
+	c.drain()
+	c.response(c.send("initialize", map[string]interface{}{}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	clusterStatus(t, c)
+	u := "file://" + filepath.Join(t.TempDir(), "web.cue")
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "cue", Version: 1, Text: parentSrc}}, false)
+
+	m := c.response(c.send(MethodClusterDefinition, ClusterDefinitionParams{TextDocument: TextDocumentIdentifier{URI: u}}, true))
+	var r ClusterDefinitionResult
+	require.NoError(t, json.Unmarshal(m["result"], &r), string(m["error"]))
+	assert.Equal(t, "vela-system", r.Namespace)
+	assert.Equal(t, "k3d-test", r.Context)
+	assert.Contains(t, r.CUE, "web: {")
+	assert.Contains(t, r.CUE, `description: "applied"`)
+	assert.Contains(t, r.CUE, `kind: "ConfigMap"`)
+
+	other := "file://" + filepath.Join(t.TempDir(), "other.cue")
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: other, LanguageID: "cue", Version: 1, Text: strings.Replace(parentSrc, `"web": {`, `"other": {`, 1)}}, false)
+	m = c.response(c.send(MethodClusterDefinition, ClusterDefinitionParams{TextDocument: TextDocumentIdentifier{URI: other}}, true))
+	assert.Contains(t, string(m["error"]), "not applied")
 }

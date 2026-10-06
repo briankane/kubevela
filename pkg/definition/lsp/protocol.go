@@ -521,3 +521,19 @@ type InlayHint struct {
 	Tooltip     string   `json:"tooltip,omitempty"`
 	PaddingLeft bool     `json:"paddingLeft,omitempty"`
 }
+
+// MethodClusterDefinition asks for the definition a document defines, as
+// applied to the cluster. It is this server's own request.
+const MethodClusterDefinition = "vela/clusterDefinition"
+
+// ClusterDefinitionParams name the document.
+type ClusterDefinitionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// ClusterDefinitionResult is the applied definition in CUE, where it is.
+type ClusterDefinitionResult struct {
+	CUE       string `json:"cue"`
+	Namespace string `json:"namespace"`
+	Context   string `json:"context"`
+}

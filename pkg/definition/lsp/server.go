@@ -239,6 +239,29 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 	return result, rerr
 }
 
+// laterRequest starts answering a request that replies once work off the
+// message loop is done: a DefKit render runs Go, and reading a definition
+// from the cluster waits on it.
+func (s *Server) laterRequest(msg message) *ResponseError {
+	switch msg.Method {
+	case MethodClusterDefinition:
+		var p ClusterDefinitionParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return rerr
+		}
+		s.clusterDefinition(msg.ID, p)
+	case MethodRenderDefKit:
+		var p RenderDefKitParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return rerr
+		}
+		// A render runs Go and takes seconds, so it answers when it is done
+		// while other messages are handled.
+		go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
+	}
+	return nil
+}
+
 // configure acts on changed settings.
 func (s *Server) configure(set Settings) {
 	if set.WorkspaceDiagnostics != nil && *set.WorkspaceDiagnostics != s.workspaceDiags {
@@ -332,12 +355,8 @@ func (s *Server) handle(msg message) error {
 			text := p.ContentChanges[len(p.ContentChanges)-1].Text
 			return s.update(p.TextDocument.URI, text, &p.TextDocument.Version)
 		}
-	case MethodRenderDefKit:
-		var p RenderDefKitParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			// A render runs Go and takes seconds, so it answers when it is done
-			// while other messages are handled.
-			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
+	case MethodClusterDefinition, MethodRenderDefKit:
+		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
 	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster:
