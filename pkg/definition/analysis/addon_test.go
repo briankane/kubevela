@@ -370,7 +370,7 @@ func TestAddonResources(t *testing.T) {
 		good := "output: {\n\tname: \"extra\"\n\ttype: \"k8s-objects\"\n\tproperties: objects: [{apiVersion: \"v1\", kind: \"Namespace\", metadata: name: context.metadata.name}]\n}\n"
 		expectAddon(t, dir, "resources/extra.cue", good)
 		expectAddon(t, dir, "resources/extra.cue", strings.Replace(good, "\ttype: \"k8s-objects\"\n", "", 1), "type")
-		expectAddon(t, dir, "resources/extra.cue", strings.Replace(good, "properties:", "propertes:", 1), "4: ", "propertes")
+		expectAddon(t, dir, "resources/extra.cue", strings.Replace(good, "properties:", "propertes:", 1), "4: output.propertes")
 		expectAddon(t, dir, "resources/extra.cue", "x: 1\n", "output")
 	})
 	t.Run("part of the template", func(t *testing.T) {

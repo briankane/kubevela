@@ -822,6 +822,9 @@ func (d *document) checkAddonResource(root string) []Diagnostic {
 	param, _, extra := addonPackage(root, pkg, d.path)
 	extra += "#velaAddonComponent: (#addonApplication & {spec: components: [_]}).spec.components[0]\nvelaAddonComponent: #velaAddonComponent & output\n"
 	v, diags := d.build(cuecontext.New(), nil, extra, withParam(param)...)
+	for i := range diags {
+		diags[i].Message = strings.ReplaceAll(diags[i].Message, "velaAddonComponent.", "output.")
+	}
 	if v.Exists() && !v.LookupPath(cue.ParsePath("output.type")).Exists() {
 		diags = append(diags, d.at(d.fieldPos([]string{"output"}), "output has no type: it is the component the file renders"))
 	}
