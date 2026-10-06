@@ -127,8 +127,12 @@ func readIndexed(path string, src []byte) indexed {
 func (s *Server) indexWorkspace() {
 	folders := append([]string{}, s.folders...)
 	go func() {
-		found, _ := walkWorkspace(folders)
+		found, files := walkWorkspace(folders)
 		s.post(func() {
+			for _, f := range files {
+				s.workspaceFiles[f] = true
+			}
+			defer s.checkWorkspace()
 			changed := false
 			for path, entry := range found {
 				entry.evaluate()
@@ -282,6 +286,66 @@ func (s *Server) republish() {
 	for uri, text := range s.docs {
 		_ = s.publish(PublishDiagnosticsParams{URI: uri, Diagnostics: s.diagnose(uri, text)})
 	}
+	s.checkWorkspace()
+}
+
+// checkWorkspace checks the workspace's files that are not open and
+// publishes what it finds, a file at a time through the message loop, so
+// messages are answered between them. A newer pass supersedes this one.
+func (s *Server) checkWorkspace() {
+	if !s.workspaceDiags || len(s.workspaceFiles) == 0 {
+		return
+	}
+	s.checkGen++
+	gen := s.checkGen
+	files := make([]string, 0, len(s.workspaceFiles))
+	for f := range s.workspaceFiles {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	go func() {
+		for _, f := range files {
+			s.post(func() {
+				if gen != s.checkGen {
+					return
+				}
+				uri := "file://" + f
+				if _, open := s.docs[uri]; open {
+					return
+				}
+				//nolint:gosec // reading the workspace's own files is the point
+				text, err := os.ReadFile(f)
+				if err != nil {
+					return
+				}
+				_ = s.publish(PublishDiagnosticsParams{URI: uri, Diagnostics: s.diagnose(uri, string(text))})
+			})
+		}
+	}()
+}
+
+// clearWorkspace withdraws what was published for files that are not open.
+func (s *Server) clearWorkspace() {
+	s.checkGen++
+	for f := range s.workspaceFiles {
+		uri := "file://" + f
+		if _, open := s.docs[uri]; !open {
+			_ = s.publish(PublishDiagnosticsParams{URI: uri, Diagnostics: []Diagnostic{}})
+		}
+	}
+}
+
+// publishClosed publishes for a document just closed: what checking it on
+// disk finds, when the workspace is checked, or nothing.
+func (s *Server) publishClosed(uri string) error {
+	path := pathOf(uri)
+	if s.workspaceDiags && s.workspaceFiles[path] {
+		//nolint:gosec // reading the workspace's own files is the point
+		if text, err := os.ReadFile(path); err == nil {
+			return s.publish(PublishDiagnosticsParams{URI: uri, Diagnostics: s.diagnose(uri, string(text))})
+		}
+	}
+	return s.publish(PublishDiagnosticsParams{URI: uri, Diagnostics: []Diagnostic{}})
 }
 
 // index records what a file contributes, from its text.
@@ -298,10 +362,19 @@ func (s *Server) reindexFromDisk(path string) {
 // open editor, and checks the open documents again.
 func (s *Server) watchedFilesChanged(changes []FileEvent) {
 	for _, c := range changes {
+		path := pathOf(c.URI)
+		switch c.Type {
+		case FileChangeDeleted:
+			delete(s.workspaceFiles, path)
+			_ = s.publish(PublishDiagnosticsParams{URI: c.URI, Diagnostics: []Diagnostic{}})
+		case FileChangeCreated:
+			s.workspaceFiles[path] = true
+		case FileChangeChanged:
+		}
 		if _, open := s.docs[c.URI]; open {
 			continue
 		}
-		s.reindexFromDisk(pathOf(c.URI))
+		s.reindexFromDisk(path)
 	}
 	s.republish()
 }

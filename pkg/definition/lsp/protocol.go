@@ -300,6 +300,9 @@ type Settings struct {
 	// ReadCluster, when false, keeps the server from reading the
 	// kubeconfig's cluster at all. Unset is true.
 	ReadCluster *bool `json:"readCluster,omitempty"`
+	// WorkspaceDiagnostics, when false, keeps the server to checking open
+	// documents. Unset is true.
+	WorkspaceDiagnostics *bool `json:"workspaceDiagnostics,omitempty"`
 }
 
 // DidChangeConfigurationParams of workspace/didChangeConfiguration.

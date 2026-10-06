@@ -17,11 +17,13 @@ limitations under the License.
 package lsp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,4 +95,42 @@ func TestDefinitionNamesAreUnique(t *testing.T) {
 		assert.ElementsMatch(t, []string{"a/web.cue", "b/web.cue", "traits/web.cue"}, bySeverity[FindingWarning], "the trait shares the name")
 		assert.Equal(t, 1, imge, "the parent is a/web.cue, every time")
 	}
+}
+
+// The workspace's files are checked once indexed, open or not.
+func TestWorkspaceDiagnostics(t *testing.T) {
+	dir := t.TempDir()
+	broken := filepath.Join(dir, "typo.cue")
+	require.NoError(t, os.WriteFile(broken, []byte(strings.Replace(deploymentTypo, `"web": {`, `"typo": {`, 1)), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "web.cue"), []byte(parentSrc), 0o600))
+
+	start := func(options map[string]interface{}) *client {
+		c := newClientWith(t, NewServer(WithCluster(noCluster)))
+		c.drain()
+		options["validateOutputs"] = "on"
+		c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir, "initializationOptions": options}, true))
+		c.send("initialized", map[string]interface{}{}, false)
+		return c
+	}
+	published := func(c *client) map[string][]Diagnostic {
+		got := map[string][]Diagnostic{}
+		for {
+			m, ok := c.tryRead(3 * time.Second)
+			if !ok {
+				return got
+			}
+			var p PublishDiagnosticsParams
+			if string(m["method"]) == `"textDocument/publishDiagnostics"` && json.Unmarshal(m["params"], &p) == nil {
+				got[p.URI] = p.Diagnostics
+			}
+		}
+	}
+
+	got := published(start(map[string]interface{}{}))
+	require.Contains(t, got, "file://"+broken, "an unopened file is checked")
+	assert.Contains(t, messages(got["file://"+broken]), "replicass")
+	assert.Contains(t, got, "file://"+filepath.Join(dir, "web.cue"), "a clean file is published too, empty")
+
+	got = published(start(map[string]interface{}{"workspaceDiagnostics": false}))
+	assert.NotContains(t, got, "file://"+broken, "off: only open files")
 }

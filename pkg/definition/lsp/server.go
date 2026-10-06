@@ -71,6 +71,12 @@ type Server struct {
 	validateOutputs string
 	// clusterEnabled is the readCluster setting.
 	clusterEnabled bool
+	// workspaceDiags is the workspaceDiagnostics setting; workspaceFiles are
+	// the files it checks; checkGen counts the passes over them, so a newer
+	// pass supersedes an older one.
+	workspaceDiags bool
+	workspaceFiles map[string]bool
+	checkGen       int
 	connect        ClusterConnector
 	cluster        *clusterState
 	kinds          *kubeschema.Schemas
@@ -110,6 +116,8 @@ func NewServer(opts ...Option) *Server {
 		crds:            map[string][][]byte{},
 		validateOutputs: validateAuto,
 		clusterEnabled:  true,
+		workspaceDiags:  true,
+		workspaceFiles:  map[string]bool{},
 		connect:         ConnectKubeconfig,
 		definitions:     map[string]definitionEntry{},
 		packages:        map[string][]cuexruntime.Package{},
@@ -233,6 +241,14 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 
 // configure acts on changed settings.
 func (s *Server) configure(set Settings) {
+	if set.WorkspaceDiagnostics != nil && *set.WorkspaceDiagnostics != s.workspaceDiags {
+		s.workspaceDiags = *set.WorkspaceDiagnostics
+		if s.workspaceDiags {
+			s.checkWorkspace()
+		} else {
+			s.clearWorkspace()
+		}
+	}
 	if set.ReadCluster != nil && *set.ReadCluster != s.clusterEnabled {
 		s.clusterEnabled = *set.ReadCluster
 		if !s.clusterEnabled {
@@ -274,6 +290,9 @@ func (s *Server) handle(msg message) error {
 		}
 		if p.InitializationOptions.ReadCluster != nil {
 			s.clusterEnabled = *p.InitializationOptions.ReadCluster
+		}
+		if p.InitializationOptions.WorkspaceDiagnostics != nil {
+			s.workspaceDiags = *p.InitializationOptions.WorkspaceDiagnostics
 		}
 		result = InitializeResult{
 			Capabilities: ServerCapabilities{
@@ -354,7 +373,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			delete(s.docs, p.TextDocument.URI)
 			s.reindexFromDisk(pathOf(p.TextDocument.URI))
-			return s.publish(PublishDiagnosticsParams{URI: p.TextDocument.URI, Diagnostics: []Diagnostic{}})
+			return s.publishClosed(p.TextDocument.URI)
 		}
 	default:
 		if isRequest {
