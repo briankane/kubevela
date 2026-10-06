@@ -28,9 +28,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The definitions KubeVela ships must analyse clean: an error on any of them
-// is a false positive, most likely a context key missing from context.go. A
-// warning must be one of knownWarnings.
+// The definitions KubeVela ships must analyse clean, with their outputs checked
+// against Kubernetes' own kinds: an error on any of them is a false positive,
+// most likely a context key missing from context.go. A warning must be one of
+// knownWarnings.
 func TestShippedDefinitionsAreClean(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "vela-templates", "definitions")
 	n := checkCorpus(t, root)
@@ -62,6 +63,7 @@ var knownWarnings = map[string][]string{
 }
 
 func checkCorpus(t *testing.T, root string) int {
+	opts := builtinKinds(t)
 	n := 0
 	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
 		if err != nil || e.IsDir() || !strings.HasSuffix(path, ".cue") {
@@ -71,7 +73,7 @@ func checkCorpus(t *testing.T, root string) int {
 		if err != nil {
 			return err
 		}
-		res := Analyze(path, src)
+		res := AnalyzeWith(path, src, opts)
 		if res.Type != componentType && res.Type != traitType {
 			return nil
 		}

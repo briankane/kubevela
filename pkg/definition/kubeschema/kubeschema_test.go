@@ -17,6 +17,7 @@ limitations under the License.
 package kubeschema
 
 import (
+	"strings"
 	"testing"
 
 	"cuelang.org/go/cue"
@@ -181,4 +182,20 @@ spec:
 func TestParseAPIVersion(t *testing.T) {
 	assert.Equal(t, GVK{Group: "apps", Version: "v1", Kind: "Deployment"}, ParseGVK("apps/v1", "Deployment"))
 	assert.Equal(t, GVK{Version: "v1", Kind: "Service"}, ParseGVK("v1", "Service"))
+}
+
+// Kinds that share a definition are declared together, the definition once.
+func TestSeveralKindsShareDefinitions(t *testing.T) {
+	s := New()
+	require.NoError(t, s.AddDocument([]byte(widgets)))
+	require.NoError(t, s.AddCRD([]byte(gadgetCRD)))
+	gadget := GVK{Group: "example.com", Version: "v1alpha1", Kind: "Gadget"}
+	src, ok := s.CUE(widget, gadget)
+	require.True(t, ok)
+	assert.Equal(t, 1, strings.Count(src, defName("com.example.v1.WidgetSpec")+": "))
+	v := cuecontext.New().CompileString(src + "\nw: " + Root(widget) + " & {spec: size: 1}\ng: " + Root(gadget) + " & {spec: color: \"red\"}\n")
+	assert.NoError(t, v.Validate())
+
+	_, ok = s.CUE(widget, GVK{Kind: "Missing"})
+	assert.False(t, ok)
 }

@@ -34,6 +34,8 @@ import (
 	"cuelang.org/go/cue/literal"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+
+	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
 // Position is a 1-based line and byte column, as CUE reports them.
@@ -90,6 +92,7 @@ type document struct {
 	path     string
 	src      []byte
 	file     *ast.File
+	opts     Options
 	imports  []*ast.ImportDecl
 	headers  []*ast.Field
 	template *ast.Field
@@ -97,8 +100,20 @@ type document struct {
 	typ      string
 }
 
+// Options are what Analyze checks beyond the definition itself.
+type Options struct {
+	// Kinds, when set, are the schemas output, outputs and a trait's patch are
+	// checked against, by the kind each declares.
+	Kinds *kubeschema.Schemas
+}
+
 // Analyze checks the definition in src, read from path.
 func Analyze(path string, src []byte) Result {
+	return AnalyzeWith(path, src, Options{})
+}
+
+// AnalyzeWith is Analyze with options.
+func AnalyzeWith(path string, src []byte, opts Options) Result {
 	f, err := parser.ParseFile(path, src, parser.ParseComments)
 	if err != nil {
 		if !templateLine.Match(src) || !typeLine.Match(src) {
@@ -111,6 +126,7 @@ func Analyze(path string, src []byte) Result {
 	if !ok {
 		return Result{}
 	}
+	d.opts = opts
 	res := Result{IsDefinition: true, Name: d.name, Type: d.typ}
 	// Markers are read before the template is compiled, which rewrites it.
 	diags := d.checkMarkers()
@@ -189,7 +205,8 @@ func (d *document) checkTemplate() []Diagnostic {
 			continue
 		}
 		diags = append(diags, d.fromErrors(v.Validate(), templateLabel)...)
-		return append(diags, d.checkSelectors(v)...)
+		diags = append(diags, d.checkSelectors(v)...)
+		return append(diags, d.checkKinds(f, v)...)
 	}
 }
 

@@ -61,12 +61,18 @@ type Schemas struct {
 	defs      map[string]schema
 	kinds     map[GVK]string
 	resources map[string]GVK
-	converted map[GVK]string
+	// converted caches each definition's CUE, and the definitions it refers to.
+	converted map[string]convertedDef
+}
+
+type convertedDef struct {
+	cue  string
+	refs []string
 }
 
 // New returns an empty set.
 func New() *Schemas {
-	return &Schemas{defs: map[string]schema{}, kinds: map[GVK]string{}, resources: map[string]GVK{}, converted: map[GVK]string{}}
+	return &Schemas{defs: map[string]schema{}, kinds: map[GVK]string{}, resources: map[string]GVK{}, converted: map[string]convertedDef{}}
 }
 
 // AddDocument adds the kinds of an OpenAPI v3 document: each component
@@ -95,7 +101,7 @@ func (s *Schemas) AddDocument(data []byte) error {
 			}
 		}
 	}
-	s.converted = map[GVK]string{}
+	s.converted = map[string]convertedDef{}
 	return nil
 }
 
@@ -132,7 +138,7 @@ func (s *Schemas) AddCRD(data []byte) error {
 			s.resources[crd.Spec.Names.Plural+"."+gvk.Group] = gvk
 		}
 	}
-	s.converted = map[GVK]string{}
+	s.converted = map[string]convertedDef{}
 	return nil
 }
 
@@ -170,32 +176,52 @@ func (s *Schemas) KindOf(resource string) GVK {
 	return s.resources[resource]
 }
 
-// CUE is CUE source declaring Root(gvk), the kind's schema, and every
-// definition it refers to.
-func (s *Schemas) CUE(gvk GVK) (string, bool) {
+// CUE is CUE source declaring Root(gvk) for each kind, its schema, and every
+// definition those refer to, each once. It is false when a kind is unknown.
+func (s *Schemas) CUE(gvks ...GVK) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if src, ok := s.converted[gvk]; ok {
-		return src, true
-	}
-	name, ok := s.kinds[gvk]
-	if !ok {
-		return "", false
-	}
-	c := &converter{defs: s.defs, emitted: map[string]bool{}}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s\n", Root(gvk), c.ref(name))
-	for len(c.queue) > 0 {
-		next := c.queue[0]
-		c.queue = c.queue[1:]
-		fmt.Fprintf(&b, "%s: %s\n", defName(next), c.typ(s.defs[next]))
+	seen := map[string]bool{}
+	var queue []string
+	for _, gvk := range gvks {
+		name, ok := s.kinds[gvk]
+		if !ok {
+			return "", false
+		}
+		fmt.Fprintf(&b, "%s: %s\n", Root(gvk), defName(name))
+		if !seen[name] {
+			seen[name] = true
+			queue = append(queue, name)
+		}
 	}
-	src := b.String()
-	s.converted[gvk] = src
-	return src, true
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		def := s.convert(name)
+		fmt.Fprintf(&b, "%s: %s\n", defName(name), def.cue)
+		for _, ref := range def.refs {
+			if !seen[ref] {
+				seen[ref] = true
+				queue = append(queue, ref)
+			}
+		}
+	}
+	return b.String(), true
 }
 
-// converter writes schemas as CUE, queueing each referenced schema once.
+// convert is the CUE of one definition, converted on first use.
+func (s *Schemas) convert(name string) convertedDef {
+	if def, ok := s.converted[name]; ok {
+		return def
+	}
+	c := &converter{defs: s.defs, emitted: map[string]bool{}}
+	def := convertedDef{cue: c.typ(s.defs[name]), refs: c.queue}
+	s.converted[name] = def
+	return def
+}
+
+// converter writes a schema as CUE, noting each schema it refers to once.
 type converter struct {
 	defs    map[string]schema
 	emitted map[string]bool
