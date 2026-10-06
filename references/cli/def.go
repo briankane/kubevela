@@ -115,6 +115,7 @@ func DefinitionCommandGroup(c common.Args, order string, ioStreams util.IOStream
 		NewDefinitionDelCommand(c),
 		NewDefinitionInitCommand(c),
 		NewDefinitionValidateCommand(c),
+		NewDefinitionLSPCommand(),
 		NewDefinitionUpgradeCommand(c, ioStreams),
 		NewDefinitionCompatibilityCommand(c, ioStreams),
 		NewDefinitionDocGenCommand(c, ioStreams),

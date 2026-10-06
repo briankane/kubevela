@@ -1,0 +1,137 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package lsp
+
+// The subset of the Language Server Protocol 3.17 this server speaks. Field
+// names and values follow the specification.
+
+// Position is a 0-based line and UTF-16 character offset.
+type Position struct {
+	Line      uint32 `json:"line"`
+	Character uint32 `json:"character"`
+}
+
+// Range is a span in a document.
+type Range struct {
+	Start Position `json:"start"`
+	End   Position `json:"end"`
+}
+
+// DiagnosticSeverity of a Diagnostic.
+type DiagnosticSeverity int
+
+// SeverityError marks a diagnostic as an error.
+const SeverityError DiagnosticSeverity = 1
+
+// Diagnostic is a problem in a document.
+type Diagnostic struct {
+	Range    Range              `json:"range"`
+	Severity DiagnosticSeverity `json:"severity"`
+	Source   string             `json:"source"`
+	Message  string             `json:"message"`
+}
+
+// PublishDiagnosticsParams replaces every diagnostic of a document.
+type PublishDiagnosticsParams struct {
+	URI         string       `json:"uri"`
+	Version     *int         `json:"version,omitempty"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}
+
+// TextDocumentItem is a document as opened.
+type TextDocumentItem struct {
+	URI        string `json:"uri"`
+	LanguageID string `json:"languageId"`
+	Version    int    `json:"version"`
+	Text       string `json:"text"`
+}
+
+// TextDocumentIdentifier names a document.
+type TextDocumentIdentifier struct {
+	URI string `json:"uri"`
+}
+
+// VersionedTextDocumentIdentifier names a version of a document.
+type VersionedTextDocumentIdentifier struct {
+	URI     string `json:"uri"`
+	Version int    `json:"version"`
+}
+
+// TextDocumentContentChangeEvent is the whole new text, since the server
+// asks for full sync.
+type TextDocumentContentChangeEvent struct {
+	Text string `json:"text"`
+}
+
+// DidOpenTextDocumentParams of textDocument/didOpen.
+type DidOpenTextDocumentParams struct {
+	TextDocument TextDocumentItem `json:"textDocument"`
+}
+
+// DidChangeTextDocumentParams of textDocument/didChange.
+type DidChangeTextDocumentParams struct {
+	TextDocument   VersionedTextDocumentIdentifier  `json:"textDocument"`
+	ContentChanges []TextDocumentContentChangeEvent `json:"contentChanges"`
+}
+
+// DidCloseTextDocumentParams of textDocument/didClose.
+type DidCloseTextDocumentParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// TextDocumentSyncKind is how document changes are sent.
+type TextDocumentSyncKind int
+
+// TextDocumentSyncFull sends the whole document on every change.
+const TextDocumentSyncFull TextDocumentSyncKind = 1
+
+// TextDocumentSyncOptions is the server's sync capability.
+type TextDocumentSyncOptions struct {
+	OpenClose bool                 `json:"openClose"`
+	Change    TextDocumentSyncKind `json:"change"`
+}
+
+// ServerCapabilities the server announces.
+type ServerCapabilities struct {
+	TextDocumentSync TextDocumentSyncOptions `json:"textDocumentSync"`
+}
+
+// ServerInfo names the server.
+type ServerInfo struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// InitializeResult answers initialize.
+type InitializeResult struct {
+	Capabilities ServerCapabilities `json:"capabilities"`
+	ServerInfo   ServerInfo         `json:"serverInfo"`
+}
+
+// ResponseError is a JSON-RPC error.
+type ResponseError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// JSON-RPC and LSP error codes.
+const (
+	CodeParseError     = -32700
+	CodeInvalidParams  = -32602
+	CodeMethodNotFound = -32601
+	CodeInvalidRequest = -32600
+)
