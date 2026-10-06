@@ -104,27 +104,7 @@ func indexFile(path string, src []byte) indexed {
 func (s *Server) indexWorkspace() {
 	folders := append([]string{}, s.folders...)
 	go func() {
-		found := map[string]indexed{}
-		n := 0
-		for _, root := range folders {
-			_ = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
-				if err != nil || n >= maxIndexedFiles {
-					return filepath.SkipDir
-				}
-				if e.IsDir() {
-					if path != root && (skippedDirs[e.Name()] || strings.HasPrefix(e.Name(), ".")) {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-				if !strings.HasSuffix(path, ".cue") && !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
-					return nil
-				}
-				n++
-				found[path] = indexFile(path, nil)
-				return nil
-			})
-		}
+		found, _ := walkWorkspace(folders)
 		s.post(func() {
 			changed := false
 			for path, entry := range found {
@@ -138,6 +118,34 @@ func (s *Server) indexWorkspace() {
 			}
 		})
 	}()
+}
+
+// walkWorkspace reads what each CUE and YAML file under folders
+// contributes to the index, and lists the files, in order.
+func walkWorkspace(folders []string) (map[string]indexed, []string) {
+	found := map[string]indexed{}
+	var files []string
+	for _, root := range folders {
+		_ = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
+			if err != nil || len(files) >= maxIndexedFiles {
+				return filepath.SkipDir
+			}
+			if e.IsDir() {
+				if path != root && (skippedDirs[e.Name()] || strings.HasPrefix(e.Name(), ".")) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".cue") && !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
+				return nil
+			}
+			files = append(files, path)
+			found[path] = indexFile(path, nil)
+			return nil
+		})
+	}
+	sort.Strings(files)
+	return found, files
 }
 
 // record keeps what a file contributes to the index, replacing what it did.
@@ -343,27 +351,40 @@ func (s *Server) connectCluster() {
 	connect := s.connect
 	go func() {
 		c, err := connect()
-		var pkgs []cuexruntime.Package
-		for i := range c.Packages {
-			if p, err := cuexruntime.NewExternalPackage(&c.Packages[i]); err == nil {
-				pkgs = append(pkgs, p)
-			}
-		}
 		s.post(func() {
-			s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context}
-			s.clusterPackages = pkgs
-			if len(pkgs) > 0 {
-				s.rebuildExternals()
-			}
-			// Without KubeVela, the cluster adds no kinds to those already built.
-			if s.cluster.vela {
-				s.rebuildKinds()
-			}
-			if s.cluster.vela || len(pkgs) > 0 {
+			if s.useCluster(c, err) {
 				s.republish()
 			}
 		})
 	}()
+}
+
+// readCluster reaches the cluster and keeps what it found, at once.
+func (s *Server) readCluster(connect ClusterConnector) {
+	c, err := connect()
+	s.useCluster(c, err)
+}
+
+// useCluster keeps what reaching the cluster found: the kinds it serves,
+// when it runs KubeVela, and its packages. It reports whether that changes
+// what documents are checked against.
+func (s *Server) useCluster(c Cluster, err error) bool {
+	var pkgs []cuexruntime.Package
+	for i := range c.Packages {
+		if p, err := cuexruntime.NewExternalPackage(&c.Packages[i]); err == nil {
+			pkgs = append(pkgs, p)
+		}
+	}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context}
+	s.clusterPackages = pkgs
+	if len(pkgs) > 0 {
+		s.rebuildExternals()
+	}
+	// Without KubeVela, the cluster adds no kinds to those already built.
+	if s.cluster.vela {
+		s.rebuildKinds()
+	}
+	return s.cluster.vela || len(pkgs) > 0
 }
 
 // rebuildKinds builds the schemas outputs are checked against: Kubernetes'

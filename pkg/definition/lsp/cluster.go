@@ -57,9 +57,9 @@ const clusterTimeout = 3 * time.Second
 // kubeVelaGroup is the API group a cluster running KubeVela serves.
 const kubeVelaGroup = "core.oam.dev"
 
-// connectKubeconfig is the ClusterConnector for the kubeconfig's current
+// ConnectKubeconfig is the ClusterConnector for the kubeconfig's current
 // context, as kubectl reads it.
-func connectKubeconfig() (Cluster, error) {
+func ConnectKubeconfig() (Cluster, error) {
 	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(clientcmd.NewDefaultClientConfigLoadingRules(), &clientcmd.ConfigOverrides{})
 	raw, err := cc.RawConfig()
 	if err != nil {

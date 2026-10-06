@@ -31,8 +31,9 @@ func NewDefinitionLSPCommand() *cobra.Command {
 		Short: "Run a language server for CUE definitions.",
 		Long: "Run a Language Server Protocol server for CUE X-Definitions over stdin and stdout.\n" +
 			"Editors start it themselves. It reports the errors the controller would hit compiling a\n" +
-			"definition, at the line they are on. It works offline: it reads the files the editor sends\n" +
-			"and the vela/* packages built into this binary, never the cluster.",
+			"definition, at the line they are on. It reads the files the editor sends, the workspace\n" +
+			"around them and the vela/* packages built into this binary; it reads the kubeconfig's\n" +
+			"cluster, and only reads it, for the kinds it serves and its Package resources.",
 		Example: "# Configure your editor to start:\n" +
 			"> vela def lsp",
 		Args: cobra.NoArgs,

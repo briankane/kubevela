@@ -107,7 +107,7 @@ func NewServer(opts ...Option) *Server {
 		published:       map[string]analysis.Published{},
 		crds:            map[string][][]byte{},
 		validateOutputs: validateAuto,
-		connect:         connectKubeconfig,
+		connect:         ConnectKubeconfig,
 		definitions:     map[string]definitionEntry{},
 		packages:        map[string][]cuexruntime.Package{},
 		events:          make(chan func(), 16),
