@@ -58,7 +58,7 @@ func CompleteValueAt(doc string, cursor int, ext *Externals) []Completion {
 		chain = nil
 	}
 	typed := before[m[6]:m[7]]
-	if root == "context" || root == parameterLabel {
+	if root == "context" {
 		return nil
 	}
 	for _, spec := range importSpec.FindAllStringSubmatch(doc, -1) {

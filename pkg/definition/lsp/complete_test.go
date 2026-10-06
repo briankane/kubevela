@@ -124,3 +124,15 @@ func TestCompletesInATestFile(t *testing.T) {
 	assert.ElementsMatch(t, []string{"#TraitRender", "#TraitStatus"}, itemLabels(list))
 	assert.Contains(t, list.Items[0].TextEdit.NewText, `definition: "scaler"`)
 }
+
+func TestHoverAContextField(t *testing.T) {
+	c := newClient(t)
+	text := "\"x\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: output: {apiVersion: \"v1\", kind: \"ConfigMap\", metadata: name: context.appName}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	line := "template: output: {apiVersion: \"v1\", kind: \"ConfigMap\", metadata: name: context.app"
+	m := c.response(c.send("textDocument/hover", HoverParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: Position{Line: 4, Character: uint32(len(line))}}, true))
+	var h Hover
+	require.NoError(t, json.Unmarshal(m["result"], &h))
+	assert.Contains(t, h.Contents.Value, "appName: string")
+}

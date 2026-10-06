@@ -113,6 +113,7 @@ type TextDocumentSyncOptions struct {
 type ServerCapabilities struct {
 	TextDocumentSync   TextDocumentSyncOptions `json:"textDocumentSync"`
 	CompletionProvider *CompletionOptions      `json:"completionProvider,omitempty"`
+	HoverProvider      bool                    `json:"hoverProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -324,4 +325,15 @@ type DefinitionsParams struct {
 // DefinitionsResult is the names of the definitions found.
 type DefinitionsResult struct {
 	Names []string `json:"names"`
+}
+
+// HoverParams asks what is at a position.
+type HoverParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+}
+
+// Hover is what is at a position, as Markdown.
+type Hover struct {
+	Contents MarkupContent `json:"contents"`
 }

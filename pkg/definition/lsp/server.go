@@ -177,6 +177,7 @@ func (s *Server) handle(msg message) error {
 					OpenClose: true,
 					Change:    TextDocumentSyncFull,
 				},
+				HoverProvider:      true,
 				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
 			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
@@ -233,6 +234,14 @@ func (s *Server) handle(msg message) error {
 		var p TestCasesParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			result = testCases(p)
+		}
+	case "textDocument/hover":
+		var p HoverParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			text := s.docs[p.TextDocument.URI]
+			if h, ok := analysis.Hover(text, byteOffset(text, p.Position), s.options()); ok {
+				result = Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}
+			}
 		}
 	case "textDocument/completion":
 		var p CompletionParams

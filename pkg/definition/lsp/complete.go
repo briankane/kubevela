@@ -126,3 +126,16 @@ var testExternals = sync.OnceValue(func() *analysis.Externals {
 	}
 	return analysis.NewExternals([]cuexruntime.Package{pkg})
 })
+
+// byteOffset is the byte offset in text of a protocol position.
+func byteOffset(text string, pos Position) int {
+	lines := strings.SplitAfter(text, "\n")
+	offset := 0
+	for i := 0; i < int(pos.Line) && i < len(lines); i++ {
+		offset += len(lines[i])
+	}
+	if int(pos.Line) < len(lines) {
+		offset += len(prefixUTF16(lines[pos.Line], pos.Character))
+	}
+	return offset
+}
