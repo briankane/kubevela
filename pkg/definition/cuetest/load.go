@@ -223,12 +223,33 @@ func testFiles(path string) ([]string, error) {
 	return files, err
 }
 
+// LoadFile loads one test file from src, as an editor holds it, rather than
+// from disk. The definitions its cases name are still read from disk.
+func LoadFile(file string, src []byte) *Suite {
+	if err := requireOffline(); err != nil {
+		return &Suite{File: file, Err: err}
+	}
+	l := &loader{subjects: map[string]Subject{}}
+	s, err := l.suiteFrom(file, src)
+	if err != nil {
+		return &Suite{File: file, Err: err}
+	}
+	for _, c := range s.Cases {
+		c.Path = file
+	}
+	return s
+}
+
 func (l *loader) suite(file string) (*Suite, error) {
 	//nolint:gosec // reading the test files the user named is the point
 	src, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
+	return l.suiteFrom(file, src)
+}
+
+func (l *loader) suiteFrom(file string, src []byte) (*Suite, error) {
 	compiler, err := testCompiler()
 	if err != nil {
 		return nil, err
