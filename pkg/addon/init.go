@@ -732,8 +732,16 @@ status: app.value.status.status
 	type: "trait"
 }
 template: {
-	parameter: {param: ""}
-	outputs: {sample: {}}
+	outputs: sample: {
+		apiVersion: "v1"
+		kind:       "ConfigMap"
+		metadata: name: "\(context.name)-sample"
+		data: param: parameter.param
+	}
+	parameter: {
+		// +usage=A value the sample ConfigMap carries
+		param: *"" | string
+	}
 }
 `
 	resourceTemplate = `// We put Components in resources directory.
