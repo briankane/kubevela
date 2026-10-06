@@ -81,16 +81,19 @@ func CompleteValueAt(doc string, cursor int, ext *Externals) []Completion {
 		return nil
 	}
 	d.opts = Options{Externals: ext}
-	declared := map[string][]*ast.Field{}
-	allTopLevelFields(d.template.Value, declared)
-	if len(declared[root]) == 0 {
+	scope, ok := scopeOf(d.template.Value, m[2], root, nil)
+	if !ok {
 		return nil
 	}
 	v, ok := d.evaluate()
 	if !ok {
 		return nil
 	}
-	cur := v.LookupPath(cue.MakePath(cue.Str(templateLabel), rootSelector(root)))
+	sels := []cue.Selector{cue.Str(templateLabel)}
+	for _, label := range append(scope, root) {
+		sels = append(sels, rootSelector(label))
+	}
+	cur := v.LookupPath(cue.MakePath(sels...))
 	for _, step := range chain {
 		parent := cur
 		cur = schemaChild(cur, cue.Str(step))
@@ -114,6 +117,33 @@ func CompleteValueAt(doc string, cursor int, ext *Externals) []Completion {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
 	return out
+}
+
+// scopeOf is the path, under the template, of the nearest struct enclosing
+// offset that declares name, as CUE resolves a reference to it.
+func scopeOf(n ast.Node, offset int, name string, path []string) ([]string, bool) {
+	s, ok := n.(*ast.StructLit)
+	if !ok {
+		return nil, false
+	}
+	var found []string
+	foundHere := false
+	declared := map[string][]*ast.Field{}
+	allTopLevelFields(s, declared)
+	if len(declared[name]) > 0 {
+		found, foundHere = append([]string{}, path...), true
+	}
+	for _, decls := range declared {
+		for _, f := range decls {
+			if f.Pos().Offset() > offset || f.End().Offset() < offset {
+				continue
+			}
+			if inner, innerOK := scopeOf(f.Value, offset, name, append(append([]string{}, path...), labelName(f.Label))); innerOK {
+				return inner, true
+			}
+		}
+	}
+	return found, foundHere
 }
 
 func rootSelector(name string) cue.Selector {

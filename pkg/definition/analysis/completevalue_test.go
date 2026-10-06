@@ -75,3 +75,25 @@ func TestCompleteFunctionResults(t *testing.T) {
 		assert.Empty(t, complete("_nope."))
 	})
 }
+
+// A name is found the way CUE finds it: in the nearest enclosing struct that
+// declares it.
+func TestCompleteFunctionResultsInABlock(t *testing.T) {
+	src := `import "vela/kube"
+
+"c": {
+	type: "component"
+	attributes: workload: type: "autodetects.core.oam.dev"
+}
+template: {
+	output: {
+		apiVersion: "v1"
+		kind:       "ConfigMap"
+		_read: kube.#Get & {$params: resource: {apiVersion: "apps/v1", kind: "Deployment", metadata: name: "web"}}
+		data: replicas: "\(_read.$returns.spec.|)"
+	}
+}
+`
+	doc, cursor := at(src)
+	assert.Contains(t, labels(CompleteValueAt(doc, cursor, nil)), "replicas")
+}
