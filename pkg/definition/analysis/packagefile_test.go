@@ -96,7 +96,9 @@ func TestPackageFile(t *testing.T) {
 			want: []string{"19:", "error"},
 		},
 		"a syntax error in a template": {
-			edit: func(s string) string { return strings.Replace(s, "$returns: message: string", "$returns: message: string }", 1) },
+			edit: func(s string) string {
+				return strings.Replace(s, "$returns: message: string", "$returns: message: string }", 1)
+			},
 			// The extra brace closes #Say, so the stray one is the closing brace
 			// on the next line, at its own column in the YAML.
 			want: []string{"22:7 error", "expected 'EOF'"},

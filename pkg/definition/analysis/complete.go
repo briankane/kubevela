@@ -231,7 +231,12 @@ func CompletePackageMemberWith(doc, before string, ext *Externals) []Completion 
 	if path == "" || !ok {
 		return nil
 	}
-	pkgs := packages{builtin: packagesFor(kind), ext: ext}
+	return completeMember(packages{builtin: packagesFor(kind), ext: ext}, path, typed)
+}
+
+// completeMember completes a member of the package at path, of pkgs, after
+// typed.
+func completeMember(pkgs packages, path, typed string) []Completion {
 	pkg, ok := pkgs.value(path)
 	if !ok {
 		return nil
@@ -295,26 +300,40 @@ func CompleteImport(doc, before string) []Completion {
 // CompleteImportWith is CompleteImport, offering the workspace's custom
 // provider packages too.
 func CompleteImportWith(doc, before string, ext *Externals) []Completion {
-	lines := strings.Split(before, "\n")
-	last := lines[len(lines)-1]
-	m := importTyped.FindStringSubmatch(last)
-	if m == nil {
+	typed, ok := importPathTyped(before)
+	if !ok {
 		return nil
-	}
-	if !strings.Contains(last, "import") {
-		rest := strings.Join(lines[:len(lines)-1], "\n")
-		open := strings.LastIndex(rest, "import (")
-		if open < 0 || strings.Contains(rest[open:], ")") {
-			return nil
-		}
 	}
 	kind, ok := completionKind(doc)
 	if !ok {
 		return nil
 	}
-	typed := m[1]
+	return completeImportFrom(packages{builtin: packagesFor(kind), ext: ext}, typed)
+}
+
+// importPathTyped is the import path typed at the end of before, the text
+// up to the cursor, when the cursor is in an import.
+func importPathTyped(before string) (string, bool) {
+	lines := strings.Split(before, "\n")
+	last := lines[len(lines)-1]
+	m := importTyped.FindStringSubmatch(last)
+	if m == nil {
+		return "", false
+	}
+	if !strings.Contains(last, "import") {
+		rest := strings.Join(lines[:len(lines)-1], "\n")
+		open := strings.LastIndex(rest, "import (")
+		if open < 0 || strings.Contains(rest[open:], ")") {
+			return "", false
+		}
+	}
+	return m[1], true
+}
+
+// completeImportFrom completes an import path of pkgs after typed.
+func completeImportFrom(pkgs packages, typed string) []Completion {
 	var out []Completion
-	for _, p := range (packages{builtin: packagesFor(kind), ext: ext}).list() {
+	for _, p := range pkgs.list() {
 		path := p.GetPath()
 		if strings.HasPrefix(path, typed) {
 			out = append(out, Completion{Label: path, Insert: path, Replace: len(typed), Doc: "The " + p.GetName() + " package."})

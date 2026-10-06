@@ -237,6 +237,114 @@ func CheckAddonFile(path string, src []byte, opts Options) ([]Diagnostic, bool) 
 	return sortDiagnostics(firstPerPosition(diags)), true
 }
 
+// Addon CUE file kinds, by what they compile with.
+const (
+	addonKindTemplate  = "template"
+	addonKindResource  = "resource"
+	addonKindConfig    = "config"
+	addonKindView      = "view"
+	addonKindNotes     = "notes"
+	addonKindParameter = "parameter"
+)
+
+// addonCUEFile is the addon and kind of an addon's CUE file at path.
+func addonCUEFile(path string) (root, kind string, ok bool) {
+	root, ok = AddonRoot(path)
+	if !ok || filepath.Ext(path) != cueExt {
+		return "", "", false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	switch {
+	case rel == addonTemplateFile:
+		return root, addonKindTemplate, true
+	case rel == addonParameterFile || rel == addonResourcesDir+"/"+addonParameterFile:
+		return root, addonKindParameter, true
+	case rel == addonNotesFile:
+		return root, addonKindNotes, true
+	case len(parts) >= 2 && parts[0] == addonResourcesDir:
+		return root, addonKindResource, true
+	case len(parts) == 2 && parts[0] == addonConfigTemplates:
+		return root, addonKindConfig, true
+	case len(parts) == 2 && parts[0] == addonViews:
+		return root, addonKindView, true
+	}
+	return "", "", false
+}
+
+// addonCompile is what an addon's CUE file compiles with: the packages it
+// may import, the CUE KubeVela gives it, and the files compiled beside it.
+// output names the field its output is checked under.
+type addonCompile struct {
+	pkgs   *packageSet
+	extra  string
+	files  []*ast.File
+	output string
+}
+
+// stdlibOnly is the package set of addon CUE that pkg/addon compiles with no
+// KubeVela packages.
+var stdlibOnly = &packageSet{list: func() []cuexruntime.Package { return nil }}
+
+// mainTemplateMissing is the reason a resource of package main is not read.
+const mainTemplateMissing = "a file of package main is read only as part of template.cue, which this addon does not have in package main: it is not read"
+
+// componentCUE checks a resource file's output as an Application's component.
+const componentCUE = "#velaAddonComponent: (#addonApplication & {spec: components: [_]}).spec.components[0]\nvelaAddonComponent: #velaAddonComponent & output\n"
+
+// addonCompile is how the parsed document compiles, as the kind of addon
+// file it is. It is false, with why, when KubeVela does not read it.
+func (d *document) addonCompile(root, kind string) (addonCompile, string, bool) {
+	switch kind {
+	case addonKindTemplate:
+		if d.file.PackageName() == "" {
+			d.file.Decls = append([]ast.Decl{&ast.Package{Name: ast.NewIdent(addonMainPackage)}}, d.file.Decls...)
+		}
+		param, resources, extra := addonPackage(root, d.file.PackageName(), d.path)
+		return addonCompile{pkgs: stdlibOnly, extra: extra + addonOutputCUE, files: withParam(param, resources...), output: "output"}, "", true
+	case addonKindResource:
+		if d.file.PackageName() == addonMainPackage {
+			main, ok := addonFile(filepath.Join(root, addonTemplateFile), addonMainPackage, true)
+			if !ok {
+				return addonCompile{}, mainTemplateMissing, false
+			}
+			param, resources, extra := addonPackage(root, addonMainPackage, d.path)
+			return addonCompile{pkgs: stdlibOnly, extra: extra + addonOutputCUE, files: withParam(param, append(resources, main)...), output: "output"}, "", true
+		}
+		pkg := d.file.PackageName()
+		if pkg == "" {
+			pkg = addonMainPackage
+		}
+		// Only parameter.cue joins a component's file: other resources do not.
+		param, _, extra := addonPackage(root, pkg, d.path)
+		return addonCompile{pkgs: stdlibOnly, extra: extra + componentCUE, files: withParam(param), output: "velaAddonComponent"}, "", true
+	case addonKindConfig:
+		extra := configTemplateCUE + secretSchema()
+		if d.declares([]string{"template", parameterLabel}) {
+			extra += "#velaAddonParameter: template.parameter\n"
+		}
+		return addonCompile{pkgs: configPackages, extra: extra}, "", true
+	case addonKindView:
+		return addonCompile{pkgs: workflowPackages}, "", true
+	case addonKindNotes:
+		param, _, _ := addonPackage(root, addonMainPackage, d.path)
+		extra := addonMetaCUE + "context: {\n\tmetadata?: #velaAddonMeta\n\tinstaller: {...}\n}\n"
+		if param != nil {
+			extra += "#velaAddonParameter: parameter\n"
+		}
+		return addonCompile{pkgs: stdlibOnly, extra: extra, files: withParam(param)}, "", true
+	}
+	return addonCompile{pkgs: stdlibOnly}, "", true
+}
+
+// compileAddon builds the parsed document as c says.
+func (d *document) compileAddon(c addonCompile) (cue.Value, []Diagnostic) {
+	return d.build(cuecontext.New(), c.pkgs.imports(), c.extra, c.files...)
+}
+
 // parse parses the document, or reports why it cannot be.
 func (d *document) parse() ([]Diagnostic, bool) {
 	f, err := parser.ParseFile(d.path, d.src, parser.ParseComments)
@@ -432,13 +540,8 @@ func (d *document) checkAddonTemplate(root string) []Diagnostic {
 	if diags := d.checkImports("an addon's template.cue compiles with CUE's standard library only", nil); len(diags) > 0 {
 		return diags
 	}
-	if d.file.PackageName() == "" {
-		d.file.Decls = append([]ast.Decl{&ast.Package{Name: ast.NewIdent("main")}}, d.file.Decls...)
-	}
-	param, resources, extra := addonPackage(root, d.file.PackageName(), d.path)
-	files := withParam(param, resources...)
-	extra += addonOutputCUE
-	v, diags := d.build(cuecontext.New(), nil, extra, files...)
+	c, _, _ := d.addonCompile(root, addonKindTemplate)
+	v, diags := d.compileAddon(c)
 	if !v.Exists() {
 		return diags
 	}
@@ -508,7 +611,7 @@ func addonPackage(root, pkg, self string) (param *ast.File, resources []*ast.Fil
 	// the clusters --clusters names, which no parameter.cue need declare.
 	if f, ok := addonFile(paramPath, pkg, true); ok {
 		param = f
-		extra += "#velaAddonParameter: parameter & {clusters?: [...string]}\n"
+		extra += "parameter: clusters?: [...string]\n#velaAddonParameter: parameter\n"
 	} else {
 		extra += "parameter: {...}\n"
 	}
@@ -546,7 +649,7 @@ func addonFile(path, pkg string, unnamed bool) (*ast.File, bool) {
 	if err != nil {
 		return nil, false
 	}
-	f, err := parser.ParseFile(path, src)
+	f, err := parser.ParseFile(path, src, parser.ParseComments)
 	if err != nil {
 		return nil, false
 	}
@@ -608,11 +711,8 @@ func (d *document) checkConfigTemplate() []Diagnostic {
 	if diags := d.checkImports("a config template may import vela/config only", map[string]bool{"vela/config": true}); len(diags) > 0 {
 		return diags
 	}
-	extra := configTemplateCUE + secretSchema()
-	if d.declares([]string{"template", parameterLabel}) {
-		extra += "#velaAddonParameter: template.parameter\n"
-	}
-	v, diags := d.build(cuecontext.New(), configPackages.imports(), extra)
+	c, _, _ := d.addonCompile("", addonKindConfig)
+	v, diags := d.compileAddon(c)
 	diags = ignoredKeys(diags, "metadata.")
 	if !v.Exists() {
 		return diags
@@ -631,7 +731,8 @@ func (d *document) checkView() []Diagnostic {
 	if diags, ok := d.parse(); !ok {
 		return diags
 	}
-	v, diags := d.build(cuecontext.New(), workflowPackages.imports(), "")
+	c, _, _ := d.addonCompile("", addonKindView)
+	v, diags := d.compileAddon(c)
 	if !v.Exists() {
 		return diags
 	}
@@ -719,13 +820,13 @@ func (d *document) checkAddonMetadata() []Diagnostic {
 	return append(diags, ignoredKeys(d.fromErrors(schema.Unify(data).Validate(), "#metadata"), "")...)
 }
 
-// ignoredKeys turns each unknown key under prefix into a warning: the Go
-// type KubeVela decodes it into drops a key it does not know, so it does
-// nothing rather than fails.
+// ignoredKeys turns each unknown key under prefix, at any depth, into a
+// warning: the Go type KubeVela decodes it into drops a key it does not
+// know, so it does nothing rather than fails.
 func ignoredKeys(diags []Diagnostic, prefix string) []Diagnostic {
 	for i, diag := range diags {
 		key, ok := strings.CutSuffix(diag.Message, ": field not allowed")
-		if ok && strings.HasPrefix(key, prefix) && !strings.Contains(strings.TrimPrefix(key, prefix), ".") {
+		if ok && strings.HasPrefix(key, prefix) {
 			diags[i].Severity = SeverityWarning
 			diags[i].Message = "KubeVela does not read " + key + ": it is ignored"
 		}
@@ -801,27 +902,17 @@ func (d *document) checkAddonResource(root string) []Diagnostic {
 	if diags := d.checkImports("an addon's CUE compiles with CUE's standard library only", nil); len(diags) > 0 {
 		return diags
 	}
-	if d.file.PackageName() == addonMainPackage {
-		tmpl := filepath.Join(root, addonTemplateFile)
-		main, ok := addonFile(tmpl, addonMainPackage, true)
-		if !ok {
-			return []Diagnostic{d.warnFirstLine("a file of package main is read only as part of template.cue, which this addon does not have in package main: it is not read")}
-		}
-		param, resources, extra := addonPackage(root, addonMainPackage, d.path)
-		_, diags := d.build(cuecontext.New(), nil, extra+addonOutputCUE, withParam(param, append(resources, main)...)...)
-		return diags
-	}
-	if !d.declares([]string{"output"}) {
+	if d.file.PackageName() != addonMainPackage && !d.declares([]string{"output"}) {
 		return []Diagnostic{d.warnFirstLine("this file has no output: KubeVela renders a component from each resources/*.cue outside package main, and skips one without")}
 	}
-	pkg := d.file.PackageName()
-	if pkg == "" {
-		pkg = addonMainPackage
+	c, why, ok := d.addonCompile(root, addonKindResource)
+	if !ok {
+		return []Diagnostic{d.warnFirstLine(why)}
 	}
-	// Only parameter.cue joins a component's file: other resources do not.
-	param, _, extra := addonPackage(root, pkg, d.path)
-	extra += "#velaAddonComponent: (#addonApplication & {spec: components: [_]}).spec.components[0]\nvelaAddonComponent: #velaAddonComponent & output\n"
-	v, diags := d.build(cuecontext.New(), nil, extra, withParam(param)...)
+	v, diags := d.compileAddon(c)
+	if c.output == "output" {
+		return diags
+	}
 	for i := range diags {
 		diags[i].Message = strings.ReplaceAll(diags[i].Message, "velaAddonComponent.", "output.")
 	}
@@ -882,12 +973,8 @@ func (d *document) checkNotes(root string) []Diagnostic {
 	if diags, ok := d.parse(); !ok {
 		return asWarnings(diags)
 	}
-	param, _, _ := addonPackage(root, addonMainPackage, d.path)
-	extra := addonMetaCUE + "context: {\n\tmetadata?: #velaAddonMeta\n\tinstaller: {...}\n}\n"
-	if param != nil {
-		extra += "#velaAddonParameter: parameter\n"
-	}
-	v, diags := d.build(cuecontext.New(), nil, extra, withParam(param)...)
+	c, _, _ := d.addonCompile(root, addonKindNotes)
+	v, diags := d.compileAddon(c)
 	if v.Exists() {
 		// What the installer passes is known only at install, so an
 		// interpolation of it is incomplete here, not wrong.

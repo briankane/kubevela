@@ -74,6 +74,10 @@ func TestCompleteFunctionResults(t *testing.T) {
 	t.Run("nothing for a name the template does not declare", func(t *testing.T) {
 		assert.Empty(t, complete("_nope."))
 	})
+	t.Run("in the middle of a word already written", func(t *testing.T) {
+		doc, cursor := at(strings.Replace(callsFunctions, "CURSOR", "_req.$returns.|statusCode", 1))
+		assert.Contains(t, labels(CompleteValueAt(doc, cursor, nil)), "statusCode")
+	})
 }
 
 // A name is found the way CUE finds it: in the nearest enclosing struct that

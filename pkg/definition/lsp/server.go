@@ -302,7 +302,13 @@ func (s *Server) handle(msg message) error {
 		var p HoverParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			text := s.docs[p.TextDocument.URI]
-			if h, ok := analysis.Hover(text, byteOffset(text, p.Position), s.options()); ok {
+			hover := analysis.Hover
+			if _, _, isAddon := analysis.AddonFileKind(pathOf(p.TextDocument.URI)); isAddon {
+				hover = func(doc string, offset int, opts analysis.Options) (string, bool) {
+					return analysis.HoverAddonFile(pathOf(p.TextDocument.URI), doc, offset, opts)
+				}
+			}
+			if h, ok := hover(text, byteOffset(text, p.Position), s.options()); ok {
 				result = Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}
 			}
 		}

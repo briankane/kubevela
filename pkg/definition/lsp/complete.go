@@ -44,6 +44,10 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
 	var candidates []analysis.Completion
 	ext := opts.Externals
+	if addon, ok := analysis.CompleteAddonFile(pathOf(uri), text, byteOffset(text, pos), opts); ok {
+		candidates = append(analysis.CompleteMarker(before), addon...)
+		return completionList(list, candidates, before, pos)
+	}
 	if utils.IsCUETestFile(pathOf(uri)) {
 		ext = testExternals()
 		candidates = analysis.CompleteTestFile(upToCursor, pathOf(uri), before, ext)
@@ -60,6 +64,12 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 	if len(candidates) == 0 {
 		candidates = analysis.CompleteValueAt(text, len(upToCursor), ext)
 	}
+	return completionList(list, candidates, before, pos)
+}
+
+// completionList adds candidates to list as items replacing what each
+// completes of before, the line up to pos.
+func completionList(list CompletionList, candidates []analysis.Completion, before string, pos Position) CompletionList {
 	for _, c := range candidates {
 		replaced := before[len(before)-c.Replace:]
 		start := pos

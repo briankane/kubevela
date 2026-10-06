@@ -71,7 +71,7 @@ func CompleteValueAt(doc string, cursor int, ext *Externals) []Completion {
 		}
 	}
 	// The text at the cursor does not parse; a placeholder stands in for it.
-	patched := doc[:m[2]] + "_" + doc[cursor:]
+	patched := rootOf(doc, m[2], cursor)
 	f, err := parser.ParseFile("complete.cue", patched, parser.ParseComments)
 	if err != nil {
 		return nil

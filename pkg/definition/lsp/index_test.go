@@ -178,3 +178,30 @@ func TestPackageFiles(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["result"], &r))
 	assert.Contains(t, r.YAML, "protocol: https")
 }
+
+func TestAddonCompletionAndHover(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "my-addon")
+	require.NoError(t, os.MkdirAll(dir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "metadata.yaml"), []byte("name: my-addon\nversion: 1.0.0\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "parameter.cue"), []byte("parameter: {\n\t// +usage=Image to run\n\timage: string\n}\n"), 0o600))
+	c := newClient(t)
+	u := "file://" + filepath.Join(dir, "template.cue")
+	text := "package main\n\noutput: spec: components: [{name: parameter.image}]\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+
+	line := "output: spec: components: [{name: parameter."
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: u}, Position: Position{Line: 2, Character: uint32(len(line))}}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label)
+	}
+	assert.Contains(t, labels, "image")
+
+	m = c.response(c.send("textDocument/hover", HoverParams{TextDocument: TextDocumentIdentifier{URI: u}, Position: Position{Line: 2, Character: uint32(len(line) + 2)}}, true))
+	var h Hover
+	require.NoError(t, json.Unmarshal(m["result"], &h))
+	assert.Contains(t, h.Contents.Value, "Image to run")
+}

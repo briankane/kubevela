@@ -342,7 +342,7 @@ func TestAddonMetadata(t *testing.T) {
 	assert.Equal(t, SeverityWarning, diags[0].Severity, "KubeVela drops a key it does not know, so it is a warning")
 	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "runtimeCluster: true", "runtimeCluster: yes please", 1), "8: ", "runtimeCluster")
 	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "version: 1.0.0\n", "", 1), "version")
-	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "  vela:", "  velaa:", 1), "12: ", "velaa")
+	expectAddon(t, dir, "metadata.yaml", strings.Replace(goodMetadata, "  vela:", "  velaa:", 1), "12: KubeVela does not read system.velaa")
 	expectAddon(t, dir, "metadata.cue", "name: \"x\"\n", "metadata.yaml")
 }
 
