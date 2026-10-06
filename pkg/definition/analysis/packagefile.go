@@ -38,16 +38,23 @@ const packageCUE = `
 	apiVersion: string
 	kind:       string
 	metadata: {
+		// The package's name: the #provider its functions name.
 		name: string
 		...
 	}
 	spec: {
+		// The path definitions import the package by, as in ext/greeter.
 		path: string
+		// The provider the package's functions call: each call POSTs its $params as JSON to <endpoint>/<#do>.
 		provider?: {
+			// How the provider is called: KubeVela calls http and https.
 			protocol: "grpc" | "http" | "https"
+			// The provider's URL.
 			endpoint: string
+			// Headers sent with each call.
 			header?: [string]: string
 		}
+		// The package's CUE, by file name.
 		templates: [string]: string
 	}
 }

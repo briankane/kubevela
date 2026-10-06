@@ -205,3 +205,19 @@ func TestAddonCompletionAndHover(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["result"], &h))
 	assert.Contains(t, h.Contents.Value, "Image to run")
 }
+
+func TestYAMLCompletion(t *testing.T) {
+	c := newClient(t)
+	u := "file://" + filepath.Join(t.TempDir(), "greeter-package.yaml")
+	text := "apiVersion: cue.oam.dev/v1alpha1\nkind: Package\nspec:\n  provider:\n    protocol: \n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "yaml", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: u}, Position: Position{Line: 4, Character: uint32(len("    protocol: "))}}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label)
+	}
+	assert.ElementsMatch(t, []string{"grpc", "http", "https"}, labels)
+}

@@ -17,6 +17,7 @@ limitations under the License.
 package lsp
 
 import (
+	"path/filepath"
 	"strings"
 	"sync"
 	"unicode/utf16"
@@ -44,6 +45,10 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
 	var candidates []analysis.Completion
 	ext := opts.Externals
+	if ext := filepath.Ext(pathOf(uri)); ext == ".yaml" || ext == ".yml" {
+		yamlCandidates, _ := analysis.CompleteYAMLFile(pathOf(uri), text, byteOffset(text, pos), opts)
+		return completionList(list, yamlCandidates, before, pos)
+	}
 	if addon, ok := analysis.CompleteAddonFile(pathOf(uri), text, byteOffset(text, pos), opts); ok {
 		candidates = append(analysis.CompleteMarker(before), addon...)
 		return completionList(list, candidates, before, pos)

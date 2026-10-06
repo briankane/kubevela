@@ -79,22 +79,45 @@ output?: #addonApplication & {
 // addonMetaCUE is pkg/addon's Meta type.
 const addonMetaCUE = `
 #velaAddonMeta: {
-	name:        string
-	version:     string
+	// The addon's name: what it is enabled and upgraded by.
+	name: string
+	// The addon's version, compared on upgrade.
+	version: string
+	// What the addon does, shown in VelaUX and by vela addon list.
 	description: string
-	icon:        string
-	url?:        string
+	// The URL of the addon's icon in VelaUX.
+	icon: string
+	// The URL of the project the addon installs.
+	url?: string
+	// Tags to find the addon by.
 	tags?: [...string]
+	// VelaUX plugins the addon brings, by name, with the URL each is fetched from.
 	uxPlugins?: [string]: string
+	// Where the addon's Application is deployed (legacy addons: a template.cue sets its own topology).
 	deployTo?: {
-		runtime_cluster?:     bool
+		runtime_cluster?: bool
+		// Deploy nothing to the control plane.
 		disableControlPlane?: bool
-		runtimeCluster?:      bool
+		// Deploy to the runtime clusters too.
+		runtimeCluster?: bool
 	}
-	dependencies?: [...{name?: string, version?: string}]
+	// Addons enabled before this one.
+	dependencies?: [...{
+		// The addon depended on.
+		name?: string
+		// The versions accepted, as in >=1.2.0.
+		version?: string
+	}]
+	// Namespaces created in every cluster the addon deploys to.
 	needNamespace?: [...string]
+	// Hides the addon from VelaUX and vela addon list.
 	invisible: bool
-	system?: {vela?: string, kubernetes?: string}
+	// The versions of KubeVela and Kubernetes the addon needs, as in >=1.9.0.
+	system?: {
+		vela?:       string
+		kubernetes?: string
+	}
+	// Annotations for the addon's maintainers to describe or extend it.
 	annotations?: [string]: string
 }
 `
@@ -130,36 +153,65 @@ template: #velaConfigTemplate
 const uiSchemaCUE = `
 #UISchema: [...#UIParameter]
 #UIParameter: {
-	sort?:        int & >=0
-	label?:       string
+	// Where the field comes in the form; lower first.
+	sort?: int & >=0
+	// The field's label in the form.
+	label?: string
+	// The help text under the field.
 	description?: string
-	validate?:    #Validate
-	jsonKey?:     string
-	uiType?:      string
-	style?: colSpan?: int
+	// The rules a value must meet.
+	validate?: #Validate
+	// The parameter this describes, by its key.
+	jsonKey?: string
+	// The widget the field uses, such as Input, Select, Number, Switch, Strings, Numbers, Structs, Group, KV, ImageInput, SecretSelect, CPUNumber or MemoryNumber.
+	uiType?: string
+	// The field's layout.
+	style?: {
+		// How many of the form's 24 columns the field spans.
+		colSpan?: int
+	}
+	// Disables the field in the form.
 	disable?: bool
+	// When the field is enabled: it is disabled unless every enable condition holds, and by any disable condition that holds.
 	conditions?: [...#Condition]
+	// Groups of sub-parameters shown as alternatives.
 	subParameterGroupOption?: [...{label?: string, keys?: [...string]}]
+	// The fields of a struct parameter.
 	subParameters?: [...#UIParameter]
+	// The form of each value of a map parameter.
 	additionalParameter?: #UIParameter
-	additional?:          bool
+	// Lets the user add keys of their own.
+	additional?: bool
 }
 #Condition: {
+	// The parameter the condition reads, by its key.
 	jsonKey: string
-	op?:     "==" | "!=" | "in"
-	value?:  _
+	// How the parameter is compared with value.
+	op?: "==" | "!=" | "in"
+	// The value compared with.
+	value?: _
+	// What the condition does when it holds.
 	action?: "enable" | "disable"
 }
 #Validate: {
-	required?:     bool
-	max?:          number
-	maxLength?:    int & >=0
-	min?:          number
-	minLength?:    int & >=0
-	pattern?:      string
+	// A value must be given.
+	required?: bool
+	// The largest number accepted.
+	max?: number
+	// The longest string accepted.
+	maxLength?: int & >=0
+	// The smallest number accepted.
+	min?: number
+	// The shortest string accepted.
+	minLength?: int & >=0
+	// A regular expression the value must match.
+	pattern?: string
+	// The values offered, for a Select.
 	options?: [...{label?: string, value?: _}]
+	// The value the form starts with.
 	defaultValue?: _
-	immutable?:    bool
+	// Once set, the value cannot be changed.
+	immutable?: bool
 }
 `
 

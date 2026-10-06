@@ -303,9 +303,14 @@ func (s *Server) handle(msg message) error {
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			text := s.docs[p.TextDocument.URI]
 			hover := analysis.Hover
-			if _, _, isAddon := analysis.AddonFileKind(pathOf(p.TextDocument.URI)); isAddon {
+			path := pathOf(p.TextDocument.URI)
+			if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" {
 				hover = func(doc string, offset int, opts analysis.Options) (string, bool) {
-					return analysis.HoverAddonFile(pathOf(p.TextDocument.URI), doc, offset, opts)
+					return analysis.HoverYAMLFile(path, doc, offset, opts)
+				}
+			} else if _, _, isAddon := analysis.AddonFileKind(path); isAddon {
+				hover = func(doc string, offset int, opts analysis.Options) (string, bool) {
+					return analysis.HoverAddonFile(path, doc, offset, opts)
 				}
 			}
 			if h, ok := hover(text, byteOffset(text, p.Position), s.options()); ok {
