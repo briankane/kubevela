@@ -77,7 +77,9 @@ func testTarget(doc, path string) (definition, defType string, ok bool) {
 	return "", "", false
 }
 
-// CompleteTestFile completes in a CUE test file at path: after `test.`, the
+// CompleteTestFile completes in a CUE test file at path, given its text up
+// to the cursor and the line of it: inside a case, the test function's
+// fields or the definition's parameters; after `test.`, the
 // test functions for the type of the definition it tests, each inserting a
 // case with that definition filled in; on an empty line between cases, a new
 // case of each.
@@ -96,6 +98,9 @@ func CompleteTestFile(doc, path, before string, ext *Externals) []Completion {
 	pkg, ok := ext.value(testPackagePath)
 	if !ok {
 		return nil
+	}
+	if inside := completeInCase(doc, path, before, ext); inside != nil {
+		return inside
 	}
 	if m := testMemberTyped.FindStringSubmatch(before); m != nil {
 		var out []Completion

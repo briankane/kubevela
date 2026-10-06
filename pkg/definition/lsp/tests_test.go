@@ -125,3 +125,24 @@ func names(cases []TestCase) []string {
 	}
 	return out
 }
+
+// A case's error goes on the field its path names, not the case's name, and
+// what a case passes its definition is checked against that definition.
+func TestTestFileErrorsAtTheField(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scaler.cue"), []byte("\"scaler\": {\n\ttype: \"trait\"\n}\ntemplate: {\n\tpatch: spec: replicas: parameter.replicas\n\tparameter: replicas: *1 | int\n}\n"), 0o600))
+	uri := "file://" + filepath.Join(dir, "scaler_test.cue")
+	diags := func(body string) []Diagnostic {
+		text := "import \"vela/test\"\n\n\"c\": test.#TraitRender & {\n\tdefinition: \"scaler\"\n" + body + "}\n"
+		return openTestFile(newClient(t), uri, text).Diagnostics
+	}
+	got := diags("\tworkload: {}\n\texpct: output: {}\n")
+	require.Len(t, got, 1)
+	assert.Equal(t, uint32(5), got[0].Range.Start.Line, got[0].Message)
+	assert.Contains(t, got[0].Message, "expct")
+
+	got = diags("\tworkload: {}\n\tparameter: replicaz: 2\n\texpect: {}\n")
+	require.Len(t, got, 1)
+	assert.Equal(t, uint32(5), got[0].Range.Start.Line, got[0].Message)
+	assert.Contains(t, got[0].Message, "scaler takes no parameter replicaz")
+}

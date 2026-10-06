@@ -42,7 +42,8 @@ func completions(uri, text string, pos Position, published []analysis.Published)
 	var ext *analysis.Externals
 	if utils.IsCUETestFile(pathOf(uri)) {
 		ext = testExternals()
-		candidates = analysis.CompleteTestFile(text, pathOf(uri), before, ext)
+		candidates = analysis.CompleteTestFile(upToCursor, pathOf(uri), before, ext)
+		candidates = append(candidates, analysis.CompleteTestAttribute(before)...)
 	}
 	if len(candidates) == 0 {
 		candidates = append(candidates, analysis.CompleteMarker(before)...)

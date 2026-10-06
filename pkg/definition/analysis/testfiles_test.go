@@ -108,11 +108,86 @@ func TestTestFileNewCases(t *testing.T) {
 	assert.Contains(t, render.Snippet, `test.#TraitRender & {`)
 	assert.Contains(t, render.Snippet, `definition: "scaler"`)
 
-	assert.Empty(t, CompleteTestFile("import \"vela/test\"\n\n\"x\": test.#TraitRender & {\n\t", filepath.Join(dir, "scaler_test.cue"), "\t", ext), "not inside a case")
+	for _, c := range CompleteTestFile("import \"vela/test\"\n\n\"x\": test.#TraitRender & {\n\t", filepath.Join(dir, "scaler_test.cue"), "\t", ext) {
+		assert.NotContains(t, c.Label, "New ", "inside a case, its fields are offered, not new cases")
+	}
 }
 
 func TestTestFilesCompleteProviderFunctions(t *testing.T) {
 	doc := "import (\n\t\"vela/test\"\n\t\"vela/kube\"\n)\n\n_setup: kube.#"
 	cs := CompletePackageMemberWith(doc, "_setup: kube.#", testExternals(t))
 	assert.Contains(t, labels(cs), "#Apply", "a test file compiles with the workflow's providers")
+}
+
+// scalerWithParams is a trait whose parameters a test case passes.
+const scalerWithParams = `"scaler": {
+	type: "trait"
+}
+template: {
+	patch: spec: replicas: parameter.replicas
+	parameter: {
+		// +usage=How many replicas
+		replicas: *1 | int
+		// +usage=Pause the rollout
+		paused?: bool
+	}
+}
+`
+
+func paramDir(t *testing.T) string {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scaler.cue"), []byte(scalerWithParams), 0o600))
+	return dir
+}
+
+func TestTestCaseParameters(t *testing.T) {
+	dir, ext := paramDir(t), testExternals(t)
+	check := func(params string) []string {
+		src := "import \"vela/test\"\n\n\"c\": test.#TraitRender & {\n\tdefinition: \"scaler\"\n\tworkload: {}\n\tparameter: " + params + "\n\texpect: {}\n}\n"
+		return lines(CheckTestFile(filepath.Join(dir, "scaler_test.cue"), []byte(src), ext))
+	}
+	assert.Empty(t, check("{replicas: 2, paused: true}"))
+	got := check("{replicaz: 2}")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "6: scaler takes no parameter replicaz")
+	got = check(`{replicas: "two"}`)
+	require.NotEmpty(t, got)
+	assert.Contains(t, strings.Join(got, "\n"), "6: ")
+	assert.Contains(t, strings.Join(got, "\n"), "replicas")
+}
+
+func TestCompleteInsideATestCase(t *testing.T) {
+	dir, ext := paramDir(t), testExternals(t)
+	path := filepath.Join(dir, "scaler_test.cue")
+	open := "import \"vela/test\"\n\n\"c\": test.#TraitRender & {\n\tdefinition: \"scaler\"\n\t"
+	t.Run("the test function's fields", func(t *testing.T) {
+		got := labels(CompleteTestFile(open, path, "\t", ext))
+		assert.Contains(t, got, "workload")
+		assert.Contains(t, got, "expect")
+		assert.Contains(t, got, "parameter")
+		assert.NotContains(t, got, "$test")
+	})
+	t.Run("the definition's parameters", func(t *testing.T) {
+		doc := open + "parameter: {\n\t\t"
+		cs := CompleteTestFile(doc, path, "\t\t", ext)
+		assert.ElementsMatch(t, []string{"paused", "replicas"}, labels(cs))
+		for _, c := range cs {
+			if c.Label == "replicas" {
+				assert.Equal(t, "How many replicas", c.Doc)
+			}
+		}
+	})
+}
+
+func TestCompleteTestAttributes(t *testing.T) {
+	cs := CompleteTestAttribute("\"c\": test.#TraitRender & {} @")
+	assert.Contains(t, labels(cs), "@pending")
+	assert.Contains(t, labels(cs), "@label")
+	assert.Contains(t, labels(cs), "@exact")
+	assert.Contains(t, labels(cs), "@beforeEach")
+	for _, c := range cs {
+		assert.NotEmpty(t, c.Doc, c.Label)
+	}
+	assert.Equal(t, []string{"@pending"}, labels(CompleteTestAttribute("} @pen")))
+	assert.Empty(t, CompleteTestAttribute("x: \"a@b"))
 }
