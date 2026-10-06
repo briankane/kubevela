@@ -422,3 +422,47 @@ func TestAddonViewThatDoesNotBuild(t *testing.T) {
 	require.Len(t, diags, 1)
 	assert.Contains(t, diags[0].Message, "imported and not used")
 }
+
+func TestAddonVersionsAndDependencies(t *testing.T) {
+	dir := addonDir(t)
+	sibling := filepath.Join(filepath.Dir(dir), "fluxcd")
+	require.NoError(t, os.MkdirAll(sibling, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(sibling, "metadata.yaml"), []byte("name: fluxcd\nversion: 2.1.0\n"), 0o600))
+
+	check := func(src string) []Diagnostic {
+		diags, ok := CheckAddonFile(filepath.Join(dir, "metadata.yaml"), []byte(src), Options{})
+		require.True(t, ok)
+		return diags
+	}
+	find := func(diags []Diagnostic, msg string) (Diagnostic, bool) {
+		for _, d := range diags {
+			if strings.Contains(d.Message, msg) {
+				return d, true
+			}
+		}
+		return Diagnostic{}, false
+	}
+	base := "name: my-addon\nversion: 1.0.0\nsystem:\n  vela: \">=v1.9.0\"\n  kubernetes: \">=1.24\"\ndependencies:\n  - name: fluxcd\n    version: \">=2.0.0\"\n"
+	for _, d := range check(base) {
+		assert.Equal(t, SeverityInfo, d.Severity, "a clean metadata.yaml has nothing above info: %s", d.Message)
+	}
+
+	d, ok := find(check(strings.Replace(base, `vela: ">=v1.9.0"`, `vela: "at least 1.9"`, 1)), "requirement")
+	require.True(t, ok)
+	assert.Equal(t, SeverityError, d.Severity)
+	assert.Equal(t, 4, d.Range.Start.Line)
+
+	d, ok = find(check(strings.Replace(base, "version: 1.0.0", "version: one", 1)), "semantic version")
+	require.True(t, ok)
+	assert.Equal(t, SeverityWarning, d.Severity)
+	assert.Equal(t, 2, d.Range.Start.Line)
+
+	d, ok = find(check(strings.Replace(base, `">=2.0.0"`, `">=3.0.0"`, 1)), "fluxcd")
+	require.True(t, ok, "a dependency in the workspace whose version falls short")
+	assert.Equal(t, SeverityWarning, d.Severity)
+	assert.Contains(t, d.Message, "2.1.0")
+
+	d, ok = find(check(strings.Replace(base, "name: fluxcd", "name: velaux", 1)), "velaux")
+	require.True(t, ok)
+	assert.Equal(t, SeverityInfo, d.Severity, "not in the workspace: from a registry")
+}

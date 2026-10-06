@@ -36,6 +36,9 @@ import (
 	cueyaml "cuelang.org/go/encoding/yaml"
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
 
+	"github.com/Masterminds/semver/v3"
+	"sigs.k8s.io/yaml"
+
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/config"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
@@ -869,7 +872,101 @@ func (d *document) checkAddonMetadata() []Diagnostic {
 		}
 	}
 	schema := ctx.CompileString(addonMetaCUE + addonMetadataCUE).LookupPath(cue.ParsePath("#metadata"))
-	return append(diags, ignoredKeys(d.fromErrors(schema.Unify(data).Validate(), "#metadata"), "")...)
+	diags = append(diags, ignoredKeys(d.fromErrors(schema.Unify(data).Validate(), "#metadata"), "")...)
+	return append(diags, d.checkAddonVersions(data)...)
+}
+
+// versionRequirement is a requirement as pkg/addon reads one: its v
+// prefixes dropped, then a semantic version constraint.
+func versionRequirement(s string) (*semver.Constraints, error) {
+	return semver.NewConstraint(strings.ReplaceAll(s, "v", " "))
+}
+
+// checkAddonVersions checks metadata.yaml's versions as pkg/addon reads
+// them: its own version, what it requires of KubeVela and Kubernetes, and
+// its dependencies, against the addons beside it in the workspace.
+func (d *document) checkAddonVersions(data cue.Value) []Diagnostic {
+	var diags []Diagnostic
+	at := func(v cue.Value, severity Severity, msg string) {
+		diag := d.at(valuePos(v), msg)
+		diag.Severity = severity
+		diags = append(diags, diag)
+	}
+	if v := data.LookupPath(cue.ParsePath("version")); v.Exists() {
+		if s, err := v.String(); err == nil {
+			if _, err := semver.NewVersion(strings.TrimPrefix(s, "v")); err != nil {
+				at(v, SeverityWarning, fmt.Sprintf("%s is not a semantic version: an addon that depends on this one cannot require a version of it", s))
+			}
+		}
+	}
+	for _, field := range []string{"system.vela", "system.kubernetes"} {
+		v := data.LookupPath(cue.ParsePath(field))
+		if s, err := v.String(); err == nil && s != "" {
+			if _, err := versionRequirement(s); err != nil {
+				at(v, SeverityError, fmt.Sprintf("KubeVela cannot read the requirement %s (%v), so enabling the addon fails", s, err))
+			}
+		}
+	}
+	siblings := siblingAddons(filepath.Dir(d.path))
+	deps, err := data.LookupPath(cue.ParsePath("dependencies")).List()
+	if err != nil {
+		return diags
+	}
+	for deps.Next() {
+		dep := deps.Value()
+		nameValue := dep.LookupPath(cue.ParsePath("name"))
+		name, err := nameValue.String()
+		if err != nil {
+			continue
+		}
+		requireValue := dep.LookupPath(cue.ParsePath("version"))
+		requirement, _ := requireValue.String()
+		var constraint *semver.Constraints
+		if requirement != "" {
+			if constraint, err = versionRequirement(requirement); err != nil {
+				at(requireValue, SeverityError, fmt.Sprintf("KubeVela cannot read the requirement %s (%v), so enabling the addon fails", requirement, err))
+				continue
+			}
+		}
+		version, inWorkspace := siblings[name]
+		switch {
+		case !inWorkspace:
+			at(nameValue, SeverityInfo, fmt.Sprintf("%s is not an addon beside this one in the workspace: enabling this addon enables it from a registry", name))
+		case constraint != nil:
+			if v, err := semver.NewVersion(strings.TrimPrefix(version, "v")); err == nil && !constraint.Check(v) {
+				at(requireValue, SeverityWarning, fmt.Sprintf("the workspace's %s is %s, which does not meet %s", name, version, requirement))
+			}
+		}
+	}
+	return diags
+}
+
+// siblingAddons are the addons beside the one at root, by name, with their
+// versions.
+func siblingAddons(root string) map[string]string {
+	out := map[string]string{}
+	entries, err := os.ReadDir(filepath.Dir(root))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		//nolint:gosec // reading the workspace's own addons is the point
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(root), e.Name(), addonMetadataFile))
+		if err != nil {
+			continue
+		}
+		var meta struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}
+		if yaml.Unmarshal(data, &meta) == nil && meta.Name != "" {
+			out[meta.Name] = meta.Version
+		}
+	}
+	return out
 }
 
 // ignoredKeys turns each unknown key under prefix, at any depth, into a
