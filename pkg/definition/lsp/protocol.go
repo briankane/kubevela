@@ -191,3 +191,33 @@ type PreviewValuesParams struct {
 type PreviewValuesResult struct {
 	YAML string `json:"yaml"`
 }
+
+// MethodTestCases lists the cases of a CUE test file (*_test.cue) without
+// running them. It is this server's own request.
+const MethodTestCases = "vela/testCases"
+
+// TestCasesParams names a test file, with its text when the editor has it
+// open; without text the file is read from disk.
+type TestCasesParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         *string                `json:"text,omitempty"`
+}
+
+// TestCasesResult is the file's cases, or why it did not load.
+type TestCasesResult struct {
+	Error string     `json:"error,omitempty"`
+	Cases []TestCase `json:"cases"`
+}
+
+// TestCase is one case of a test file. Line is 1-based, as `vela def test`
+// reports it and --focus-file takes it; Range is the case's name.
+type TestCase struct {
+	Name          string   `json:"name"`
+	Line          int      `json:"line"`
+	Range         Range    `json:"range"`
+	Definition    string   `json:"definition"`
+	Test          string   `json:"test"`
+	Labels        []string `json:"labels"`
+	Pending       bool     `json:"pending,omitempty"`
+	PendingReason string   `json:"pendingReason,omitempty"`
+}

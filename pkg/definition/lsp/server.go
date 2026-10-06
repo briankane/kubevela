@@ -33,6 +33,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
+	"github.com/oam-dev/kubevela/pkg/utils"
 	"github.com/oam-dev/kubevela/version"
 )
 
@@ -159,6 +160,11 @@ func (s *Server) handle(msg message) error {
 				result = PreviewValuesResult{YAML: yaml}
 			}
 		}
+	case MethodTestCases:
+		var p TestCasesParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = testCases(p)
+		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -222,7 +228,11 @@ func (s *Server) update(uri, text string, version *int) error {
 }
 
 // diagnose analyses a document and converts the result to protocol positions.
+// A CUE test file is checked by loading it, as `vela def test` would.
 func diagnose(uri, text string) []Diagnostic {
+	if utils.IsCUETestFile(pathOf(uri)) {
+		return testDiagnostics(pathOf(uri), text)
+	}
 	res := analysis.Analyze(pathOf(uri), []byte(text))
 	diags := make([]Diagnostic, 0, len(res.Diagnostics))
 	for _, d := range res.Diagnostics {
