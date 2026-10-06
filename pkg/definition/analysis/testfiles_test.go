@@ -209,3 +209,44 @@ func TestNewTestFile(t *testing.T) {
 	_, _, ok = NewTestFile(filepath.Join(dir, "scaler_test.cue"), []byte(scalerWithParams), ext)
 	assert.False(t, ok, "a test file has no test file")
 }
+
+const defkitTraits = `package traits
+
+import "github.com/oam-dev/kubevela/pkg/definition/defkit"
+
+func Scaler() *defkit.TraitDefinition { return nil }
+
+func Labels() *defkit.TraitDefinition { return nil }
+`
+
+// A DefKit file's test names its definitions by the Go file, rendered when
+// the test runs; one file may define several.
+func TestNewTestFileForDefKit(t *testing.T) {
+	ext := testExternals(t)
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "traits.go")
+	require.NoError(t, os.WriteFile(goFile, []byte(defkitTraits), 0o600))
+	path, snippet, ok := NewTestFile(goFile, []byte(defkitTraits), ext)
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(dir, "traits_test.cue"), path)
+	assert.Contains(t, snippet, `definition: "traits.go#scaler"`)
+	assert.Contains(t, snippet, `definition: "traits.go#labels"`)
+	assert.Equal(t, 2, strings.Count(snippet, "test.#TraitRender & {"))
+
+	one := strings.Replace(defkitTraits, "func Labels() *defkit.TraitDefinition { return nil }\n", "", 1)
+	require.NoError(t, os.WriteFile(goFile, []byte(one), 0o600))
+	_, snippet, ok = NewTestFile(goFile, nil, ext)
+	require.True(t, ok)
+	assert.Contains(t, snippet, `definition: "traits.go"`, "a file's only definition needs no name")
+
+	// The test file it makes is then helped as any other: its cases are
+	// trait tests.
+	require.NoError(t, os.WriteFile(goFile, []byte(defkitTraits), 0o600))
+	doc := "import \"vela/test\"\n\n\"c\": test.#TraitRender & {\n\tdefinition: \"traits.go#scaler\"\n}\n\"d\": test.#"
+	var labels []string
+	for _, c := range CompleteTestFile(doc, filepath.Join(dir, "traits_test.cue"), "\"d\": test.#", ext) {
+		labels = append(labels, c.Label)
+	}
+	assert.Contains(t, labels, "#TraitRender")
+	assert.NotContains(t, labels, "#ComponentRender")
+}

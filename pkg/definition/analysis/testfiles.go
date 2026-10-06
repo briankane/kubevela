@@ -25,6 +25,8 @@ import (
 	"strings"
 
 	"cuelang.org/go/cue"
+
+	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 )
 
 // testPackagePath is the package a CUE test file imports its functions from.
@@ -59,8 +61,15 @@ func testTarget(doc, path string) (definition, defType string, ok bool) {
 	if m := caseDefinition.FindStringSubmatch(doc); m != nil {
 		candidates = append(candidates, m[1])
 	}
-	candidates = append(candidates, strings.TrimSuffix(filepath.Base(path), "_test.cue"))
+	base := strings.TrimSuffix(filepath.Base(path), "_test.cue")
+	candidates = append(candidates, base, base+".go")
 	for _, c := range candidates {
+		if rel, name, _ := strings.Cut(c, "#"); strings.HasSuffix(rel, ".go") {
+			if typ, ok := defkitType(filepath.Join(dir, rel), name); ok {
+				return c, typ, true
+			}
+			continue
+		}
 		file := filepath.Join(dir, c)
 		if !strings.HasSuffix(file, ".cue") {
 			file += ".cue"
@@ -75,6 +84,21 @@ func testTarget(doc, path string) (definition, defType string, ok bool) {
 		}
 	}
 	return "", "", false
+}
+
+// defkitType is the type of the DefKit definition named in a Go file, or of
+// its only one, read from the Go without rendering it.
+func defkitType(file, name string) (string, bool) {
+	defs, err := goloader.AnalyzeGoFile(file)
+	if err != nil {
+		return "", false
+	}
+	for _, d := range defs {
+		if d.Name == name || (name == "" && len(defs) == 1) {
+			return d.Type, true
+		}
+	}
+	return "", false
 }
 
 // CompleteTestFile completes in a CUE test file at path, given its text up
@@ -191,28 +215,58 @@ func depth(text string) int {
 	return n
 }
 
-// NewTestFile is the test file to create for the definition at path: its
-// path beside it, and its text as a snippet, a case calling the
-// definition's render test function with its fields to fill in. It is false
-// for a file that is not a definition, or is a test file.
+// NewTestFile is the test file to create for the definitions at path: its
+// path beside it, and its text as a snippet, a case per definition calling
+// its type's render test with its fields to fill in. src is a CUE
+// definition's text; a DefKit Go file is read from disk. It is false for a
+// file that defines nothing testable, or is a test file.
 func NewTestFile(path string, src []byte, ext *Externals) (string, string, bool) {
 	if strings.HasSuffix(path, "_test.cue") || isTestDoc(string(src)) {
-		return "", "", false
-	}
-	_, defType, ok := DefinitionHeader(path, src)
-	if !ok || len(testsFor[defType]) == 0 {
 		return "", "", false
 	}
 	pkg, ok := ext.documented(testPackagePath)
 	if !ok {
 		return "", "", false
 	}
-	fn := testsFor[defType][0]
-	name := strings.TrimSuffix(filepath.Base(path), ".cue")
+	type target struct{ ref, typ, name string }
+	var targets []target
+	base := filepath.Base(path)
+	if strings.HasSuffix(path, ".go") {
+		defs, err := goloader.AnalyzeGoFile(path)
+		if err != nil {
+			return "", "", false
+		}
+		for _, d := range defs {
+			ref := base
+			if len(defs) > 1 {
+				ref += "#" + d.Name
+			}
+			targets = append(targets, target{ref: ref, typ: d.Type, name: d.Name})
+		}
+	} else {
+		name, defType, ok := DefinitionHeader(path, src)
+		if !ok {
+			return "", "", false
+		}
+		targets = append(targets, target{ref: strings.TrimSuffix(base, ".cue"), typ: defType, name: name})
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "import \"%s\"\n\n", testPackagePath)
-	fmt.Fprintf(&b, "\"${1:renders with its defaults}\": test.%s & {\n", fn)
-	b.WriteString(caseBody(pkg.LookupPath(cue.MakePath(cue.Def(fn))), name, 2))
-	b.WriteString("}\n")
-	return filepath.Join(filepath.Dir(path), name+"_test.cue"), b.String(), true
+	fmt.Fprintf(&b, "import \"%s\"\n", testPackagePath)
+	n := 1
+	for _, t := range targets {
+		if len(testsFor[t.typ]) == 0 {
+			continue
+		}
+		fn := testsFor[t.typ][0]
+		body := pkg.LookupPath(cue.MakePath(cue.Def(fn)))
+		fmt.Fprintf(&b, "\n\"${%d:%s renders with its defaults}\": test.%s & {\n", n, t.name, fn)
+		b.WriteString(caseBody(body, t.ref, n+1))
+		b.WriteString("}\n")
+		n += 1 + strings.Count(caseBody(body, t.ref, 0), "${")
+	}
+	if n == 1 {
+		return "", "", false
+	}
+	stem := strings.TrimSuffix(strings.TrimSuffix(base, ".cue"), ".go")
+	return filepath.Join(filepath.Dir(path), stem+"_test.cue"), b.String(), true
 }
