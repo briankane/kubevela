@@ -129,8 +129,11 @@ type CompletionParams struct {
 // CompletionItemKind of a CompletionItem.
 type CompletionItemKind int
 
-// CompletionItemKindKeyword marks a marker or one of its values.
-const CompletionItemKindKeyword CompletionItemKind = 14
+// Kinds of completion.
+const (
+	CompletionItemKindField   CompletionItemKind = 5
+	CompletionItemKindKeyword CompletionItemKind = 14
+)
 
 // MarkupContent is documentation, as Markdown.
 type MarkupContent struct {
@@ -148,6 +151,7 @@ type TextEdit struct {
 type CompletionItem struct {
 	Label         string             `json:"label"`
 	Kind          CompletionItemKind `json:"kind"`
+	Detail        string             `json:"detail,omitempty"`
 	FilterText    string             `json:"filterText,omitempty"`
 	Documentation MarkupContent      `json:"documentation"`
 	TextEdit      TextEdit           `json:"textEdit"`

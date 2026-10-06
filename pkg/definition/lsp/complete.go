@@ -31,13 +31,15 @@ func completions(text string, pos Position) CompletionList {
 		return list
 	}
 	before := prefixUTF16(lines[pos.Line], pos.Character)
-	for _, c := range analysis.CompleteMarker(before) {
+	candidates := append(analysis.CompleteMarker(before), analysis.CompleteContext(text, before)...)
+	for _, c := range candidates {
 		replaced := before[len(before)-c.Replace:]
 		start := pos
 		start.Character -= utf16Len(replaced)
 		list.Items = append(list.Items, CompletionItem{
 			Label:         c.Label,
-			Kind:          CompletionItemKindKeyword,
+			Kind:          kindOf(c),
+			Detail:        c.Detail,
 			FilterText:    c.Insert,
 			Documentation: MarkupContent{Kind: "markdown", Value: c.Doc},
 			TextEdit:      TextEdit{Range: Range{Start: start, End: pos}, NewText: c.Insert},
@@ -64,4 +66,13 @@ func utf16Len(s string) uint32 {
 		n += uint32(utf16.RuneLen(r))
 	}
 	return n
+}
+
+// kindOf is how the editor shows a candidate: a marker or its value as a
+// keyword, a context field as a field.
+func kindOf(c analysis.Completion) CompletionItemKind {
+	if strings.HasPrefix(c.Label, "+") || c.Detail == "" {
+		return CompletionItemKindKeyword
+	}
+	return CompletionItemKindField
 }
