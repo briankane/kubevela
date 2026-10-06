@@ -42,6 +42,7 @@ import (
 	cuedefinition "github.com/oam-dev/kubevela/pkg/cue/definition"
 	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
 	"github.com/oam-dev/kubevela/pkg/definition"
+	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/sources"
 	"github.com/oam-dev/kubevela/pkg/utils"
@@ -633,25 +634,64 @@ func isUpgradePass(name string) bool {
 }
 
 // subject loads the definition a case refers to: a path relative to its test
-// file, with ".cue" appended when omitted.
+// file, with ".cue" appended when omitted. A DefKit definition is its Go
+// file, rendered to CUE first: "traits.go", or "traits.go#scaler" where the
+// file defines several.
 func (l *loader) subject(testFile, ref string) (Subject, error) {
-	rel := ref
-	if !strings.HasSuffix(rel, ".cue") {
+	rel, name, _ := strings.Cut(ref, "#")
+	if !strings.HasSuffix(rel, ".cue") && !strings.HasSuffix(rel, ".go") {
 		rel += ".cue"
 	}
 	file := filepath.Join(filepath.Dir(testFile), rel)
-	if s, ok := l.subjects[file]; ok {
+	key := file + "#" + name
+	if s, ok := l.subjects[key]; ok {
 		return s, nil
 	}
 	if _, err := os.Stat(file); errors.Is(err, fs.ErrNotExist) {
 		return Subject{}, fmt.Errorf("definition %q: %s does not exist", ref, rel)
 	}
-	s, err := loadSubject(file)
+	var s Subject
+	var err error
+	if strings.HasSuffix(rel, ".go") {
+		s, err = loadDefKitSubject(file, rel, name)
+	} else {
+		s, err = loadSubject(file)
+	}
 	if err != nil {
 		return Subject{}, fmt.Errorf("%s: %w", file, err)
 	}
-	l.subjects[file] = s
+	l.subjects[key] = s
 	return s, nil
+}
+
+// renderGo renders the DefKit definitions of a Go file to CUE.
+var renderGo = goloader.LoadFromFile
+
+// loadDefKitSubject renders a DefKit file and loads the definition named,
+// or its only one, as loadSubject loads a CUE definition.
+func loadDefKitSubject(file, rel, name string) (Subject, error) {
+	results, err := renderGo(file)
+	if err != nil {
+		return Subject{}, err
+	}
+	var names []string
+	for _, r := range results {
+		names = append(names, rel+"#"+r.Definition.Name)
+		if name != "" && r.Definition.Name != name {
+			continue
+		}
+		if name == "" && len(results) > 1 {
+			continue
+		}
+		if r.Error != nil {
+			return Subject{}, fmt.Errorf("rendering %s: %w", r.Definition.Name, r.Error)
+		}
+		return subjectFromCUE(r.CUE)
+	}
+	if name == "" {
+		return Subject{}, fmt.Errorf("it defines %d definitions: name one, as %s", len(results), strings.Join(names, " or "))
+	}
+	return Subject{}, fmt.Errorf("it defines no %q: it defines %s", name, strings.Join(names, ", "))
 }
 
 // loadSubject loads a definition through the controller's dry-run template
@@ -662,8 +702,13 @@ func loadSubject(file string) (Subject, error) {
 	if err != nil {
 		return Subject{}, err
 	}
+	return subjectFromCUE(string(src))
+}
+
+// subjectFromCUE loads a definition from its CUE.
+func subjectFromCUE(src string) (Subject, error) {
 	def := definition.Definition{Unstructured: unstructured.Unstructured{}}
-	if err := def.FromCUEString(string(src), nil); err != nil {
+	if err := def.FromCUEString(src, nil); err != nil {
 		return Subject{}, err
 	}
 	name, kind := def.GetName(), Kind(def.GetType())
