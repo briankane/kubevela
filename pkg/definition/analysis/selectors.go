@@ -77,8 +77,16 @@ func (d *document) checkParameter(param cue.Value, chain []*ast.Ident) (Diagnost
 			return Diagnostic{}, false
 		}
 		if !cur.Allows(s) {
-			return d.at(id.Pos(),
-				fmt.Sprintf("%s has no field %s", strings.Join(walked, "."), id.Name)), true
+			diag := d.at(id.Pos(), fmt.Sprintf("%s has no field %s", strings.Join(walked, "."), id.Name))
+			if to := closest(id.Name, fieldNames(cur)); to != "" {
+				diag.Fixes = append(diag.Fixes, renameFix(id.Pos(), id.End(), to))
+			}
+			if len(walked) == 1 {
+				if add, ok := d.addParameterFix(id.Name); ok {
+					diag.Fixes = append(diag.Fixes, add)
+				}
+			}
+			return diag, true
 		}
 		cur = lookup(cur, s)
 		walked = append(walked, id.Name)
@@ -104,7 +112,11 @@ func (d *document) checkContext(ctx cue.Value, chain []*ast.Ident) (Diagnostic, 
 			if why, ok := explainContextField(d.typ, id.Name); ok && len(walked) == 1 {
 				msg = why
 			}
-			return d.at(id.Pos(), msg), true
+			diag := d.at(id.Pos(), msg)
+			if to := closest(id.Name, fieldNames(cur)); to != "" {
+				diag.Fixes = []Fix{renameFix(id.Pos(), id.End(), to)}
+			}
+			return diag, true
 		}
 		cur = schemaChild(cur, s)
 		walked = append(walked, id.Name)

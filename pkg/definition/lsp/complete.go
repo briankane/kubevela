@@ -17,6 +17,7 @@ limitations under the License.
 package lsp
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -155,17 +156,32 @@ func byteOffset(text string, pos Position) int {
 	return offset
 }
 
-// upgradeActions offers, where KubeVela's CUE upgrader would rewrite the
-// document, the edits that make its upgrades: all of them, as one may need
-// another, such as list.Concat needs its import.
+// upgradeActions offers the fixes each diagnostic carries and, where
+// KubeVela's CUE upgrader would rewrite the document, the edits that make its
+// upgrades: all of them, as one may need another, such as list.Concat needs
+// its import.
 func upgradeActions(p CodeActionParams, text string) []CodeAction {
 	var upgrades []Diagnostic
+	actions := []CodeAction{}
 	for _, d := range p.Context.Diagnostics {
 		if strings.Contains(d.Message, "CUE upgrader") {
 			upgrades = append(upgrades, d)
+			continue
+		}
+		var fixes []diagnosticFix
+		if len(d.Data) == 0 || json.Unmarshal(d.Data, &fixes) != nil {
+			continue
+		}
+		for i, f := range fixes {
+			actions = append(actions, CodeAction{
+				Title:       f.Title,
+				Kind:        "quickfix",
+				Diagnostics: []Diagnostic{d},
+				IsPreferred: i == 0,
+				Edit:        WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: f.Edits}},
+			})
 		}
 	}
-	actions := []CodeAction{}
 	if len(upgrades) == 0 {
 		return actions
 	}

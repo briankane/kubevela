@@ -50,6 +50,7 @@ func (d *document) checkUsage() []Diagnostic {
 				if !hasUsage(f) {
 					diag := d.at(f.Label.Pos(), name+" has no +usage: add `// +usage=...` above it to describe it in vela show, docs and VelaUX")
 					diag.Severity = SeverityInfo
+					diag.Fixes = []Fix{d.usageFix(f.Label.Pos())}
 					diags = append(diags, diag)
 				}
 				visit(f.Value)

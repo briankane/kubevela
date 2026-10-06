@@ -251,7 +251,9 @@ func (d *document) checkMarker(c *ast.Comment, place markerPlace) (Diagnostic, b
 	case marker == nil:
 		// Only a near miss is reported: other +words are not markers.
 		if suggestion := closestMarker(name); suggestion != "" {
-			return at("unknown marker +" + name + ": did you mean +" + suggestion + "?")
+			diag, ok := at("unknown marker +" + name + ": did you mean +" + suggestion + "?")
+			diag.Fixes = []Fix{{Title: "Change to +" + suggestion, Edits: []RangeEdit{{Range: diag.Range, NewText: "+" + suggestion}}}}
+			return diag, ok
 		}
 	case place == placeHeader && !strings.HasPrefix(name, "ide:"):
 		return at("markers have no effect in the definition's header")

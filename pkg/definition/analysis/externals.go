@@ -259,6 +259,7 @@ func (d *document) checkUnusedImports() []Diagnostic {
 			}
 			diag := d.at(spec.Path.Pos(), msg)
 			diag.Severity = severity
+			diag.Fixes = []Fix{removeImportFix(decl, spec)}
 			diags = append(diags, diag)
 		}
 	}

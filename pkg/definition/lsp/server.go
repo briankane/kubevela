@@ -482,6 +482,7 @@ func diagnose(uri, text string, opts analysis.Options) []Diagnostic {
 			Severity: severity(d.Severity),
 			Source:   diagnosticSource,
 			Message:  d.Message,
+			Data:     fixesData(text, d.Fixes),
 		})
 	}
 	return diags

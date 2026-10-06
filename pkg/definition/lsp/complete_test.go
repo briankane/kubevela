@@ -172,3 +172,27 @@ func TestUpgradeQuickFix(t *testing.T) {
 	m = c.response(c.send("textDocument/codeAction", CodeActionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Range: Range{}, Context: CodeActionContext{}}, true))
 	assert.JSONEq(t, "[]", string(m["result"]), "no fix where there is no upgrade warning")
 }
+
+func TestQuickFixesFromDiagnostics(t *testing.T) {
+	c := newClient(t)
+	text := "\"x\": {\n\ttype: \"workflow-step\"\n}\ntemplate: {\n\tparameter: {\n\t\t// +usge=Who to greet\n\t\tname: string\n\t}\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	var marker []Diagnostic
+	for _, d := range c.diagnostics().Diagnostics {
+		if strings.Contains(d.Message, "+usge") {
+			marker = append(marker, d)
+		}
+	}
+	require.Len(t, marker, 1)
+	require.NotEmpty(t, marker[0].Data, "the fix travels with the diagnostic")
+
+	m := c.response(c.send("textDocument/codeAction", CodeActionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Range: marker[0].Range, Context: CodeActionContext{Diagnostics: marker}}, true))
+	var actions []CodeAction
+	require.NoError(t, json.Unmarshal(m["result"], &actions))
+	require.Len(t, actions, 1)
+	assert.Equal(t, "Change to +usage", actions[0].Title)
+	edits := actions[0].Edit.Changes[uri]
+	require.Len(t, edits, 1)
+	assert.Equal(t, "+usage", edits[0].NewText)
+	assert.Equal(t, uint32(5), edits[0].Range.Start.Line)
+}

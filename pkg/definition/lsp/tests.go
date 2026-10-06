@@ -17,6 +17,7 @@ limitations under the License.
 package lsp
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"strconv"
@@ -179,9 +180,26 @@ func toProtocol(text string, in []analysis.Diagnostic) []Diagnostic {
 			Severity: severity(d.Severity),
 			Source:   diagnosticSource,
 			Message:  d.Message,
+			Data:     fixesData(text, d.Fixes),
 		})
 	}
 	return out
+}
+
+// fixesData is a diagnostic's fixes, as its data carries them.
+func fixesData(text string, fixes []analysis.Fix) json.RawMessage {
+	if len(fixes) == 0 {
+		return nil
+	}
+	out := make([]diagnosticFix, 0, len(fixes))
+	for _, f := range fixes {
+		edits := make([]TextEdit, 0, len(f.Edits))
+		for _, e := range f.Edits {
+			edits = append(edits, TextEdit{Range: protocolRange(text, e.Range), NewText: e.NewText})
+		}
+		out = append(out, diagnosticFix{Title: f.Title, Edits: edits})
+	}
+	return mustJSON(out)
 }
 
 func testDiagnostic(r Range, msg string) Diagnostic {

@@ -16,6 +16,8 @@ limitations under the License.
 
 package lsp
 
+import "encoding/json"
+
 // The subset of the Language Server Protocol 3.17 this server speaks. Field
 // names and values follow the specification.
 
@@ -47,6 +49,9 @@ type Diagnostic struct {
 	Severity DiagnosticSeverity `json:"severity"`
 	Source   string             `json:"source"`
 	Message  string             `json:"message"`
+	// Data carries the diagnostic's fixes, for the client to hand back
+	// with a code action request.
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // PublishDiagnosticsParams replaces every diagnostic of a document.
@@ -492,4 +497,10 @@ type DocumentSymbol struct {
 // DocumentSymbolParams name a document.
 type DocumentSymbolParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// diagnosticFix is a fix as a diagnostic's data carries it.
+type diagnosticFix struct {
+	Title string     `json:"title"`
+	Edits []TextEdit `json:"edits"`
 }

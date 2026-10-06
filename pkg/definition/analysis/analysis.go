@@ -67,6 +67,8 @@ type Diagnostic struct {
 	Range    Range
 	Severity Severity
 	Message  string
+	// Fixes are edits that resolve it, offered as quick fixes.
+	Fixes []Fix
 }
 
 // Result is what Analyze found.
@@ -286,6 +288,14 @@ func (d *document) explainContext(diags []Diagnostic) []Diagnostic {
 		if why, ok := explainContextField(d.typ, m[1]); ok {
 			diags[i].Message = why
 		}
+		var names []string
+		for _, f := range ContextFields(d.typ) {
+			names = append(names, f.Name)
+		}
+		if to := closest(m[1], names); to != "" {
+			end := Position{Line: diag.Range.Start.Line, Column: diag.Range.Start.Column + len(m[1])}
+			diags[i].Fixes = []Fix{{Title: "Change to " + to, Edits: []RangeEdit{{Range: Range{Start: diag.Range.Start, End: end}, NewText: to}}}}
+		}
 	}
 	return diags
 }
@@ -378,12 +388,18 @@ func withoutVagueInterpolation(diags []Diagnostic) []Diagnostic {
 // firstPerPosition keeps one diagnostic per position: CUE often reports one
 // mistake twice, as with an unknown import being both undefined and not found.
 func firstPerPosition(diags []Diagnostic) []Diagnostic {
-	seen := map[Position]bool{}
-	out := diags[:0]
+	kept := map[Position]int{}
+	var out []Diagnostic
 	for _, d := range diags {
-		if !seen[d.Range.Start] {
-			seen[d.Range.Start] = true
+		i, seen := kept[d.Range.Start]
+		if !seen {
+			kept[d.Range.Start] = len(out)
 			out = append(out, d)
+			continue
+		}
+		// The diagnostic kept takes the fixes of those it stands for.
+		if len(out[i].Fixes) == 0 {
+			out[i].Fixes = d.Fixes
 		}
 	}
 	return out

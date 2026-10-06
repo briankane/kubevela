@@ -152,7 +152,11 @@ func (d *document) unknownParameters(f *ast.Field, params cue.Value, parent stri
 		name := labelName(child.Label)
 		at := strings.Join(append(append([]string{}, path...), name), ".")
 		if !params.Allows(cue.Str(name)) {
-			diags = append(diags, d.at(child.Label.Pos(), fmt.Sprintf("%s takes no parameter %s", parent, at)))
+			diag := d.at(child.Label.Pos(), fmt.Sprintf("%s takes no parameter %s", parent, at))
+			if to := closest(name, fieldNames(params)); to != "" {
+				diag.Fixes = []Fix{renameFix(child.Label.Pos(), child.Label.End(), to)}
+			}
+			diags = append(diags, diag)
 			continue
 		}
 		diags = append(diags, d.unknownParameters(child, schemaChild(params, cue.Str(name)), parent, append(path, name))...)
