@@ -25,9 +25,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// componentHeader detects its workload from the output, so a fixture may
+// output any kind.
 const componentHeader = `"my-worker": {
 	type: "component"
-	attributes: workload: definition: {apiVersion: "apps/v1", kind: "Deployment"}
+	attributes: workload: type: "autodetects.core.oam.dev"
 }
 `
 

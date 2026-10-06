@@ -34,7 +34,7 @@ const uri = "file:///defs/my-worker.cue"
 
 const brokenDef = `"my-worker": {
 	type: "component"
-	attributes: workload: definition: {apiVersion: "apps/v1", kind: "Deployment"}
+	attributes: workload: type: "autodetects.core.oam.dev"
 }
 template: {
 	output: metadata: name: context.nmae
@@ -44,7 +44,7 @@ template: {
 
 const fixedDef = `"my-worker": {
 	type: "component"
-	attributes: workload: definition: {apiVersion: "apps/v1", kind: "Deployment"}
+	attributes: workload: type: "autodetects.core.oam.dev"
 }
 template: {
 	output: metadata: name: context.name

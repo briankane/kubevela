@@ -733,8 +733,8 @@ func GetDefinitionDefaultSpecVariant(kind, variant string) (map[string]interface
 		return withTemplate(map[string]interface{}{
 			"workload": map[string]interface{}{
 				"definition": map[string]interface{}{
-					"apiVersion": "<change me> apps/v1",
-					"kind":       "<change me> Deployment",
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
 				},
 			},
 		}, "output: {\n\tapiVersion: \"apps/v1\"\n\tkind:       \"Deployment\"\n}\nparameter: {}\n"), nil

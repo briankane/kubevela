@@ -233,6 +233,7 @@ func (d *document) checkTemplate() []Diagnostic {
 		}
 		diags = append(diags, d.fromErrors(v.Validate(), templateLabel)...)
 		diags = append(diags, d.checkSelectors(v)...)
+		diags = append(diags, d.checkWorkload(v)...)
 		return append(diags, d.checkKinds(f, v)...)
 	}
 }

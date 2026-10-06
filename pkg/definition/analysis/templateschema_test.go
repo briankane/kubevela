@@ -159,6 +159,26 @@ func TestTemplateSchemas(t *testing.T) {
 `,
 			want: []wantSev{{7, SeverityError, "a global policy applies to every Application unasked"}},
 		},
+		"workload that matches the output": {
+			src: header("c", "component", "\tattributes: workload: definition: {apiVersion: \"apps/v1\", kind: \"Deployment\"}\n") + `template: output: {apiVersion: "apps/v1", kind: "Deployment"}
+`,
+		},
+		"workload that does not match the output": {
+			src: header("c", "component", "\tattributes: workload: definition: {\n\t\tapiVersion: \"apps/v1\"\n\t\tkind:       \"Deployment\"\n\t}\n") + `template: output: {apiVersion: "apps/v1", kind: "StatefulSet"}
+`,
+			want: []wantSev{{5, SeverityError, "the workload is apps/v1 Deployment, but output is apps/v1 StatefulSet"}},
+		},
+		"workload detected automatically": {
+			src: header("c", "component", "\tattributes: workload: type: \"autodetects.core.oam.dev\"\n") + `template: output: {apiVersion: "v1", kind: "ConfigMap"}
+`,
+		},
+		"output kind decided by a parameter": {
+			src: header("c", "component", "\tattributes: workload: definition: {apiVersion: \"apps/v1\", kind: \"Deployment\"}\n") + `template: {
+	output: {apiVersion: "apps/v1", kind: parameter.kind}
+	parameter: kind: *"Deployment" | "StatefulSet"
+}
+`,
+		},
 		"schema of the wrong shape": {
 			src: header("t", "trait", "") + `template: {
 	patch: {}

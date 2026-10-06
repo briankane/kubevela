@@ -190,6 +190,46 @@ func hasEmbedding(s *ast.StructLit) bool {
 	return false
 }
 
+// autodetectWorkload is the workload type that takes the workload from the
+// output, whatever it is.
+const autodetectWorkload = "autodetects.core.oam.dev"
+
+// checkWorkload reports a component whose declared workload is not the kind
+// its output renders, unless the workload is detected from the output. An
+// output whose kind is not settled, as one from a parameter, is not judged.
+func (d *document) checkWorkload(v cue.Value) []Diagnostic {
+	if d.typ != componentType || d.extends() || d.headerString("attributes", "workload", "type") == autodetectWorkload {
+		return nil
+	}
+	defPath := []string{"attributes", "workload", "definition"}
+	wantAPI, wantKind := d.headerString(append(defPath, "apiVersion")...), d.headerString(append(defPath, "kind")...)
+	if wantAPI == "" || wantKind == "" {
+		return nil
+	}
+	settled := func(path string) (string, bool) {
+		f := v.LookupPath(cue.ParsePath(templateLabel + ".output." + path))
+		if _, hasDefault := f.Default(); hasDefault || !f.IsConcrete() {
+			return "", false
+		}
+		s, err := f.String()
+		return s, err == nil
+	}
+	gotAPI, ok1 := settled("apiVersion")
+	gotKind, ok2 := settled("kind")
+	if !ok1 || !ok2 || (gotAPI == wantAPI && gotKind == wantKind) {
+		return nil
+	}
+	at := d.headers[0].Label.Pos()
+	f := d.headers[0]
+	for _, p := range append(defPath, "kind") {
+		if child, ok := fieldIn(f, p); ok {
+			f, at = child, child.Label.Pos()
+		}
+	}
+	return []Diagnostic{d.at(at, fmt.Sprintf("the workload is %s %s, but output is %s %s: make them match, or set workload: type: %q to take it from the output",
+		wantAPI, wantKind, gotAPI, gotKind, autodetectWorkload))}
+}
+
 func (d *document) extends() bool {
 	return d.headerString("extends") != "" || d.headerString("attributes", "extends") != ""
 }
