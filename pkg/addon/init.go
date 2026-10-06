@@ -67,13 +67,14 @@ type InitCmd struct {
 	// We use string instead of v1beta1.Application is because
 	// the cue formatter is having some problems: it will keep
 	// TypeMeta (instead of inlined).
-	AppTmpl     string
-	Metadata    Meta
-	Readme      string
-	Resources   []ElementFile
-	Schemas     []ElementFile
-	Views       []ElementFile
-	Definitions []ElementFile
+	AppTmpl         string
+	Metadata        Meta
+	Readme          string
+	Resources       []ElementFile
+	Schemas         []ElementFile
+	ConfigTemplates []ElementFile
+	Views           []ElementFile
+	Definitions     []ElementFile
 	// GoDefFiles contains Go definition scaffolding files
 	GoDefFiles []ElementFile
 }
@@ -395,6 +396,11 @@ func (cmd *InitCmd) createSamples() {
 		Data: schemaTemplate,
 		Name: "myschema.yaml",
 	})
+	// Sample config template
+	cmd.ConfigTemplates = append(cmd.ConfigTemplates, ElementFile{
+		Data: strings.ReplaceAll(configTemplateTemplate, "ADDON_NAME", cmd.AddonName),
+		Name: "my-config.cue",
+	})
 	// Sample View
 	cmd.Views = append(cmd.Views, ElementFile{
 		Data: strings.ReplaceAll(viewTemplate, "ADDON_NAME", cmd.AddonName),
@@ -542,6 +548,7 @@ func (cmd *InitCmd) createDirs() error {
 	dirs := []string{
 		path.Join(cmd.Path, ResourcesDirName),
 		path.Join(cmd.Path, DefinitionsDirName),
+		path.Join(cmd.Path, ConfigTemplateDirName),
 		path.Join(cmd.Path, DefSchemaName),
 		path.Join(cmd.Path, ViewDirName),
 	}
@@ -602,6 +609,12 @@ func (cmd *InitCmd) writeFiles() error {
 		files = append(files, ElementFile{
 			Data: v.Data,
 			Name: filepath.Join(DefSchemaName, v.Name),
+		})
+	}
+	for _, v := range cmd.ConfigTemplates {
+		files = append(files, ElementFile{
+			Data: v.Data,
+			Name: filepath.Join(ConfigTemplateDirName, v.Name),
 		})
 	}
 
@@ -751,6 +764,42 @@ output: {
 parameter: {
 	// +usage=Custom parameter description
 	myparam: *"myns" | string
+}
+`
+	configTemplateTemplate = `// We put config templates in the config-templates directory. Each one lets
+// users create configs of its kind, from the CLI or VelaUX, once the addon is
+// enabled. To learn more, see:
+// - https://kubevela.net/docs/platform-engineers/system-operation/config-management
+metadata: {
+	name:        "ADDON_NAME-config"
+	alias:       "ADDON_NAME config"
+	description: "Where ADDON_NAME connects to"
+	sensitive:   false
+	scope:       "project"
+}
+
+template: {
+	output: {
+		apiVersion: "v1"
+		kind:       "Secret"
+		metadata: {
+			name:      context.name
+			namespace: context.namespace
+		}
+		type: "Opaque"
+		stringData: {
+			endpoint: parameter.endpoint
+			if parameter.token != _|_ {
+				token: parameter.token
+			}
+		}
+	}
+	parameter: {
+		// +usage=The endpoint to connect to
+		endpoint: string
+		// +usage=The token to authenticate with
+		token?: string
+	}
 }
 `
 	schemaTemplate = `# We put UI Schemas that correspond to Definitions in schemas directory.
