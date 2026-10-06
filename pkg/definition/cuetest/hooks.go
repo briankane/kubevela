@@ -571,3 +571,9 @@ func (s *Suite) Evaluate(cases []*Case, opts RunOptions) []Outcome {
 	}
 	return outcomes
 }
+
+// Package is vela/test, the package a test file imports its test functions
+// from, for tools that read test files, such as an editor completing them.
+func Package() (cuexruntime.Package, error) {
+	return testPackage()
+}

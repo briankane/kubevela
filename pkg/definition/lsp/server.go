@@ -223,7 +223,7 @@ func (s *Server) handle(msg message) error {
 	case "textDocument/completion":
 		var p CompletionParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = completions(s.docs[p.TextDocument.URI], p.Position, s.publishedContext())
+			result = completions(p.TextDocument.URI, s.docs[p.TextDocument.URI], p.Position, s.publishedContext())
 		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams

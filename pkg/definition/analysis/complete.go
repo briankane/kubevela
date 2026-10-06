@@ -90,6 +90,18 @@ var (
 	headerType = regexp.MustCompile(`\btype:\s*"(component|trait|policy|workflow-step|source|workload)"`)
 )
 
+// completionKind is the template kind whose packages doc may import: its
+// definition's, or, for a test file, the workflow's, which it compiles with.
+func completionKind(doc string) (string, bool) {
+	if t := headerType.FindStringSubmatch(doc); t != nil {
+		return kindFromText(doc, t[1]), true
+	}
+	if isTestDoc(doc) {
+		return workflowStepType, true
+	}
+	return "", false
+}
+
 var applicationScope = regexp.MustCompile(`\bscope:\s*"Application"`)
 
 // kindFromText is a definition's template kind from text that may not
@@ -215,11 +227,11 @@ func CompletePackageMemberWith(doc, before string, ext *Externals) []Completion 
 			path = spec[2]
 		}
 	}
-	t := headerType.FindStringSubmatch(doc)
-	if path == "" || t == nil {
+	kind, ok := completionKind(doc)
+	if path == "" || !ok {
 		return nil
 	}
-	pkgs := packages{builtin: packagesFor(kindFromText(doc, t[1])), ext: ext}
+	pkgs := packages{builtin: packagesFor(kind), ext: ext}
 	pkg, ok := pkgs.value(path)
 	if !ok {
 		return nil
@@ -296,13 +308,13 @@ func CompleteImportWith(doc, before string, ext *Externals) []Completion {
 			return nil
 		}
 	}
-	t := headerType.FindStringSubmatch(doc)
-	if t == nil {
+	kind, ok := completionKind(doc)
+	if !ok {
 		return nil
 	}
 	typed := m[1]
 	var out []Completion
-	for _, p := range (packages{builtin: packagesFor(kindFromText(doc, t[1])), ext: ext}).list() {
+	for _, p := range (packages{builtin: packagesFor(kind), ext: ext}).list() {
 		path := p.GetPath()
 		if strings.HasPrefix(path, typed) {
 			out = append(out, Completion{Label: path, Insert: path, Replace: len(typed), Doc: "The " + p.GetName() + " package."})

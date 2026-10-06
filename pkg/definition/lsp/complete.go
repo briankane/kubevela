@@ -18,14 +18,19 @@ package lsp
 
 import (
 	"strings"
+	"sync"
 	"unicode/utf16"
 
+	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
+
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/cuetest"
+	"github.com/oam-dev/kubevela/pkg/utils"
 )
 
 // completions are what can be typed at pos in text, with what global
 // policies publish offered under context.custom.
-func completions(text string, pos Position, published []analysis.Published) CompletionList {
+func completions(uri, text string, pos Position, published []analysis.Published) CompletionList {
 	list := CompletionList{Items: []CompletionItem{}}
 	lines := strings.Split(text, "\n")
 	if int(pos.Line) >= len(lines) {
@@ -34,12 +39,19 @@ func completions(text string, pos Position, published []analysis.Published) Comp
 	before := prefixUTF16(lines[pos.Line], pos.Character)
 	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
 	var candidates []analysis.Completion
-	candidates = append(candidates, analysis.CompleteMarker(before)...)
-	candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
-	candidates = append(candidates, analysis.CompletePackageMember(text, before)...)
-	candidates = append(candidates, analysis.CompleteImport(text, upToCursor)...)
+	var ext *analysis.Externals
+	if utils.IsCUETestFile(pathOf(uri)) {
+		ext = testExternals()
+		candidates = analysis.CompleteTestFile(text, pathOf(uri), before, ext)
+	}
 	if len(candidates) == 0 {
-		candidates = analysis.CompleteValueAt(text, len(upToCursor), nil)
+		candidates = append(candidates, analysis.CompleteMarker(before)...)
+		candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
+		candidates = append(candidates, analysis.CompletePackageMemberWith(text, before, ext)...)
+		candidates = append(candidates, analysis.CompleteImportWith(text, upToCursor, ext)...)
+	}
+	if len(candidates) == 0 {
+		candidates = analysis.CompleteValueAt(text, len(upToCursor), ext)
 	}
 	for _, c := range candidates {
 		replaced := before[len(before)-c.Replace:]
@@ -98,3 +110,12 @@ func kindOf(c analysis.Completion) CompletionItemKind {
 
 // insertTextFormatSnippet marks a completion's text as a snippet.
 const insertTextFormatSnippet = 2
+
+// testExternals holds vela/test, which a CUE test file imports.
+var testExternals = sync.OnceValue(func() *analysis.Externals {
+	pkg, err := cuetest.Package()
+	if err != nil {
+		return nil
+	}
+	return analysis.NewExternals([]cuexruntime.Package{pkg})
+})

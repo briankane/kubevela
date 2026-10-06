@@ -18,6 +18,8 @@ package lsp
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -106,4 +108,19 @@ func TestCompletesWhatAFunctionReturns(t *testing.T) {
 	c.diagnostics()
 	line := "\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\", data: c: _req.$returns."
 	assert.Contains(t, itemLabels(complete(t, c, 7, uint32(len(line)))), "statusCode")
+}
+
+func TestCompletesInATestFile(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "scaler.cue"), []byte("\"scaler\": {\n\ttype: \"trait\"\n}\ntemplate: patch: {}\n"), 0o600))
+	testURI := "file://" + filepath.Join(dir, "scaler_test.cue")
+	c := newClient(t)
+	text := "import \"vela/test\"\n\n\"patches\": test.#\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: testURI, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: testURI}, Position: Position{Line: 2, Character: uint32(len("\"patches\": test.#"))}}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	assert.ElementsMatch(t, []string{"#TraitRender", "#TraitStatus"}, itemLabels(list))
+	assert.Contains(t, list.Items[0].TextEdit.NewText, `definition: "scaler"`)
 }
