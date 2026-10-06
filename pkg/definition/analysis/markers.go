@@ -165,12 +165,18 @@ var patchMarkers = []Marker{
 	}},
 }
 
-// Markers lists every marker, for completion and hover.
-func Markers() []Marker {
-	return append(append([]Marker{}, parameterMarkers...), patchMarkers...)
+// ideMarkers silence this analysis; KubeVela ignores them.
+var ideMarkers = []Marker{
+	{Name: ignoreMarker, Bare: true, Doc: "Silences the editor's checks of the field below, and of everything in it. KubeVela itself ignores it.", check: bare},
+	{Name: ignoreFileMarker, Bare: true, Doc: "Silences the editor's checks of this whole file. KubeVela itself ignores it.", check: bare},
 }
 
-var markerLine = regexp.MustCompile(`^//\s*\+([A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9]*)?)(?:=(.*))?$`)
+// Markers lists every marker, for completion and hover.
+func Markers() []Marker {
+	return append(append(append([]Marker{}, parameterMarkers...), patchMarkers...), ideMarkers...)
+}
+
+var markerLine = regexp.MustCompile(`^//\s*\+([A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9-]*)?)(?:=(.*))?$`)
 
 // checkMarkers reports markers that will do nothing: misspelt, in the header,
 // or with a value their reader does not act on.
@@ -247,7 +253,7 @@ func (d *document) checkMarker(c *ast.Comment, place markerPlace) (Diagnostic, b
 		if suggestion := closestMarker(name); suggestion != "" {
 			return at("unknown marker +" + name + ": did you mean +" + suggestion + "?")
 		}
-	case place == placeHeader:
+	case place == placeHeader && !strings.HasPrefix(name, "ide:"):
 		return at("markers have no effect in the definition's header")
 	case name == "patchStrategy" && value != nil:
 		return d.checkPatchStrategy(*value, place, at)

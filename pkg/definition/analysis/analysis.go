@@ -124,6 +124,9 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 		if !templateLine.Match(src) || !typeLine.Match(src) {
 			return Result{}
 		}
+		if ignoresFile(src) {
+			return Result{IsDefinition: true}
+		}
 		d := &document{path: path, src: src}
 		return Result{IsDefinition: true, Diagnostics: d.fromErrors(err, "")}
 	}
@@ -133,6 +136,10 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	}
 	d.opts = opts
 	res := Result{IsDefinition: true, Name: d.name, Type: d.typ}
+	if ignoresFile(src) {
+		return res
+	}
+	ignored := d.ignoredLines()
 	// Markers are read before the template is compiled, which rewrites it.
 	diags := d.checkMarkers()
 	diags = append(diags, d.checkUsage()...)
@@ -140,7 +147,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkTemplateFields()...)
 	diags = append(diags, d.checkObjects()...)
 	diags = append(diags, d.explainContext(d.checkTemplate())...)
-	res.Diagnostics = sortDiagnostics(firstPerPosition(withoutVagueInterpolation(diags)))
+	res.Diagnostics = sortDiagnostics(firstPerPosition(withoutVagueInterpolation(withoutIgnored(diags, ignored))))
 	return res
 }
 

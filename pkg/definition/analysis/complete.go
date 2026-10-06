@@ -39,7 +39,7 @@ type Completion struct {
 }
 
 var (
-	markerNameTyped  = regexp.MustCompile(`^\s*//\s*\+((?:[A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9]*)?)?)$`)
+	markerNameTyped  = regexp.MustCompile(`^\s*//\s*\+((?:[A-Za-z][A-Za-z0-9]*(?::[A-Za-z0-9-]*)?)?)$`)
 	markerValueTyped = regexp.MustCompile(`^\s*//\s*\+([A-Za-z][A-Za-z0-9]*(?::[A-Za-z][A-Za-z0-9]*)?)=(\S*)$`)
 )
 

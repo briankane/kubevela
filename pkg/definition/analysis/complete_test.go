@@ -52,6 +52,10 @@ func TestCompleteMarkers(t *testing.T) {
 		assert.Equal(t, []string{"+immutable"}, labels(cs))
 		assert.Equal(t, "immutable", cs[0].Insert)
 	})
+	t.Run("the editor's own markers", func(t *testing.T) {
+		assert.ElementsMatch(t, []string{"+ide:ignore", "+ide:ignore-file"}, labels(CompleteMarker("// +ide:")))
+		assert.Equal(t, []string{"+ide:ignore-file"}, labels(CompleteMarker("// +ide:ignore-")))
+	})
 	t.Run("ui keys after ui:", func(t *testing.T) {
 		cs := CompleteMarker("// +ui:col")
 		assert.Equal(t, []string{"+ui:colSpan"}, labels(cs))
