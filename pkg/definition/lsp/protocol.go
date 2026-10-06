@@ -110,7 +110,52 @@ type TextDocumentSyncOptions struct {
 
 // ServerCapabilities the server announces.
 type ServerCapabilities struct {
-	TextDocumentSync TextDocumentSyncOptions `json:"textDocumentSync"`
+	TextDocumentSync   TextDocumentSyncOptions `json:"textDocumentSync"`
+	CompletionProvider *CompletionOptions      `json:"completionProvider,omitempty"`
+}
+
+// CompletionOptions is the server's completion capability.
+type CompletionOptions struct {
+	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+}
+
+// CompletionParams asks for completions at a position.
+type CompletionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+}
+
+// CompletionItemKind of a CompletionItem.
+type CompletionItemKind int
+
+// CompletionItemKindKeyword marks a marker or one of its values.
+const CompletionItemKindKeyword CompletionItemKind = 14
+
+// MarkupContent is documentation, as Markdown.
+type MarkupContent struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// TextEdit replaces a range with new text.
+type TextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}
+
+// CompletionItem is one completion.
+type CompletionItem struct {
+	Label         string             `json:"label"`
+	Kind          CompletionItemKind `json:"kind"`
+	FilterText    string             `json:"filterText,omitempty"`
+	Documentation MarkupContent      `json:"documentation"`
+	TextEdit      TextEdit           `json:"textEdit"`
+}
+
+// CompletionList is the completions at a position.
+type CompletionList struct {
+	IsIncomplete bool             `json:"isIncomplete"`
+	Items        []CompletionItem `json:"items"`
 }
 
 // ServerInfo names the server.

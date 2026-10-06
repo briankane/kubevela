@@ -45,6 +45,8 @@ type Server struct {
 	mu       sync.Mutex
 	out      io.Writer
 	shutdown bool
+	// docs is the text of each open document. Only the message loop uses it.
+	docs map[string]string
 
 	renderGo GoRenderer
 	// renders counts the renders asked of each Go file, so only the latest
@@ -66,7 +68,7 @@ func WithGoRenderer(r GoRenderer) Option {
 
 // NewServer returns a server for one client.
 func NewServer(opts ...Option) *Server {
-	s := &Server{renderGo: goloader.LoadFromFile, renders: map[string]int{}}
+	s := &Server{renderGo: goloader.LoadFromFile, renders: map[string]int{}, docs: map[string]string{}}
 	for _, o := range opts {
 		o(s)
 	}
@@ -118,10 +120,13 @@ func (s *Server) handle(msg message) error {
 	switch msg.Method {
 	case "initialize":
 		result = InitializeResult{
-			Capabilities: ServerCapabilities{TextDocumentSync: TextDocumentSyncOptions{
-				OpenClose: true,
-				Change:    TextDocumentSyncFull,
-			}},
+			Capabilities: ServerCapabilities{
+				TextDocumentSync: TextDocumentSyncOptions{
+					OpenClose: true,
+					Change:    TextDocumentSyncFull,
+				},
+				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "="}},
+			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
 		}
 	case "shutdown":
@@ -165,9 +170,15 @@ func (s *Server) handle(msg message) error {
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			result = testCases(p)
 		}
+	case "textDocument/completion":
+		var p CompletionParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			result = completions(s.docs[p.TextDocument.URI], p.Position)
+		}
 	case "textDocument/didClose":
 		var p DidCloseTextDocumentParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
+			delete(s.docs, p.TextDocument.URI)
 			return s.publish(PublishDiagnosticsParams{URI: p.TextDocument.URI, Diagnostics: []Diagnostic{}})
 		}
 	default:
@@ -222,8 +233,9 @@ func renderGo(render GoRenderer, path string) RenderDefKitResult {
 	return out
 }
 
-// update publishes the diagnostics of a document's new text.
+// update keeps a document's new text and publishes its diagnostics.
 func (s *Server) update(uri, text string, version *int) error {
+	s.docs[uri] = text
 	return s.publish(PublishDiagnosticsParams{URI: uri, Version: version, Diagnostics: diagnose(uri, text)})
 }
 

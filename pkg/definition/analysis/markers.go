@@ -49,6 +49,10 @@ const (
 type Marker struct {
 	Name string
 	Doc  string
+	// Values are the values the marker takes, when it takes one of a set.
+	Values []string
+	// Bare is set for a marker that takes no value.
+	Bare bool
 	// check says what is wrong with a value, or "" when it is fine. value is
 	// nil for a bare marker.
 	check func(value *string) string
@@ -118,28 +122,28 @@ var parameterMarkers = []Marker{
 		return ""
 	}},
 	{Name: "alias", Doc: "Another name for the parameter on the vela CLI.", check: required("alias")},
-	{Name: "ignore", Doc: "Hides the parameter from the vela CLI and generated docs.", check: bare},
-	{Name: "immutable", Doc: "Once set on an Application, the parameter cannot be changed or removed; on a struct, nothing under it can. The annotation app.oam.dev/force-param-mutations: \"true\" overrides it.", check: bare},
+	{Name: "ignore", Bare: true, Doc: "Hides the parameter from the vela CLI and generated docs.", check: bare},
+	{Name: "immutable", Bare: true, Doc: "Once set on an Application, the parameter cannot be changed or removed; on a struct, nothing under it can. The annotation app.oam.dev/force-param-mutations: \"true\" overrides it.", check: bare},
 	{Name: "ui:type", Doc: "The VelaUX widget for the field, overriding the one its type implies.", check: required("ui:type")},
-	{Name: "ui:format", Doc: "Lays a list of structs out as a table.", check: oneOf("ui:format", "table")},
+	{Name: "ui:format", Values: []string{"table"}, Doc: "Lays a list of structs out as a table.", check: oneOf("ui:format", "table")},
 	{Name: "ui:rowKey", Doc: "The field that identifies a row of a table.", check: required("ui:rowKey")},
 	{Name: "ui:itemLabel", Doc: "The field that labels each item of a list.", check: required("ui:itemLabel")},
 	{Name: "ui:label", Doc: "The field's label in VelaUX.", check: required("ui:label")},
 	{Name: "ui:placeholder", Doc: "Placeholder text for the field in VelaUX.", check: required("ui:placeholder")},
 	{Name: "ui:error", Doc: "The message VelaUX shows when the field is invalid.", check: required("ui:error")},
 	{Name: "ui:section", Doc: "The section of the VelaUX form the field is shown in.", check: required("ui:section")},
-	{Name: "ui:optionsFrom", Doc: "Offers values from configs of a template (configs:<template>), the clusters, or the environments.", check: func(v *string) string {
+	{Name: "ui:optionsFrom", Values: []string{"clusters", "configs:", "envs"}, Doc: "Offers values from configs of a template (configs:<template>), the clusters, or the environments.", check: func(v *string) string {
 		if v != nil && (*v == "clusters" || *v == "envs" || (strings.HasPrefix(*v, "configs:") && len(*v) > len("configs:"))) {
 			return ""
 		}
 		return "takes configs:<template>, clusters or envs"
 	}},
-	{Name: "ui:expression", Doc: "never: VelaUX does not offer an expression for the field.", check: oneOf("ui:expression", "never")},
+	{Name: "ui:expression", Values: []string{"never"}, Doc: "never: VelaUX does not offer an expression for the field.", check: oneOf("ui:expression", "never")},
 	{Name: "ui:suggest", Doc: "Values VelaUX suggests, separated by commas.", check: required("ui:suggest")},
 	{Name: "ui:colSpan", Doc: "How many of the form's 24 columns the field spans.", check: wholeNumber},
 	{Name: "ui:order", Doc: "Where the field comes in the form; lower first.", check: wholeNumber},
-	{Name: "ui:advanced", Doc: "Shows the field under the form's advanced options.", check: bareOrTrue},
-	{Name: "ui:hidden", Doc: "Hides the field from the VelaUX form.", check: bareOrTrue},
+	{Name: "ui:advanced", Bare: true, Values: []string{"true"}, Doc: "Shows the field under the form's advanced options.", check: bareOrTrue},
+	{Name: "ui:hidden", Bare: true, Values: []string{"true"}, Doc: "Hides the field from the VelaUX form.", check: bareOrTrue},
 }
 
 // patchStrategies are the values of +patchStrategy kubevela/pkg's patcher acts on.
@@ -153,7 +157,7 @@ var patchMarkers = []Marker{
 		}
 		return ""
 	}},
-	{Name: "patchStrategy", Doc: "How the field below is patched: retainKeys or replace swap it wholesale; on patch itself, jsonPatch or jsonMergePatch read the whole patch as RFC 6902 or RFC 7396.", check: func(v *string) string {
+	{Name: "patchStrategy", Values: patchStrategies, Doc: "How the field below is patched: retainKeys or replace swap it wholesale; on patch itself, jsonPatch or jsonMergePatch read the whole patch as RFC 6902 or RFC 7396.", check: func(v *string) string {
 		if v == nil {
 			return "takes a value: +patchStrategy=" + strings.Join(patchStrategies, "|")
 		}
