@@ -40,7 +40,7 @@ func TestCheckWorkspace(t *testing.T) {
 	write("defs/tenant-web.cue", childSrc)
 	write("packages/hello-package.yaml", helloPackageYAML)
 	write("defs/greeter.cue", usesHelloSrc)
-	write("defs/typo.cue", deploymentTypo)
+	write("defs/typo.cue", strings.Replace(deploymentTypo, `"web": {`, `"typo": {`, 1))
 	write("notes.txt", "not ours")
 
 	findings, files, err := Check([]string{dir}, CheckOptions{Kinds: true})
@@ -61,5 +61,36 @@ func TestCheckWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	for _, f := range findings {
 		assert.NotContains(t, f.Message, "replicass", "kinds are checked only when asked")
+	}
+}
+
+// Definition names are unique: two of one name and type replace each other
+// when applied, an error on each; one of another type shares the name, a
+// warning. What extends the name finds the first, by path, every time.
+func TestDefinitionNamesAreUnique(t *testing.T) {
+	dir := t.TempDir()
+	trait := "\"web\": {\n\ttype: \"trait\"\n}\ntemplate: patch: metadata: labels: a: \"b\"\n"
+	for rel, text := range map[string]string{"a/web.cue": parentSrc, "b/web.cue": deploymentTypo, "tenant-web.cue": childSrc, "traits/web.cue": trait} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(text), 0o600))
+	}
+	for i := 0; i < 5; i++ {
+		findings, _, err := Check([]string{dir}, CheckOptions{})
+		require.NoError(t, err)
+		bySeverity := map[string][]string{}
+		imge := 0
+		for _, f := range findings {
+			rel, _ := filepath.Rel(dir, f.Path)
+			switch {
+			case strings.Contains(f.Message, "is also defined in"), strings.Contains(f.Message, "is also the name of"):
+				assert.Equal(t, 1, f.Line, f.Message)
+				bySeverity[f.Severity] = append(bySeverity[f.Severity], rel)
+			case strings.Contains(f.Message, "web takes no parameter imge"):
+				imge++
+			}
+		}
+		assert.ElementsMatch(t, []string{"a/web.cue", "b/web.cue"}, bySeverity[FindingError], "the two components replace each other")
+		assert.ElementsMatch(t, []string{"a/web.cue", "b/web.cue", "traits/web.cue"}, bySeverity[FindingWarning], "the trait shares the name")
+		assert.Equal(t, 1, imge, "the parent is a/web.cue, every time")
 	}
 }

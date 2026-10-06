@@ -71,6 +71,7 @@ func Check(roots []string, opts CheckOptions) ([]Finding, int, error) {
 	}
 	found, files := walkWorkspace(folders)
 	for path, entry := range found {
+		entry.evaluate()
 		if entry.contributes() {
 			s.record(path, entry)
 		}

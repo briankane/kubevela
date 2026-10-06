@@ -19,6 +19,7 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -56,6 +57,9 @@ func workspaceFolders(p InitializeParams) []string {
 
 // indexed is what the workspace index learned of one file.
 type indexed struct {
+	// path and src are kept until evaluate reads them.
+	path      string
+	src       []byte
 	published *analysis.Published
 	// name and defType name the definition the file holds, if any.
 	name, defType string
@@ -71,6 +75,27 @@ func (e indexed) contributes() bool {
 // indexFile reads what a file contributes to the index, from src, or from
 // disk when src is nil.
 func indexFile(path string, src []byte) indexed {
+	entry := readIndexed(path, src)
+	if entry.src != nil {
+		entry.evaluate()
+	}
+	return entry
+}
+
+// evaluate fills in what the index reads of a file by evaluating its CUE:
+// what a global policy publishes. It compiles against the vela/ packages
+// every check shares, which CUE does not let two goroutines compile against
+// at once, so it runs on the message loop.
+func (e *indexed) evaluate() {
+	if p, ok := publishedIn(e.path, e.src); ok {
+		e.published = &p
+	}
+	e.src = nil
+}
+
+// readIndexed reads and parses what a file contributes to the index, all
+// but what evaluate fills in. It compiles nothing, so is safe off the loop.
+func readIndexed(path string, src []byte) indexed {
 	var out indexed
 	if src == nil {
 		info, err := os.Stat(path)
@@ -92,9 +117,7 @@ func indexFile(path string, src []byte) indexed {
 		}
 	case strings.HasSuffix(path, ".cue") && !utils.IsCUETestFile(path):
 		out.name, out.defType, _ = analysis.DefinitionHeader(path, src)
-		if p, ok := publishedIn(path, src); ok {
-			out.published = &p
-		}
+		out.path, out.src = path, src
 	}
 	return out
 }
@@ -108,6 +131,7 @@ func (s *Server) indexWorkspace() {
 		s.post(func() {
 			changed := false
 			for path, entry := range found {
+				entry.evaluate()
 				if _, open := s.docs["file://"+path]; !open && entry.contributes() {
 					s.record(path, entry)
 					changed = true
@@ -140,7 +164,7 @@ func walkWorkspace(folders []string) (map[string]indexed, []string) {
 				return nil
 			}
 			files = append(files, path)
-			found[path] = indexFile(path, nil)
+			found[path] = readIndexed(path, nil)
 			return nil
 		})
 	}
@@ -210,9 +234,13 @@ type definitionEntry struct{ name, defType string }
 // workspace: its definitions, by name, and its custom provider packages. The
 // lookup reads a snapshot, so it is safe off the message loop.
 func (s *Server) options() analysis.Options {
+	// A name defined twice is found in the first file by path, so the same
+	// one every time.
 	byName := map[string]string{}
 	for path, d := range s.definitions {
-		byName[d.name] = path
+		if prev, seen := byName[d.name]; !seen || path < prev {
+			byName[d.name] = path
+		}
 	}
 	open := map[string]string{}
 	for uri, text := range s.docs {
@@ -461,4 +489,47 @@ func (s *Server) notifyCluster() {
 		}
 	}
 	_ = s.write(message{JSONRPC: "2.0", Method: MethodClusterStatus, Params: mustJSON(status)})
+}
+
+// duplicateDefinition reports, on a definition's first line, the other files
+// that define its name. KubeVela applies definitions by name, so another of
+// the same type replaces it: an error. One of another type is a different
+// kind, but the name no longer says which is meant: a warning.
+func (s *Server) duplicateDefinition(path, text string) []Diagnostic {
+	own, ok := s.definitions[path]
+	if !ok {
+		return nil
+	}
+	var same, other []string
+	for p, d := range s.definitions {
+		if p == path || d.name != own.name {
+			continue
+		}
+		rel := p
+		if r, err := filepath.Rel(filepath.Dir(path), p); err == nil {
+			rel = r
+		}
+		if d.defType == own.defType {
+			same = append(same, rel)
+		} else {
+			other = append(other, fmt.Sprintf("%s (a %s)", rel, d.defType))
+		}
+	}
+	sort.Strings(same)
+	sort.Strings(other)
+	end := strings.IndexByte(text, '\n')
+	if end < 0 {
+		end = len(text)
+	}
+	firstLine := Range{Start: Position{}, End: Position{Character: utf16Len(text[:end])}}
+	var diags []Diagnostic
+	if len(same) > 0 {
+		diags = append(diags, Diagnostic{Range: firstLine, Severity: SeverityError, Source: diagnosticSource,
+			Message: fmt.Sprintf("%s is also defined in %s: KubeVela applies definitions by name, so one replaces the other. Give each its own name", own.name, strings.Join(same, ", "))})
+	}
+	if len(other) > 0 {
+		diags = append(diags, Diagnostic{Range: firstLine, Severity: SeverityWarning, Source: diagnosticSource,
+			Message: fmt.Sprintf("%s is also the name of %s: a different kind, but the name no longer says which is meant", own.name, strings.Join(other, ", "))})
+	}
+	return diags
 }

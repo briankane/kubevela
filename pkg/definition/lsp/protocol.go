@@ -115,6 +115,9 @@ type ServerCapabilities struct {
 	CompletionProvider *CompletionOptions      `json:"completionProvider,omitempty"`
 	HoverProvider      bool                    `json:"hoverProvider,omitempty"`
 	CodeActionProvider bool                    `json:"codeActionProvider,omitempty"`
+	DefinitionProvider bool                    `json:"definitionProvider,omitempty"`
+	ReferencesProvider bool                    `json:"referencesProvider,omitempty"`
+	RenameProvider     bool                    `json:"renameProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -438,4 +441,35 @@ type ClusterStatus struct {
 	Packages int `json:"packages"`
 	// Error is why it was not reached.
 	Error string `json:"error,omitempty"`
+}
+
+// TextDocumentPositionParams name a position in a document.
+type TextDocumentPositionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+}
+
+// Location is a range in a document.
+type Location struct {
+	URI   string `json:"uri"`
+	Range Range  `json:"range"`
+}
+
+// ReferenceParams ask for the references to what is at a position.
+type ReferenceParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+	Context      ReferenceContext       `json:"context"`
+}
+
+// ReferenceContext says whether the declaration counts as a reference.
+type ReferenceContext struct {
+	IncludeDeclaration bool `json:"includeDeclaration"`
+}
+
+// RenameParams ask to rename what is at a position.
+type RenameParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+	NewName      string                 `json:"newName"`
 }

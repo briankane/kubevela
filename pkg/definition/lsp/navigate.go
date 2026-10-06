@@ -1,0 +1,213 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package lsp
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+)
+
+// navigationRequest answers go to definition, find references, rename and
+// code actions.
+func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
+	switch msg.Method {
+	case "textDocument/codeAction":
+		var p CodeActionParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		return upgradeActions(p, s.docs[p.TextDocument.URI]), nil
+	case "textDocument/definition":
+		var p TextDocumentPositionParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		locs := s.definitionAt(p.TextDocument.URI, p.Position)
+		if len(locs) == 0 {
+			return nil, nil
+		}
+		return locs, nil
+	case "textDocument/references":
+		var p ReferenceParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		text := s.docs[p.TextDocument.URI]
+		refs, _ := analysis.References(pathOf(p.TextDocument.URI), text, byteOffset(text, p.Position))
+		locs := []Location{}
+		for _, r := range refs {
+			locs = append(locs, Location{URI: p.TextDocument.URI, Range: protocolRange(text, r)})
+		}
+		return locs, nil
+	case "textDocument/rename":
+		var p RenameParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		text := s.docs[p.TextDocument.URI]
+		edits, err := analysis.RenameEdits(pathOf(p.TextDocument.URI), text, byteOffset(text, p.Position), p.NewName)
+		if err != nil {
+			return nil, &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+		}
+		changes := make([]TextEdit, 0, len(edits))
+		for _, e := range edits {
+			changes = append(changes, TextEdit{Range: protocolRange(text, e.Range), NewText: e.NewText})
+		}
+		return WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}}, nil
+	}
+	return nil, nil
+}
+
+// protocolRange is a range of the analysis, in text, as the protocol counts.
+func protocolRange(text string, r analysis.Range) Range {
+	return Range{Start: toProtocolPosition(text, r.Start.Line, r.Start.Column), End: toProtocolPosition(text, r.End.Line, r.End.Column)}
+}
+
+var (
+	quotedAt     = regexp.MustCompile(`"([^"\\]*)"`)
+	headerKey    = regexp.MustCompile(`([A-Za-z]+)\s*:\s*$`)
+	memberAt     = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\.(#?[A-Za-z_][A-Za-z0-9_]*)`)
+	importLineAt = regexp.MustCompile(`^\s*(?:import\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s+)?"[^"]*"\s*$`)
+	importAlias  = regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([A-Za-z_][A-Za-z0-9_]*)\s+)?"([^"]+)"\s*$`)
+)
+
+// definitionAt is where what is at pos in the document is declared: a name
+// the workspace knows (a definition extended, a package imported, a member of
+// one, the definition a test case names), or a declaration in the CUE.
+func (s *Server) definitionAt(uri string, pos Position) []Location {
+	text := s.docs[uri]
+	path := pathOf(uri)
+	lines := strings.Split(text, "\n")
+	if int(pos.Line) >= len(lines) {
+		return nil
+	}
+	line := lines[pos.Line]
+	col := len(prefixUTF16(line, pos.Character))
+	if loc, ok := s.workspaceTarget(path, text, line, col); ok {
+		return []Location{loc}
+	}
+	if d, ok := analysis.Declaration(path, text, byteOffset(text, pos)); ok {
+		target := text
+		if d.Path != path {
+			target = s.textOf(d.Path)
+		}
+		return []Location{{URI: "file://" + d.Path, Range: protocolRange(target, d.Range)}}
+	}
+	return nil
+}
+
+// workspaceTarget is the file a string or package member at col of line
+// names.
+func (s *Server) workspaceTarget(path, text, line string, col int) (Location, bool) {
+	for _, m := range quotedAt.FindAllStringSubmatchIndex(line, -1) {
+		if col < m[0] || col > m[1] {
+			continue
+		}
+		value := line[m[2]:m[3]]
+		key := ""
+		if k := headerKey.FindStringSubmatch(line[:m[0]]); k != nil {
+			key = k[1]
+		}
+		switch {
+		case key == "extends":
+			return s.definitionFile(value)
+		case key == "definition" && strings.HasSuffix(path, "_test.cue"):
+			return testedFile(path, value)
+		case importLineAt.MatchString(line):
+			return s.packageFile(value, "")
+		}
+	}
+	for _, m := range memberAt.FindAllStringSubmatchIndex(line, -1) {
+		if col < m[0] || col > m[1] {
+			continue
+		}
+		alias, member := line[m[2]:m[3]], line[m[4]:m[5]]
+		for _, imp := range importAlias.FindAllStringSubmatch(text, -1) {
+			name := imp[1]
+			if name == "" {
+				name = imp[2][strings.LastIndex(imp[2], "/")+1:]
+			}
+			if name == alias {
+				return s.packageFile(imp[2], member)
+			}
+		}
+	}
+	return Location{}, false
+}
+
+// definitionFile is the file of the workspace's definition named.
+func (s *Server) definitionFile(name string) (Location, bool) {
+	for path, d := range s.definitions {
+		if d.name == name {
+			return Location{URI: "file://" + path}, true
+		}
+	}
+	return Location{}, false
+}
+
+// testedFile is the definition a test case at path names.
+func testedFile(path, ref string) (Location, bool) {
+	rel, _, _ := strings.Cut(ref, "#")
+	if !strings.HasSuffix(rel, ".cue") && !strings.HasSuffix(rel, ".go") {
+		rel += ".cue"
+	}
+	file := filepath.Join(filepath.Dir(path), rel)
+	if _, err := os.Stat(file); err != nil {
+		return Location{}, false
+	}
+	return Location{URI: "file://" + file}, true
+}
+
+// packageFile is where the workspace's Package of importPath declares
+// member, or its path when member is empty.
+func (s *Server) packageFile(importPath, member string) (Location, bool) {
+	for file, pkgs := range s.packages {
+		for _, p := range pkgs {
+			if p.GetPath() != importPath {
+				continue
+			}
+			text := s.textOf(file)
+			find := regexp.MustCompile(`(?m)^\s*path:\s*["']?` + regexp.QuoteMeta(importPath))
+			if member != "" {
+				find = regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(member) + `\s*:`)
+			}
+			loc := Location{URI: "file://" + file}
+			if i := find.FindStringIndex(text); i != nil {
+				at := i[0] + len(text[i[0]:i[1]]) - len(strings.TrimLeft(text[i[0]:i[1]], " \t\n"))
+				line := strings.Count(text[:at], "\n")
+				start := Position{Line: uint32(line), Character: utf16Len(text[strings.LastIndex(text[:at], "\n")+1 : at])}
+				loc.Range = Range{Start: start, End: start}
+			}
+			return loc, true
+		}
+	}
+	return Location{}, false
+}
+
+// textOf is a file's text: as open, or as saved.
+func (s *Server) textOf(path string) string {
+	if text, ok := s.docs["file://"+path]; ok {
+		return text
+	}
+	//nolint:gosec // reading the workspace's own files is the point
+	data, _ := os.ReadFile(path)
+	return string(data)
+}

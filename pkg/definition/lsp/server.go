@@ -342,11 +342,8 @@ func (s *Server) handle(msg message) error {
 				result = Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}
 			}
 		}
-	case "textDocument/codeAction":
-		var p CodeActionParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			result = upgradeActions(p, s.docs[p.TextDocument.URI])
-		}
+	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction":
+		result, rerr = s.navigationRequest(msg)
 	case "textDocument/completion":
 		var p CompletionParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -387,11 +384,26 @@ func (s *Server) renderDefKit(id json.RawMessage, path string) {
 		_ = s.reply(id, nil, &ResponseError{Code: CodeRequestCancelled, Message: "a newer render of " + path + " was asked for"})
 		return
 	}
-	_ = s.reply(id, result, nil)
+	s.post(func() {
+		checkRendered(path, &result)
+		_ = s.reply(id, result, nil)
+	})
+}
+
+// checkRendered checks the CUE each DefKit definition rendered to.
+func checkRendered(path string, result *RenderDefKitResult) {
+	for i, d := range result.Definitions {
+		if d.CUE != "" {
+			result.Definitions[i].Diagnostics = diagnose(path+"#"+d.Name+".cue", d.CUE, analysis.Options{})
+		}
+	}
 }
 
 // renderGo renders a DefKit file and checks each definition's CUE as a
 // hand-written definition is checked.
+// renderGo renders the DefKit definitions of a Go file. It runs Go, so off
+// the message loop; checking what it rendered compiles CUE, so is left to
+// checkRendered, on the loop.
 func renderGo(render GoRenderer, path string) RenderDefKitResult {
 	loaded, err := render(path)
 	if err != nil {
@@ -404,7 +416,6 @@ func renderGo(render GoRenderer, path string) RenderDefKitResult {
 			d.Error = l.Error.Error()
 		} else {
 			d.CUE = l.CUE
-			d.Diagnostics = diagnose(path+"#"+l.Definition.Name+".cue", l.CUE, analysis.Options{})
 		}
 		out.Definitions = append(out.Definitions, d)
 	}
@@ -420,7 +431,7 @@ func (s *Server) update(uri, text string, version *int) error {
 
 // diagnose checks a document with what the workspace offers.
 func (s *Server) diagnose(uri, text string) []Diagnostic {
-	return diagnose(uri, text, s.options())
+	return append(diagnose(uri, text, s.options()), s.duplicateDefinition(pathOf(uri), text)...)
 }
 
 // diagnose analyses a document and converts the result to protocol positions.

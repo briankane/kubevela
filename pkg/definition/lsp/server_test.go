@@ -76,6 +76,15 @@ func newClientWith(t *testing.T, s *Server) *client {
 		c.done <- s.Serve(context.Background(), sr, sw)
 		_ = sw.Close()
 	}()
+	// A server outlives its test unless stopped, and would compile beside the
+	// next test's.
+	t.Cleanup(func() {
+		_ = cw.Close()
+		select {
+		case <-c.done:
+		case <-time.After(5 * time.Second):
+		}
+	})
 	return c
 }
 
@@ -130,7 +139,9 @@ func (c *client) read() map[string]json.RawMessage {
 // A read it gives up on is abandoned, so it ends the client's use.
 func (c *client) tryRead(wait time.Duration) (map[string]json.RawMessage, bool) {
 	if c.pending == nil {
-		c.pending = make(chan map[string]json.RawMessage, 1)
+		// Buffered generously, so the server never blocks writing to a test
+		// that is not reading yet.
+		c.pending = make(chan map[string]json.RawMessage, 1024)
 		go func() {
 			for {
 				body, err := readMessage(c.out)
@@ -151,6 +162,12 @@ func (c *client) tryRead(wait time.Duration) (map[string]json.RawMessage, bool) 
 	case <-time.After(wait):
 		return nil, false
 	}
+}
+
+// drain reads the server's messages in the background from now on, so a
+// test may send several before it reads.
+func (c *client) drain() {
+	c.tryRead(0)
 }
 
 // response reads the next message, which must answer request id.
