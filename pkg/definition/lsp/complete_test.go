@@ -91,6 +91,8 @@ func TestCompletesFunctionsAndImports(t *testing.T) {
 	assert.Equal(t, "#Apply", fns.Items[0].Label)
 	assert.Equal(t, CompletionItemKindFunction, fns.Items[0].Kind)
 	assert.Contains(t, fns.Items[0].Documentation.Value, "The resource to apply")
+	assert.Equal(t, 2, fns.Items[0].InsertTextFormat, "inserted as a snippet")
+	assert.Contains(t, fns.Items[0].TextEdit.NewText, "resource: ${1}")
 
 	imports := complete(t, c, 2, 7)
 	assert.Contains(t, itemLabels(imports), "vela/http")

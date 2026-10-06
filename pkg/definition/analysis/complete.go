@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -36,6 +37,9 @@ type Completion struct {
 	Doc     string
 	// Detail is the candidate's type, when it has one.
 	Detail string
+	// Snippet, when set, is inserted in place of Insert, with ${n} tab stops
+	// and \$ for a literal dollar.
+	Snippet string
 }
 
 var (
@@ -237,7 +241,7 @@ func CompletePackageMemberWith(doc, before string, ext *Externals) []Completion 
 			}
 		}
 		detail, doc := describeMember(member)
-		out = append(out, Completion{Label: label, Insert: label, Replace: len(typed), Detail: detail, Doc: doc})
+		out = append(out, Completion{Label: label, Insert: label, Replace: len(typed), Detail: detail, Doc: doc, Snippet: callSnippet(label, it.Value())})
 	}
 	return out
 }
@@ -322,4 +326,47 @@ func customFields(published []Published) []ContextField {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// callSnippet is a call of a provider function with its required $params
+// to fill in: those neither optional nor defaulted, a struct of required
+// fields spelled out, anything else one tab stop.
+func callSnippet(label string, fn cue.Value) string {
+	n := 0
+	body := requiredParams(fn.LookupPath(cue.MakePath(cue.Str("$params"))), "\t\t", &n)
+	if body == "" {
+		body = "\t\t$0\n"
+	}
+	return label + " & {\n\t\\$params: {\n" + body + "\t}\n}"
+}
+
+// requiredParams writes the required fields of a struct, each on a line at
+// indent, numbering the tab stops from n.
+func requiredParams(v cue.Value, indent string, n *int) string {
+	it, err := v.Fields()
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for it.Next() {
+		f := it.Value()
+		if _, hasDefault := f.Default(); hasDefault {
+			continue
+		}
+		name := snippetEscape(it.Selector().Unquoted())
+		if f.IncompleteKind() == cue.StructKind {
+			if nested := requiredParams(f, indent+"\t", n); nested != "" {
+				b.WriteString(indent + name + ": {\n" + nested + indent + "}\n")
+				continue
+			}
+		}
+		*n++
+		b.WriteString(fmt.Sprintf("%s%s: ${%d}\n", indent, name, *n))
+	}
+	return b.String()
+}
+
+// snippetEscape escapes what a snippet would read as syntax.
+func snippetEscape(s string) string {
+	return strings.NewReplacer("\\", "\\\\", "$", "\\$", "}", "\\}").Replace(s)
 }

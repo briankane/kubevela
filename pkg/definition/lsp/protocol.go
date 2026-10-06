@@ -151,12 +151,14 @@ type TextEdit struct {
 
 // CompletionItem is one completion.
 type CompletionItem struct {
-	Label         string             `json:"label"`
-	Kind          CompletionItemKind `json:"kind"`
-	Detail        string             `json:"detail,omitempty"`
-	FilterText    string             `json:"filterText,omitempty"`
-	Documentation MarkupContent      `json:"documentation"`
-	TextEdit      TextEdit           `json:"textEdit"`
+	Label      string             `json:"label"`
+	Kind       CompletionItemKind `json:"kind"`
+	Detail     string             `json:"detail,omitempty"`
+	FilterText string             `json:"filterText,omitempty"`
+	// InsertTextFormat is 2 when TextEdit's text is a snippet.
+	InsertTextFormat int           `json:"insertTextFormat,omitempty"`
+	Documentation    MarkupContent `json:"documentation"`
+	TextEdit         TextEdit      `json:"textEdit"`
 }
 
 // CompletionList is the completions at a position.

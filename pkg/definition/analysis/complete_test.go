@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -164,4 +165,23 @@ func TestImportsFollowTheCompilerOfEachType(t *testing.T) {
 
 	scoped := labels(CompleteImport(appPolicy, `import "vela/`))
 	assert.ElementsMatch(t, []string{"vela/base64", "vela/cue", "vela/http", "vela/kube", "vela/util"}, scoped)
+}
+
+func TestFunctionsInsertTheirRequiredParameters(t *testing.T) {
+	doc := "import \"vela/kube\"\n\"c\": {\n\ttype: \"component\"\n}\ntemplate: {\n\tread: kube."
+	byLabel := map[string]Completion{}
+	for _, c := range CompletePackageMember(doc, "\tread: kube.") {
+		byLabel[c.Label] = c
+	}
+	get := byLabel["#Get"].Snippet
+	assert.True(t, strings.HasPrefix(get, "#Get & {\n\t\\$params: {\n"), get)
+	assert.Contains(t, get, "resource: {")
+	assert.Contains(t, get, "apiVersion: ${1}")
+	assert.Contains(t, get, "kind: ${2}")
+	assert.Contains(t, get, "name: ${3}")
+	assert.NotContains(t, get, "cluster", "a parameter with a default is left out")
+	assert.NotContains(t, get, "namespace", "an optional one too")
+
+	apply := byLabel["#Apply"].Snippet
+	assert.Contains(t, apply, "resource: ${1}", "an open struct is one tab stop")
 }

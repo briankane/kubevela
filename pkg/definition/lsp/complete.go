@@ -42,14 +42,18 @@ func completions(text string, pos Position, published []analysis.Published) Comp
 		replaced := before[len(before)-c.Replace:]
 		start := pos
 		start.Character -= utf16Len(replaced)
-		list.Items = append(list.Items, CompletionItem{
+		item := CompletionItem{
 			Label:         c.Label,
 			Kind:          kindOf(c),
 			Detail:        c.Detail,
 			FilterText:    c.Insert,
 			Documentation: MarkupContent{Kind: "markdown", Value: c.Doc},
 			TextEdit:      TextEdit{Range: Range{Start: start, End: pos}, NewText: c.Insert},
-		})
+		}
+		if c.Snippet != "" {
+			item.TextEdit.NewText, item.InsertTextFormat = c.Snippet, insertTextFormatSnippet
+		}
+		list.Items = append(list.Items, item)
 	}
 	return list
 }
@@ -88,3 +92,6 @@ func kindOf(c analysis.Completion) CompletionItemKind {
 	}
 	return CompletionItemKindField
 }
+
+// insertTextFormatSnippet marks a completion's text as a snippet.
+const insertTextFormatSnippet = 2
