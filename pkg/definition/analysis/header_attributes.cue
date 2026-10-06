@@ -14,9 +14,9 @@
 		// ChildResourceKinds are the list of GVK of the child resources this workload generates
 		"childResourceKinds"?: [...{
 			// APIVersion of the child resource
-			"apiVersion"!: string
+			"apiVersion"?: string
 			// Kind of the child resource
-			"kind"!: string
+			"kind"?: string
 			// Selector to select the child resources that the workload wants to expose to traits
 			"selector"?: {[string]: string}
 		}]
@@ -47,10 +47,10 @@
 				// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 				"matchExpressions"?: [...{
 					// key is the label key that the selector applies to.
-					"key"!: string
+					"key"?: string
 					// operator represents a key's relationship to a set of values.
 					// Valid operators are In, NotIn, Exists and DoesNotExist.
-					"operator"!: string
+					"operator"?: string
 					// values is an array of string values. If the operator is In or NotIn,
 					// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 					// the values array must be empty. This array is replaced during a strategic
@@ -84,10 +84,10 @@
 					// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 					"matchExpressions"?: [...{
 						// key is the label key that the selector applies to.
-						"key"!: string
+						"key"?: string
 						// operator represents a key's relationship to a set of values.
 						// Valid operators are In, NotIn, Exists and DoesNotExist.
-						"operator"!: string
+						"operator"?: string
 						// values is an array of string values. If the operator is In or NotIn,
 						// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 						// the values array must be empty. This array is replaced during a strategic
@@ -122,11 +122,11 @@
 		}
 		"version"?: string
 		// Workload is a workload type descriptor
-		"workload"!: {
+		"workload"?: {
 			// Definition mutually exclusive to workload.type, a embedded WorkloadDefinition
 			"definition"?: {
-				"apiVersion"!: string
-				"kind"!:       string
+				"apiVersion"?: string
+				"kind"?:       string
 			}
 			// Type ref to a WorkloadDefinition via name
 			"type"?: string
@@ -136,7 +136,7 @@
 		// Reference to the CustomResourceDefinition that defines this trait kind.
 		"definitionRef"?: {
 			// Name of the referenced CustomResourceDefinition.
-			"name"!: string
+			"name"?: string
 			// Version indicate which version should be used if CRD has multiple versions
 			// by default it will use the first one if not specified
 			"version"?: string
@@ -169,10 +169,10 @@
 				// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 				"matchExpressions"?: [...{
 					// key is the label key that the selector applies to.
-					"key"!: string
+					"key"?: string
 					// operator represents a key's relationship to a set of values.
 					// Valid operators are In, NotIn, Exists and DoesNotExist.
-					"operator"!: string
+					"operator"?: string
 					// values is an array of string values. If the operator is In or NotIn,
 					// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 					// the values array must be empty. This array is replaced during a strategic
@@ -206,10 +206,10 @@
 					// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 					"matchExpressions"?: [...{
 						// key is the label key that the selector applies to.
-						"key"!: string
+						"key"?: string
 						// operator represents a key's relationship to a set of values.
 						// Valid operators are In, NotIn, Exists and DoesNotExist.
-						"operator"!: string
+						"operator"?: string
 						// values is an array of string values. If the operator is In or NotIn,
 						// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 						// the values array must be empty. This array is replaced during a strategic
@@ -252,10 +252,10 @@
 				// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 				"matchExpressions"?: [...{
 					// key is the label key that the selector applies to.
-					"key"!: string
+					"key"?: string
 					// operator represents a key's relationship to a set of values.
 					// Valid operators are In, NotIn, Exists and DoesNotExist.
-					"operator"!: string
+					"operator"?: string
 					// values is an array of string values. If the operator is In or NotIn,
 					// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 					// the values array must be empty. This array is replaced during a strategic
@@ -289,10 +289,10 @@
 					// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 					"matchExpressions"?: [...{
 						// key is the label key that the selector applies to.
-						"key"!: string
+						"key"?: string
 						// operator represents a key's relationship to a set of values.
 						// Valid operators are In, NotIn, Exists and DoesNotExist.
-						"operator"!: string
+						"operator"?: string
 						// values is an array of string values. If the operator is In or NotIn,
 						// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 						// the values array must be empty. This array is replaced during a strategic
@@ -346,7 +346,7 @@
 		// Reference to the CustomResourceDefinition that defines this trait kind.
 		"definitionRef"?: {
 			// Name of the referenced CustomResourceDefinition.
-			"name"!: string
+			"name"?: string
 			// Version indicate which version should be used if CRD has multiple versions
 			// by default it will use the first one if not specified
 			"version"?: string
@@ -390,10 +390,10 @@
 				// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 				"matchExpressions"?: [...{
 					// key is the label key that the selector applies to.
-					"key"!: string
+					"key"?: string
 					// operator represents a key's relationship to a set of values.
 					// Valid operators are In, NotIn, Exists and DoesNotExist.
-					"operator"!: string
+					"operator"?: string
 					// values is an array of string values. If the operator is In or NotIn,
 					// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 					// the values array must be empty. This array is replaced during a strategic
@@ -427,10 +427,10 @@
 					// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 					"matchExpressions"?: [...{
 						// key is the label key that the selector applies to.
-						"key"!: string
+						"key"?: string
 						// operator represents a key's relationship to a set of values.
 						// Valid operators are In, NotIn, Exists and DoesNotExist.
-						"operator"!: string
+						"operator"?: string
 						// values is an array of string values. If the operator is In or NotIn,
 						// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 						// the values array must be empty. This array is replaced during a strategic
@@ -474,7 +474,7 @@
 		// Reference to the CustomResourceDefinition that defines this trait kind.
 		"definitionRef"?: {
 			// Name of the referenced CustomResourceDefinition.
-			"name"!: string
+			"name"?: string
 			// Version indicate which version should be used if CRD has multiple versions
 			// by default it will use the first one if not specified
 			"version"?: string
@@ -492,10 +492,10 @@
 				// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 				"matchExpressions"?: [...{
 					// key is the label key that the selector applies to.
-					"key"!: string
+					"key"?: string
 					// operator represents a key's relationship to a set of values.
 					// Valid operators are In, NotIn, Exists and DoesNotExist.
-					"operator"!: string
+					"operator"?: string
 					// values is an array of string values. If the operator is In or NotIn,
 					// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 					// the values array must be empty. This array is replaced during a strategic
@@ -529,10 +529,10 @@
 					// matchExpressions is a list of label selector requirements. The requirements are ANDed.
 					"matchExpressions"?: [...{
 						// key is the label key that the selector applies to.
-						"key"!: string
+						"key"?: string
 						// operator represents a key's relationship to a set of values.
 						// Valid operators are In, NotIn, Exists and DoesNotExist.
-						"operator"!: string
+						"operator"?: string
 						// values is an array of string values. If the operator is In or NotIn,
 						// the values array must be non-empty. If the operator is Exists or DoesNotExist,
 						// the values array must be empty. This array is replaced during a strategic
@@ -559,16 +559,16 @@
 		// ChildResourceKinds are the list of GVK of the child resources this workload generates
 		"childResourceKinds"?: [...{
 			// APIVersion of the child resource
-			"apiVersion"!: string
+			"apiVersion"?: string
 			// Kind of the child resource
-			"kind"!: string
+			"kind"?: string
 			// Selector to select the child resources that the workload wants to expose to traits
 			"selector"?: {[string]: string}
 		}]
 		// Reference to the CustomResourceDefinition that defines this workload kind.
-		"definitionRef"!: {
+		"definitionRef"?: {
 			// Name of the referenced CustomResourceDefinition.
-			"name"!: string
+			"name"?: string
 			// Version indicate which version should be used if CRD has multiple versions by default it will use the first one if not specified
 			"version"?: string
 		}

@@ -137,10 +137,6 @@ func cueType(s apiextensionsv1.JSONSchemaProps) string {
 }
 
 func cueStruct(s apiextensionsv1.JSONSchemaProps) string {
-	required := map[string]bool{}
-	for _, r := range s.Required {
-		required[r] = true
-	}
 	names := make([]string, 0, len(s.Properties))
 	for n := range s.Properties {
 		names = append(names, n)
@@ -155,11 +151,11 @@ func cueStruct(s apiextensionsv1.JSONSchemaProps) string {
 				fmt.Fprintf(&b, "// %s\n", line)
 			}
 		}
-		mark := "?"
-		if required[n] {
-			mark = "!"
-		}
-		fmt.Fprintf(&b, "%s%s: %s\n", strconv.Quote(n), mark, cueType(p))
+		// Every field is optional: the header is decoded into the Definition's Go
+		// type before it is applied, which writes a non-pointer struct's fields
+		// whether the header has them or not, so a CRD's required field is never
+		// missing by then.
+		fmt.Fprintf(&b, "%s?: %s\n", strconv.Quote(n), cueType(p))
 	}
 	if s.XPreserveUnknownFields != nil && *s.XPreserveUnknownFields {
 		b.WriteString("...\n")

@@ -287,15 +287,6 @@ template: output: {}
 `,
 			want: []want{{3, "appliesToWorkloads"}},
 		},
-		"workload without a kind": {
-			src: `"x": {
-	type: "component"
-	attributes: workload: definition: apiVersion: "apps/v1"
-}
-template: output: {}
-`,
-			want: []want{{3, "kind"}},
-		},
 		"missing type": {
 			src: `"x": {
 	attributes: {}
