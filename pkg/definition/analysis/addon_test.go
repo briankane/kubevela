@@ -414,3 +414,11 @@ func TestAddonNestedResources(t *testing.T) {
 	expectAddon(t, dir, "resources/components/deep/objects.yaml", "apiVersion: v1\nkind: Namespace\n", "metadata.name")
 	expectAddon(t, dir, "resources/components/deep/objects.yaml", "---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: a\n")
 }
+
+// A view that does not build says why, not that it lacks a status it sets.
+func TestAddonViewThatDoesNotBuild(t *testing.T) {
+	dir := addonDir(t)
+	diags, _ := CheckAddonFile(filepath.Join(dir, "views", "v.cue"), []byte("import \"vela/ql\"\n\nstatus: 1\n"), Options{})
+	require.Len(t, diags, 1)
+	assert.Contains(t, diags[0].Message, "imported and not used")
+}

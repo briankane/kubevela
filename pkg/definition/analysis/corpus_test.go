@@ -60,6 +60,9 @@ var knownWarnings = map[string][]string{
 	// generates the same command trait.
 	"internal/trait/command.cue": {"72: +patchStrategy=open is not a strategy: retainKeys, replace, jsonPatch or jsonMergePatch, so it has no effect"},
 	"trait/command.cue":          {"72: +patchStrategy=open is not a strategy: retainKeys, replace, jsonPatch or jsonMergePatch, so it has no effect"},
+	// vela-go-definitions generates these steps with an import they never use.
+	"workflowstep/apply-terraform-provider.cue": {`5: imported and not used: "strings"`},
+	"workflowstep/build-push-image.cue":         {`5: imported and not used: "encoding/json"`},
 }
 
 // knownBroken are definitions known not to compile, by path under the corpus

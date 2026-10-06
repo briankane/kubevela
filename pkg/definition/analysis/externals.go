@@ -228,3 +228,39 @@ func (d *document) checkCustomProviders() []Diagnostic {
 	}
 	return diags
 }
+
+// checkUnusedImports reports each import the file never refers to. The
+// controller fails to render a component, trait or policy with one; the
+// workflow engine and the other compilers pass it over, so there it warns.
+func (d *document) checkUnusedImports() []Diagnostic {
+	severity := SeverityWarning
+	switch d.templateKind() {
+	case componentType, traitType, policyType, workloadType:
+		severity = SeverityError
+	}
+	used := map[*ast.ImportSpec]bool{}
+	ast.Walk(d.file, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			if spec, ok := id.Node.(*ast.ImportSpec); ok {
+				used[spec] = true
+			}
+		}
+		return true
+	}, nil)
+	var diags []Diagnostic
+	for _, decl := range d.imports {
+		for _, spec := range decl.Specs {
+			if used[spec] {
+				continue
+			}
+			msg := "imported and not used: " + spec.Path.Value
+			if spec.Name != nil {
+				msg += " as " + spec.Name.Name
+			}
+			diag := d.at(spec.Path.Pos(), msg)
+			diag.Severity = severity
+			diags = append(diags, diag)
+		}
+	}
+	return diags
+}

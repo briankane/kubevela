@@ -798,7 +798,7 @@ func (d *document) checkView() []Diagnostic {
 		}
 		return diags
 	}
-	if !v.LookupPath(cue.ParsePath("status")).Exists() {
+	if len(diags) == 0 && !v.LookupPath(cue.ParsePath("status")).Exists() {
 		diag := d.firstLine("the view has no status, which a query returns unless it names another field, as in view{...}.result")
 		diag.Severity = SeverityInfo
 		diags = append(diags, diag)
