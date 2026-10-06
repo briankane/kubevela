@@ -170,7 +170,7 @@ func newDocument(path string, src []byte, f *ast.File) (*document, bool) {
 			}
 		}
 	}
-	if d.template == nil || len(d.headers) == 0 {
+	if d.template == nil || len(d.headers) == 0 || isConfigTemplate(d.headers) {
 		return nil, false
 	}
 	d.name = labelName(d.headers[0].Label)
@@ -180,6 +180,16 @@ func newDocument(path string, src []byte, f *ast.File) (*document, bool) {
 		}
 	}
 	return d, true
+}
+
+// isConfigTemplate reports whether the top-level structs beside the template
+// are a config template's: its metadata, and no definition header with a type.
+func isConfigTemplate(headers []*ast.Field) bool {
+	if len(headers) != 1 || labelName(headers[0].Label) != "metadata" {
+		return false
+	}
+	_, typed := fieldIn(headers[0], "type")
+	return !typed
 }
 
 // compileFile is the template as the controller compiles it: the file's imports

@@ -348,6 +348,7 @@ template: output: {apiVersion: "v1", kind: "ConfigMap"}
 
 func TestAnalyzeIgnoresPlainCUE(t *testing.T) {
 	for name, src := range map[string]string{
+		"a config template":    "metadata: {\n\tname: \"my-config\"\n\tscope: \"project\"\n}\ntemplate: output: {apiVersion: \"v1\", kind: \"Secret\"}\n",
 		"plain values":         "a: 1\nb: a + 1\n",
 		"template but no type": "template: output: {}\n",
 		"broken plain cue":     "a: {\n",
