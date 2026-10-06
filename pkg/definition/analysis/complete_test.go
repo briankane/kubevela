@@ -149,3 +149,15 @@ func TestCompleteImports(t *testing.T) {
 		assert.Empty(t, CompleteImport(header, "import (\n\t\"vela/kube\"\n)\ntemplate: x: \"vela/"))
 	})
 }
+
+func TestImportsFollowTheCompilerOfEachType(t *testing.T) {
+	policy := "\n\"p\": {\n\ttype: \"policy\"\n}\n"
+	appPolicy := "\n\"p\": {\n\ttype: \"policy\"\n\tattributes: scope: \"Application\"\n}\n"
+	rendered := labels(CompleteImport(policy, `import "vela/`))
+	assert.Contains(t, rendered, "vela/kube")
+	assert.Contains(t, rendered, "vela/config", "a rendered policy compiles like a component")
+	assert.NotContains(t, rendered, "vela/op")
+
+	scoped := labels(CompleteImport(appPolicy, `import "vela/`))
+	assert.ElementsMatch(t, []string{"vela/base64", "vela/cue", "vela/http", "vela/kube", "vela/util"}, scoped)
+}

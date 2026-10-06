@@ -117,6 +117,11 @@ func TestTemplateSchemas(t *testing.T) {
 `,
 			want: []wantSev{{5, SeverityError, "outputs.ingress is not a Kubernetes object: it has no apiVersion or kind"}},
 		},
+		"a policy cannot import a workflow package": {
+			src: "import \"vela/op\"\n\n" + header("p", "policy", "") + `template: output: {apiVersion: "v1", kind: "ConfigMap"}
+`,
+			want: []wantSev{{1, SeverityError, "vela/op"}},
+		},
 		"schema of the wrong shape": {
 			src: header("t", "trait", "") + `template: {
 	patch: {}

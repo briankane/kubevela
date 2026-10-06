@@ -20,10 +20,13 @@ import (
 	"sync"
 
 	"cuelang.org/go/cue"
-	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
-	"cuelang.org/go/cue/parser"
+	"github.com/kubevela/pkg/cue/cuex/providers/base64"
+	cueext "github.com/kubevela/pkg/cue/cuex/providers/cue"
+	"github.com/kubevela/pkg/cue/cuex/providers/http"
+	"github.com/kubevela/pkg/cue/cuex/providers/kube"
+	cuexutil "github.com/kubevela/pkg/cue/cuex/providers/util"
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
 
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
@@ -44,15 +47,25 @@ type packageSet struct {
 
 var (
 	workloadPackages = &packageSet{list: velacuex.WorkloadPackages}
+	// scopedPolicyPackages are kubevela/pkg's default compiler's, which an
+	// Application-scoped policy renders with.
+	scopedPolicyPackages = &packageSet{list: func() []cuexruntime.Package {
+		return []cuexruntime.Package{base64.Package, http.Package, kube.Package, cueext.Package, cuexutil.Package}
+	}}
 	sourcePackages   = &packageSet{list: velacuex.SourcePackages}
 	workflowPackages = &packageSet{list: providers.WorkflowPackages}
 )
 
-// packagesFor is the set the controller compiles a definition type with.
-func packagesFor(defType string) *packageSet {
-	switch defType {
-	case componentType, traitType:
+// packagesFor is the set the controller compiles a definition type with:
+// components, traits and rendered policies with the workload compiler,
+// Application-scoped policies with kubevela/pkg's default one, sources with
+// the source compiler, and workflow steps with the workflow engine's.
+func packagesFor(templateKind string) *packageSet {
+	switch templateKind {
+	case componentType, traitType, policyType, workloadType:
 		return workloadPackages
+	case applicationPolicy:
+		return scopedPolicyPackages
 	case sourceType:
 		return sourcePackages
 	}
@@ -110,23 +123,11 @@ func (s *packageSet) documented(path string) (cue.Value, bool) {
 		if p.GetPath() != path {
 			continue
 		}
-		var decls []ast.Decl
-		for _, src := range p.GetTemplates() {
-			f, err := parser.ParseFile(path, src, parser.ParseComments)
-			if err != nil {
-				return cue.Value{}, false
-			}
-			for _, d := range f.Decls {
-				if _, isPkg := d.(*ast.Package); !isPkg {
-					if _, isImport := d.(*ast.ImportDecl); !isImport {
-						decls = append(decls, d)
-					}
-				}
-			}
+		v, ok := documentedPackage(path, p.GetTemplates())
+		if ok {
+			s.docs[path] = v
 		}
-		v := cuecontext.New().BuildFile(&ast.File{Decls: decls})
-		s.docs[path] = v
-		return v, true
+		return v, ok
 	}
 	return cue.Value{}, false
 }

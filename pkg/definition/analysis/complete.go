@@ -86,6 +86,17 @@ var (
 	headerType = regexp.MustCompile(`\btype:\s*"(component|trait|policy|workflow-step|source|workload)"`)
 )
 
+var applicationScope = regexp.MustCompile(`\bscope:\s*"Application"`)
+
+// kindFromText is a definition's template kind from text that may not
+// parse: its type, or an Application-scoped policy.
+func kindFromText(doc, defType string) string {
+	if defType == policyType && applicationScope.MatchString(doc) {
+		return applicationPolicy
+	}
+	return defType
+}
+
 // CompleteContext completes a read of context, given the whole document,
 // whose header names the definition type, and its line up to the cursor: the
 // fields that type's template can read after `context.`, or a struct field's
@@ -171,7 +182,7 @@ func typeOf(v cue.Value) string {
 
 var (
 	memberTyped = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.$#])([A-Za-z_][A-Za-z0-9_]*)\.(#?[A-Za-z0-9_]*)$`)
-	importSpec  = regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([A-Za-z_][A-Za-z0-9_]*)\s+)?"(vela/[^"]+)"`)
+	importSpec  = regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([A-Za-z_][A-Za-z0-9_]*)\s+)?"([A-Za-z0-9_.\-]+/[^"]+)"`)
 	importTyped = regexp.MustCompile(`^\s*(?:import\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s+)?"([A-Za-z0-9/]*)$`)
 )
 
@@ -179,6 +190,12 @@ var (
 // given the whole document and its line up to the cursor: the package's
 // definitions after `kube.`, each with what its $params take.
 func CompletePackageMember(doc, before string) []Completion {
+	return CompletePackageMemberWith(doc, before, nil)
+}
+
+// CompletePackageMemberWith is CompletePackageMember, with the workspace's
+// custom provider packages importable too.
+func CompletePackageMemberWith(doc, before string, ext *Externals) []Completion {
 	m := memberTyped.FindStringSubmatch(before)
 	if m == nil {
 		return nil
@@ -198,7 +215,8 @@ func CompletePackageMember(doc, before string) []Completion {
 	if path == "" || t == nil {
 		return nil
 	}
-	pkg, ok := packagesFor(t[1]).value(path)
+	pkgs := packages{builtin: packagesFor(kindFromText(doc, t[1])), ext: ext}
+	pkg, ok := pkgs.value(path)
 	if !ok {
 		return nil
 	}
@@ -213,7 +231,7 @@ func CompletePackageMember(doc, before string) []Completion {
 			continue
 		}
 		member := it.Value()
-		if documented, ok := packagesFor(t[1]).documented(path); ok {
+		if documented, ok := pkgs.documented(path); ok {
 			if d := documented.LookupPath(cue.MakePath(cue.Def(label))); d.Exists() {
 				member = d
 			}
@@ -255,6 +273,12 @@ func describeMember(v cue.Value) (detail, doc string) {
 // and its text up to the cursor: the vela/* packages the definition type can
 // import, on an import line or inside an import block.
 func CompleteImport(doc, before string) []Completion {
+	return CompleteImportWith(doc, before, nil)
+}
+
+// CompleteImportWith is CompleteImport, offering the workspace's custom
+// provider packages too.
+func CompleteImportWith(doc, before string, ext *Externals) []Completion {
 	lines := strings.Split(before, "\n")
 	last := lines[len(lines)-1]
 	m := importTyped.FindStringSubmatch(last)
@@ -274,10 +298,10 @@ func CompleteImport(doc, before string) []Completion {
 	}
 	typed := m[1]
 	var out []Completion
-	for _, p := range packagesFor(t[1]).Packages() {
+	for _, p := range (packages{builtin: packagesFor(kindFromText(doc, t[1])), ext: ext}).list() {
 		path := p.GetPath()
 		if strings.HasPrefix(path, typed) {
-			out = append(out, Completion{Label: path, Insert: path, Replace: len(typed), Doc: "The " + p.GetName() + " package of KubeVela's CUE providers."})
+			out = append(out, Completion{Label: path, Insert: path, Replace: len(typed), Doc: "The " + p.GetName() + " package."})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })

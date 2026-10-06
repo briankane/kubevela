@@ -81,7 +81,7 @@ func (d *document) publishedValue() cue.Value {
 	}
 	decls = append(decls, d.template)
 	bi := build.NewContext().NewInstance(d.path, nil)
-	bi.Imports = packagesFor(d.typ).imports()
+	bi.Imports = d.packages().imports()
 	if err := bi.AddSyntax(&ast.File{Filename: d.path, Decls: decls}); err != nil {
 		return cue.Value{}
 	}

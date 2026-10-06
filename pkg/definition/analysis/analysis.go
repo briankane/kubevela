@@ -107,6 +107,9 @@ type Options struct {
 	// Kinds, when set, are the schemas output, outputs and a trait's patch are
 	// checked against, by the kind each declares.
 	Kinds *kubeschema.Schemas
+	// Externals are custom provider packages a template may import beside
+	// the built-in vela/* ones.
+	Externals *Externals
 }
 
 // Analyze checks the definition in src, read from path.
@@ -202,7 +205,7 @@ func (d *document) checkTemplate() []Diagnostic {
 	var diags []Diagnostic
 	for i := 0; ; i++ {
 		bi := build.NewContext().NewInstance(d.path, nil)
-		bi.Imports = packagesFor(d.typ).imports()
+		bi.Imports = d.packages().imports()
 		if err := bi.AddSyntax(f); err != nil {
 			return append(diags, d.fromErrors(err, "")...)
 		}

@@ -113,7 +113,7 @@ func (d *document) checkContext(ctx cue.Value, chain []*ast.Ident) (Diagnostic, 
 }
 
 func (d *document) checkMember(importPath string, member *ast.Ident) (Diagnostic, bool) {
-	pkg, ok := packagesFor(d.typ).value(importPath)
+	pkg, ok := d.packages().value(importPath)
 	if !ok {
 		return Diagnostic{}, false
 	}
