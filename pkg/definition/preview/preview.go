@@ -20,15 +20,20 @@ limitations under the License.
 package preview
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
 	"cuelang.org/go/cue"
 	"github.com/kubevela/workflow/pkg/cue/model"
 	"github.com/kubevela/workflow/pkg/cue/process"
+	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
 	velacuex "github.com/oam-dev/kubevela/pkg/cue/cuex"
@@ -63,10 +68,23 @@ type Result struct {
 	Error string `json:"error,omitempty"`
 	// Notice is why a definition of this type has nothing to preview.
 	Notice string `json:"notice,omitempty"`
+	// Inputs are what each input renders to, when the values file holds
+	// several, separated by ---. Objects, Workload and Error are then empty.
+	Inputs []Input `json:"inputs,omitempty"`
 }
 
-// values is a values file.
+// Input is what one input of a values file renders to.
+type Input struct {
+	// Name is the input's own name:, or its number.
+	Name     string   `json:"name"`
+	Objects  []Object `json:"objects"`
+	Workload *Object  `json:"workload,omitempty"`
+	Error    string   `json:"error,omitempty"`
+}
+
+// values is one input of a values file.
 type values struct {
+	Name      string                 `json:"name"`
 	Parameter map[string]interface{} `json:"parameter"`
 	Context   sampleContext          `json:"context"`
 	Workload  map[string]interface{} `json:"workload"`
@@ -90,8 +108,74 @@ const (
 
 var outputLine = regexp.MustCompile(`(?m)^output\s*:`)
 
-// Render renders the definition in req with req.Values.
+// Render renders the definition in req with req.Values. A values file of
+// several documents, separated by ---, renders each on its own, as Inputs.
 func Render(ctx context.Context, req Request) Result {
+	docs, err := splitDocuments(req.Values)
+	if err != nil {
+		return Result{Error: "values: " + err.Error(), Objects: []Object{}}
+	}
+	if len(docs) <= 1 {
+		one := req
+		if len(docs) == 1 {
+			one.Values = docs[0]
+		}
+		return render(ctx, one)
+	}
+	var res Result
+	for i, doc := range docs {
+		one := req
+		one.Values = doc
+		r := render(ctx, one)
+		if r.Notice != "" {
+			return r
+		}
+		var named struct {
+			Name string `json:"name"`
+		}
+		_ = yaml.Unmarshal(doc, &named)
+		if named.Name == "" {
+			named.Name = fmt.Sprintf("input %d", i+1)
+		}
+		res.Type = r.Type
+		res.Inputs = append(res.Inputs, Input{Name: named.Name, Objects: r.Objects, Workload: r.Workload, Error: r.Error})
+	}
+	res.Objects = []Object{}
+	return res
+}
+
+// splitDocuments is the non-empty documents of a YAML stream.
+func splitDocuments(data []byte) ([][]byte, error) {
+	r := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(data)))
+	var docs [][]byte
+	for {
+		doc, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			return docs, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(bytes.TrimSpace(stripComments(doc))) > 0 {
+			docs = append(docs, doc)
+		}
+	}
+}
+
+// stripComments drops YAML comment lines, so a document of only comments
+// counts as empty.
+func stripComments(doc []byte) []byte {
+	var out [][]byte
+	for _, line := range bytes.Split(doc, []byte("\n")) {
+		if !bytes.HasPrefix(bytes.TrimSpace(line), []byte("#")) {
+			out = append(out, line)
+		}
+	}
+	return bytes.Join(out, []byte("\n"))
+}
+
+// render renders the definition in req with one input.
+func render(ctx context.Context, req Request) Result {
 	tmpl, ok := analysis.TemplateSource(req.Path, req.Source)
 	if !ok {
 		return Result{Error: fmt.Sprintf("%s is not a definition, or does not parse", req.Path)}

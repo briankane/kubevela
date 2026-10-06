@@ -197,3 +197,32 @@ func TestSkeleton(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, trait, "workload:", "a trait's skeleton carries the sample workload it patches")
 }
+
+// A values file of several documents renders each on its own.
+func TestRenderEachInput(t *testing.T) {
+	r := Render(context.Background(), Request{Path: "web.cue", Source: []byte(webComponent), Values: []byte(`name: small
+parameter: {image: nginx:1.25, replicas: 1}
+---
+name: large
+parameter: {image: nginx:1.25, replicas: 5}
+---
+parameter: {replicas: 2}
+`)})
+	require.Empty(t, r.Error)
+	assert.Empty(t, r.Objects, "each input carries its own objects")
+	require.Len(t, r.Inputs, 3)
+
+	assert.Equal(t, "small", r.Inputs[0].Name)
+	assert.EqualValues(t, 1, object(t, r.Inputs[0].Objects[0])["spec"].(map[string]interface{})["replicas"])
+	assert.Equal(t, "large", r.Inputs[1].Name)
+	assert.EqualValues(t, 5, object(t, r.Inputs[1].Objects[0])["spec"].(map[string]interface{})["replicas"])
+
+	assert.Equal(t, "input 3", r.Inputs[2].Name, "an input without a name is numbered")
+	assert.Contains(t, r.Inputs[2].Error, "image", "one input failing leaves the others")
+}
+
+func TestRenderOneInputIsUnchanged(t *testing.T) {
+	r := Render(context.Background(), Request{Path: "web.cue", Source: []byte(webComponent), Values: []byte("parameter: {image: nginx:1.25}\n---\n")})
+	assert.Empty(t, r.Inputs)
+	assert.Len(t, r.Objects, 2)
+}
