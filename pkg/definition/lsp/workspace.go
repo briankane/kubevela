@@ -338,12 +338,17 @@ type clusterState struct {
 	fetch   kubeschema.Fetch
 	vela    bool
 	context string
+	err     error
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
 // hands what it found to the message loop: the kinds it serves, for checking
 // outputs, and its Package resources.
 func (s *Server) connectCluster() {
+	if !s.clusterEnabled {
+		s.notifyCluster()
+		return
+	}
 	if s.cluster != nil || s.connect == nil {
 		return
 	}
@@ -352,15 +357,19 @@ func (s *Server) connectCluster() {
 	go func() {
 		c, err := connect()
 		s.post(func() {
+			if !s.clusterEnabled {
+				return
+			}
 			if s.useCluster(c, err) {
 				s.republish()
 			}
+			s.notifyCluster()
 		})
 	}()
 }
 
-// readCluster reaches the cluster and keeps what it found, at once.
-func (s *Server) readCluster(connect ClusterConnector) {
+// readClusterNow reaches the cluster and keeps what it found, at once.
+func (s *Server) readClusterNow(connect ClusterConnector) {
 	c, err := connect()
 	s.useCluster(c, err)
 }
@@ -375,7 +384,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err}
 	s.clusterPackages = pkgs
 	if len(pkgs) > 0 {
 		s.rebuildExternals()
@@ -416,4 +425,40 @@ func (s *Server) rebuildKinds() {
 		kinds.SetFallback(s.cluster.fetch)
 	}
 	s.kinds = kinds
+}
+
+// dropCluster forgets what was read of the cluster, and checks the open
+// documents again without it.
+func (s *Server) dropCluster() {
+	s.cluster = nil
+	s.clusterPackages = nil
+	s.rebuildExternals()
+	s.rebuildKinds()
+	s.republish()
+	s.notifyCluster()
+}
+
+// reconnectCluster reads the cluster again.
+func (s *Server) reconnectCluster() {
+	s.cluster = nil
+	s.clusterPackages = nil
+	s.connectCluster()
+}
+
+// notifyCluster tells the client what the server reads of the cluster.
+func (s *Server) notifyCluster() {
+	if s.out == nil {
+		return
+	}
+	status := ClusterStatus{Enabled: s.clusterEnabled}
+	if s.clusterEnabled && s.cluster != nil {
+		status.Context = s.cluster.context
+		status.KubeVela = s.cluster.vela
+		status.Reachable = s.cluster.err == nil
+		status.Packages = len(s.clusterPackages)
+		if s.cluster.err != nil {
+			status.Error = s.cluster.err.Error()
+		}
+	}
+	_ = s.write(message{JSONRPC: "2.0", Method: MethodClusterStatus, Params: mustJSON(status)})
 }

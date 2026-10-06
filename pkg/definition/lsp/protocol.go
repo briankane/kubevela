@@ -292,6 +292,9 @@ type InitializeParams struct {
 type Settings struct {
 	// ValidateOutputs is auto, on or off.
 	ValidateOutputs string `json:"validateOutputs"`
+	// ReadCluster, when false, keeps the server from reading the
+	// kubeconfig's cluster at all. Unset is true.
+	ReadCluster *bool `json:"readCluster,omitempty"`
 }
 
 // DidChangeConfigurationParams of workspace/didChangeConfiguration.
@@ -410,4 +413,29 @@ type CodeAction struct {
 // WorkspaceEdit is a set of edits, by document.
 type WorkspaceEdit struct {
 	Changes map[string][]TextEdit `json:"changes"`
+}
+
+// MethodClusterStatus tells the client what the server reads of the
+// kubeconfig's cluster, whenever that changes. It is this server's own
+// notification.
+const MethodClusterStatus = "vela/clusterStatus"
+
+// MethodReconnectCluster asks the server to read the kubeconfig's cluster
+// again, as after its context changes. It is this server's own request.
+const MethodReconnectCluster = "vela/reconnectCluster"
+
+// ClusterStatus is what the server reads of the kubeconfig's cluster.
+type ClusterStatus struct {
+	// Enabled is false when the readCluster setting turns reading it off.
+	Enabled bool `json:"enabled"`
+	// Context is the kubeconfig context read.
+	Context string `json:"context,omitempty"`
+	// Reachable is set when the cluster answered.
+	Reachable bool `json:"reachable"`
+	// KubeVela is set when it runs KubeVela, so its kinds are read.
+	KubeVela bool `json:"kubeVela"`
+	// Packages is how many Package resources were read from it.
+	Packages int `json:"packages"`
+	// Error is why it was not reached.
+	Error string `json:"error,omitempty"`
 }

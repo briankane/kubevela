@@ -96,6 +96,13 @@ func (c *client) send(method string, params interface{}, isRequest bool) int {
 
 // read returns the next message the server sends.
 func (c *client) read() map[string]json.RawMessage {
+	if c.pending != nil {
+		m, ok := c.tryRead(10 * time.Second)
+		if !ok {
+			c.t.Fatal("timed out waiting for the server")
+		}
+		return m
+	}
 	type result struct {
 		msg map[string]json.RawMessage
 		err error
@@ -161,6 +168,11 @@ func (c *client) response(id int) map[string]json.RawMessage {
 
 func (c *client) diagnostics() PublishDiagnosticsParams {
 	m := c.read()
+	// The cluster's status is told the client as it changes, between other
+	// messages.
+	for string(m["method"]) == `"`+MethodClusterStatus+`"` {
+		m = c.read()
+	}
 	require.Equal(c.t, `"textDocument/publishDiagnostics"`, string(m["method"]))
 	var p PublishDiagnosticsParams
 	require.NoError(c.t, json.Unmarshal(m["params"], &p))

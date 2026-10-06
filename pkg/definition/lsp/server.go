@@ -69,9 +69,11 @@ type Server struct {
 	// validateOutputs is the kubevela.validateOutputs setting: auto, on or
 	// off. kinds are the schemas outputs are checked against, nil when off.
 	validateOutputs string
-	connect         ClusterConnector
-	cluster         *clusterState
-	kinds           *kubeschema.Schemas
+	// clusterEnabled is the readCluster setting.
+	clusterEnabled bool
+	connect        ClusterConnector
+	cluster        *clusterState
+	kinds          *kubeschema.Schemas
 	// events carries work back to the message loop from goroutines.
 	events chan func()
 
@@ -107,6 +109,7 @@ func NewServer(opts ...Option) *Server {
 		published:       map[string]analysis.Published{},
 		crds:            map[string][][]byte{},
 		validateOutputs: validateAuto,
+		clusterEnabled:  true,
 		connect:         ConnectKubeconfig,
 		definitions:     map[string]definitionEntry{},
 		packages:        map[string][]cuexruntime.Package{},
@@ -175,6 +178,9 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 // velaRequest answers the server's own vela/* requests that reply at once.
 func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseError) {
 	switch msg.Method {
+	case MethodReconnectCluster:
+		s.reconnectCluster()
+		result = struct{}{}
 	case MethodPreviewOutput:
 		var p PreviewOutputParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -225,6 +231,23 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 	return result, rerr
 }
 
+// configure acts on changed settings.
+func (s *Server) configure(set Settings) {
+	if set.ReadCluster != nil && *set.ReadCluster != s.clusterEnabled {
+		s.clusterEnabled = *set.ReadCluster
+		if !s.clusterEnabled {
+			s.dropCluster()
+		} else {
+			s.reconnectCluster()
+		}
+	}
+	if set.ValidateOutputs != "" && set.ValidateOutputs != s.validateOutputs {
+		s.validateOutputs = set.ValidateOutputs
+		s.rebuildKinds()
+		s.republish()
+	}
+}
+
 // post hands work to the message loop.
 func (s *Server) post(work func()) {
 	s.events <- work
@@ -249,6 +272,9 @@ func (s *Server) handle(msg message) error {
 		if p.InitializationOptions.ValidateOutputs != "" {
 			s.validateOutputs = p.InitializationOptions.ValidateOutputs
 		}
+		if p.InitializationOptions.ReadCluster != nil {
+			s.clusterEnabled = *p.InitializationOptions.ReadCluster
+		}
 		result = InitializeResult{
 			Capabilities: ServerCapabilities{
 				TextDocumentSync: TextDocumentSyncOptions{
@@ -266,11 +292,8 @@ func (s *Server) handle(msg message) error {
 		s.connectCluster()
 	case "workspace/didChangeConfiguration":
 		var p DidChangeConfigurationParams
-		if rerr = decode(msg.Params, &p); rerr == nil && p.Settings.KubeVela.ValidateOutputs != "" {
-			s.validateOutputs = p.Settings.KubeVela.ValidateOutputs
-			s.connectCluster()
-			s.rebuildKinds()
-			s.republish()
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			s.configure(p.Settings.KubeVela)
 		}
 	case "workspace/didChangeWatchedFiles":
 		var p DidChangeWatchedFilesParams
@@ -298,7 +321,7 @@ func (s *Server) handle(msg message) error {
 			go s.renderDefKit(msg.ID, pathOf(p.TextDocument.URI))
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

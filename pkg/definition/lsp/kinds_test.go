@@ -168,3 +168,65 @@ func TestValidateOutputsFollowsTheSetting(t *testing.T) {
 	c.send("workspace/didChangeConfiguration", map[string]interface{}{"settings": map[string]interface{}{"kubevela": map[string]interface{}{"validateOutputs": "off"}}}, false)
 	assert.False(t, caught(settled(c, u)))
 }
+
+// clusterStatus reads messages until a vela/clusterStatus notification.
+func clusterStatus(t *testing.T, c *client) ClusterStatus {
+	t.Helper()
+	for {
+		m, ok := c.tryRead(5 * time.Second)
+		require.True(t, ok, "no cluster status")
+		if string(m["method"]) == `"`+MethodClusterStatus+`"` {
+			var s ClusterStatus
+			require.NoError(t, json.Unmarshal(m["params"], &s))
+			return s
+		}
+	}
+}
+
+func TestClusterStatus(t *testing.T) {
+	start := func(cluster ClusterConnector, options map[string]interface{}) *client {
+		c := newClientWith(t, NewServer(WithCluster(cluster)))
+		c.response(c.send("initialize", map[string]interface{}{"initializationOptions": options}, true))
+		c.send("initialized", map[string]interface{}{}, false)
+		return c
+	}
+
+	c := start(velaCluster, map[string]interface{}{})
+	s := clusterStatus(t, c)
+	assert.True(t, s.Enabled)
+	assert.True(t, s.Reachable)
+	assert.True(t, s.KubeVela)
+	assert.Equal(t, "k3d-test", s.Context)
+
+	// Turned off: what was read from it goes, and the client is told.
+	c.send("workspace/didChangeConfiguration", map[string]interface{}{"settings": map[string]interface{}{"kubevela": map[string]interface{}{"readCluster": false}}}, false)
+	s = clusterStatus(t, c)
+	assert.False(t, s.Enabled)
+
+	// And back on, read again.
+	c.send("workspace/didChangeConfiguration", map[string]interface{}{"settings": map[string]interface{}{"kubevela": map[string]interface{}{"readCluster": true}}}, false)
+	assert.True(t, clusterStatus(t, c).KubeVela)
+
+	// Reconnect reads it again, as after the kubeconfig's context changes.
+	c.response(c.send(MethodReconnectCluster, map[string]interface{}{}, true))
+	assert.True(t, clusterStatus(t, c).Reachable)
+
+	s = clusterStatus(t, start(noCluster, map[string]interface{}{}))
+	assert.False(t, s.Reachable)
+	assert.Contains(t, s.Error, "no cluster")
+
+	s = clusterStatus(t, start(velaCluster, map[string]interface{}{"readCluster": false}))
+	assert.False(t, s.Enabled, "off from the start: never reached")
+}
+
+// With cluster reads off, the cluster's kinds are not used, whatever
+// validateOutputs says.
+func TestReadClusterOff(t *testing.T) {
+	colour := func(d []Diagnostic) bool { return strings.Contains(messages(d), "colour") }
+	c := newClientWith(t, NewServer(WithCluster(velaCluster)))
+	c.response(c.send("initialize", map[string]interface{}{"initializationOptions": map[string]interface{}{"validateOutputs": "auto", "readCluster": false}}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	u := "file://" + filepath.Join(t.TempDir(), "gadget.cue")
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "cue", Version: 1, Text: gadgetDef}}, false)
+	assert.False(t, colour(settled(c, u)))
+}

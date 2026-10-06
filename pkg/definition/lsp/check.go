@@ -76,7 +76,7 @@ func Check(roots []string, opts CheckOptions) ([]Finding, int, error) {
 		}
 	}
 	if opts.Cluster != nil {
-		s.readCluster(opts.Cluster)
+		s.readClusterNow(opts.Cluster)
 	}
 	s.rebuildKinds()
 	var findings []Finding
