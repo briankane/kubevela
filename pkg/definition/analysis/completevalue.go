@@ -24,7 +24,6 @@ import (
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
-	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/parser"
 
@@ -162,10 +161,5 @@ func kindName(v cue.Value) string {
 
 // evaluate compiles the template as checkTemplate does, for its values.
 func (d *document) evaluate() (cue.Value, bool) {
-	bi := build.NewContext().NewInstance(d.path, nil)
-	bi.Imports = d.packages().imports()
-	if err := bi.AddSyntax(d.compileFile()); err != nil {
-		return cue.Value{}, false
-	}
-	return cuecontext.New().BuildInstance(bi), true
+	return d.evaluateIn(cuecontext.New())
 }

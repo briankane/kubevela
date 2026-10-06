@@ -110,6 +110,9 @@ type Options struct {
 	// Externals are custom provider packages a template may import beside
 	// the built-in vela/* ones.
 	Externals *Externals
+	// Definitions finds a definition by name, such as the one a component
+	// extends.
+	Definitions DefinitionLookup
 }
 
 // Analyze checks the definition in src, read from path.
@@ -146,6 +149,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkHeader()...)
 	diags = append(diags, d.checkTemplateFields()...)
 	diags = append(diags, d.checkObjects()...)
+	diags = append(diags, d.checkExtends()...)
 	diags = append(diags, d.explainContext(d.checkTemplate())...)
 	res.Diagnostics = sortDiagnostics(firstPerPosition(withoutVagueInterpolation(withoutIgnored(diags, ignored))))
 	return res
