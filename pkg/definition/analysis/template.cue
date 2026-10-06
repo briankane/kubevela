@@ -9,8 +9,13 @@
 
 #velaInherit: bool | {[string]: bool}
 
+// #velaSchema describes what a definition provides. Any type may declare one;
+// a source must.
+#velaSchema: {...}
+
 #velaTemplates: {
 	component: {
+		schema?: #velaSchema
 		output?: #velaObject
 		outputs?: [string]: #velaObject
 		errs?:     #velaErrs
@@ -19,6 +24,7 @@
 		...
 	}
 	trait: {
+		schema?: #velaSchema
 		errs?:       #velaErrs
 		processing?: {...}
 		outputs?: [string]: #velaObject
@@ -29,6 +35,7 @@
 		...
 	}
 	policy: {
+		schema?: #velaSchema
 		output?: #velaObject
 		outputs?: [string]: #velaObject
 		errs?: #velaErrs
@@ -37,6 +44,7 @@
 	// A policy with attributes: scope: "Application" transforms the Application:
 	// its output may only say what to change.
 	"application-policy": {
+		schema?: #velaSchema
 		config?: {enabled?: bool, ...}
 		enabled?: bool
 		output?: {
@@ -50,10 +58,11 @@
 		...
 	}
 	"workflow-step": {
+		schema?: #velaSchema
 		...
 	}
 	source: {
-		schema?: {...}
+		schema?: #velaSchema
 		output?: {...}
 		errs?: #velaErrs
 		"$internal"?: {key?: string, keyInputs?: [...string], ...}
@@ -63,5 +72,8 @@
 		}
 		...
 	}
-	workload: {...}
+	workload: {
+		schema?: #velaSchema
+		...
+	}
 }

@@ -52,6 +52,21 @@ func TestTemplateSchemas(t *testing.T) {
 }
 `,
 		},
+		"schema is optional outside sources": {
+			src: header("c", "component", "") + `template: {
+	output: {apiVersion: "v1", kind: "ConfigMap"}
+	schema: replicas: int
+}
+`,
+		},
+		"schema of the wrong shape": {
+			src: header("t", "trait", "") + `template: {
+	patch: {}
+	schema: "replicas"
+}
+`,
+			want: []wantSev{{6, SeverityError, "schema"}},
+		},
 		"errs of the wrong shape": {
 			src: header("c", "component", "") + `template: {
 	output: {apiVersion: "v1", kind: "ConfigMap"}
