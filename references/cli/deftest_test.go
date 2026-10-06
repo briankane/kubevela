@@ -71,7 +71,7 @@ func TestDefinitionTestCommand(t *testing.T) {
 	out, err := runDefTest(t)
 	require.EqualError(t, err, "1 of 3 definition tests failed")
 	require.Equal(t, "FAIL web_test.cue:4 web / fails on purpose\n"+
-		"  output.spec.replicas: expected 2, got 1\n"+
+		"  web_test.cue:4:87: output.spec.replicas: expected 2, got 1\n"+
 		"2 passed, 1 failed\n", out)
 }
 
@@ -126,6 +126,7 @@ func TestDefinitionTestCommandJSON(t *testing.T) {
 		"case":       "fails on purpose",
 		"passed":     false,
 		"failures":   []any{"output.spec.replicas: expected 2, got 1"},
+		"failureAt":  []any{map[string]any{"line": float64(4), "column": float64(87)}},
 	}, results[1])
 }
 

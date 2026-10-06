@@ -56,6 +56,15 @@ type defTestResult struct {
 	Reason   string   `json:"reason,omitempty"`
 	Passed   bool     `json:"passed"`
 	Failures []string `json:"failures,omitempty"`
+	// FailureAt is where in the test file each failure points, in the same
+	// order: the expected field it names, or the case when it names none.
+	FailureAt []defTestLocation `json:"failureAt,omitempty"`
+}
+
+// defTestLocation is a 1-based line and column; column 0 means the line only.
+type defTestLocation struct {
+	Line   int `json:"line"`
+	Column int `json:"column,omitempty"`
 }
 
 // NewDefinitionTestCommand creates the `vela def test` command.
@@ -188,6 +197,10 @@ func NewDefinitionTestCommand() *cobra.Command {
 						passed++
 					}
 					result.Passed, result.Failures = len(outcome.Failures) == 0, outcome.Failures
+					for _, f := range outcome.Failures {
+						line, column := c.Locate(f)
+						result.FailureAt = append(result.FailureAt, defTestLocation{Line: line, Column: column})
+					}
 					results = append(results, result)
 				}
 			}
@@ -270,8 +283,14 @@ func printDefTestResults(out io.Writer, results []defTestResult, verbose bool) {
 		default:
 			fmt.Fprintf(out, "FAIL %s:%d %s / %s\n", r.File, r.Line, r.Definition, r.Case)
 		}
-		for _, f := range r.Failures {
-			fmt.Fprintf(out, "  %s\n", strings.ReplaceAll(f, "\n", "\n  "))
+		for i, f := range r.Failures {
+			// A failure at an expected field is named by its position, which
+			// terminals and editors open.
+			at := ""
+			if i < len(r.FailureAt) && r.FailureAt[i].Column > 0 {
+				at = fmt.Sprintf("%s:%d:%d: ", r.File, r.FailureAt[i].Line, r.FailureAt[i].Column)
+			}
+			fmt.Fprintf(out, "  %s%s\n", at, strings.ReplaceAll(f, "\n", "\n  "))
 		}
 	}
 }
