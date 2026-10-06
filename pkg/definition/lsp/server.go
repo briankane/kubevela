@@ -262,8 +262,12 @@ func diagnose(uri, text string) []Diagnostic {
 }
 
 func severity(s analysis.Severity) DiagnosticSeverity {
-	if s == analysis.SeverityWarning {
+	switch s {
+	case analysis.SeverityWarning:
 		return SeverityWarning
+	case analysis.SeverityInfo:
+		return SeverityInformation
+	case analysis.SeverityError:
 	}
 	return SeverityError
 }

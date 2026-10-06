@@ -212,6 +212,7 @@ template: output: {}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			res := Analyze("def.cue", []byte(tc.src))
+			res.Diagnostics = withoutInfo(res.Diagnostics)
 			var warnings []Diagnostic
 			for _, d := range res.Diagnostics {
 				require.Equal(t, SeverityWarning, d.Severity, "only warnings expected, got %d: %s", d.Range.Start.Line, d.Message)
@@ -231,6 +232,7 @@ template: output: {}
 func TestMarkerRange(t *testing.T) {
 	src := stepHeader + "template: parameter: {\n\t// +usge=x\n\ta: string\n}\n"
 	res := Analyze("def.cue", []byte(src))
+	res.Diagnostics = withoutInfo(res.Diagnostics)
 	require.Len(t, res.Diagnostics, 1)
 	assert.Equal(t, Range{Start: Position{Line: 6, Column: 5}, End: Position{Line: 6, Column: 10}}, res.Diagnostics[0].Range)
 }

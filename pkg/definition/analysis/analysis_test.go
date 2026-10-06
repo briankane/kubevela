@@ -318,6 +318,7 @@ template: output: {}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			res := Analyze("def.cue", []byte(tc.src))
+			res.Diagnostics = withoutInfo(res.Diagnostics)
 			require.True(t, res.IsDefinition, "should be recognised as a definition")
 			got := lines(res.Diagnostics)
 			require.Len(t, res.Diagnostics, len(tc.want), "diagnostics: %s", strings.Join(got, "\n"))
@@ -338,6 +339,7 @@ func TestAnalyzeIgnoresPlainCUE(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			res := Analyze("plain.cue", []byte(src))
+			res.Diagnostics = withoutInfo(res.Diagnostics)
 			assert.False(t, res.IsDefinition)
 			assert.Empty(t, res.Diagnostics)
 		})
@@ -346,6 +348,7 @@ func TestAnalyzeIgnoresPlainCUE(t *testing.T) {
 
 func TestAnalyzeReportsType(t *testing.T) {
 	res := Analyze("def.cue", []byte(traitHeader+"template: patch: {}\n"))
+	res.Diagnostics = withoutInfo(res.Diagnostics)
 	assert.Equal(t, "trait", res.Type)
 	assert.Equal(t, "my-trait", res.Name)
 }

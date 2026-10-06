@@ -117,6 +117,7 @@ func TestOutputsAgainstTheirKinds(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			res := AnalyzeWith("def.cue", []byte(tc.src), opts)
+			res.Diagnostics = withoutInfo(res.Diagnostics)
 			got := lines(res.Diagnostics)
 			require.Len(t, res.Diagnostics, len(tc.want), "diagnostics: %s", strings.Join(got, "\n"))
 			for i, w := range tc.want {

@@ -199,6 +199,7 @@ func TestTemplateSchemas(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			res := Analyze("def.cue", []byte(tc.src))
+			res.Diagnostics = withoutInfo(res.Diagnostics)
 			got := lines(res.Diagnostics)
 			require.Len(t, res.Diagnostics, len(tc.want), "diagnostics: %s", strings.Join(got, "\n"))
 			for i, w := range tc.want {

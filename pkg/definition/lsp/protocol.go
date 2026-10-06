@@ -36,8 +36,9 @@ type DiagnosticSeverity int
 
 // Severities of a diagnostic.
 const (
-	SeverityError   DiagnosticSeverity = 1
-	SeverityWarning DiagnosticSeverity = 2
+	SeverityError       DiagnosticSeverity = 1
+	SeverityWarning     DiagnosticSeverity = 2
+	SeverityInformation DiagnosticSeverity = 3
 )
 
 // Diagnostic is a problem in a document.

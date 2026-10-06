@@ -203,7 +203,20 @@ func TestServerSendsMarkerProblemsAsWarnings(t *testing.T) {
 		URI: uri, LanguageID: "cue", Version: 1, Text: strings.Replace(fixedDef, "template: {\n", "template: {\n\t// +usge=x\n\tparameter: a: string\n", 1),
 	}}, false)
 	p := c.diagnostics()
-	require.Len(t, p.Diagnostics, 1)
+	// The misspelt marker leaves the field without +usage too.
+	require.Len(t, p.Diagnostics, 2)
 	assert.Equal(t, SeverityWarning, p.Diagnostics[0].Severity)
 	assert.Contains(t, p.Diagnostics[0].Message, "did you mean +usage?")
+	assert.Equal(t, SeverityInformation, p.Diagnostics[1].Severity)
+}
+
+func TestServerSendsRecommendationsAsInformation(t *testing.T) {
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+		URI: uri, LanguageID: "cue", Version: 1, Text: strings.Replace(fixedDef, "template: {\n", "template: {\n\tparameter: replicas: int\n", 1),
+	}}, false)
+	p := c.diagnostics()
+	require.Len(t, p.Diagnostics, 1)
+	assert.Equal(t, SeverityInformation, p.Diagnostics[0].Severity)
+	assert.Contains(t, p.Diagnostics[0].Message, "replicas has no +usage")
 }

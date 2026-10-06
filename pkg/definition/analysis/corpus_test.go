@@ -31,7 +31,7 @@ import (
 // The definitions KubeVela ships must analyse clean, with their outputs checked
 // against Kubernetes' own kinds: an error on any of them is a false positive,
 // most likely a context key missing from context.go. A warning must be one of
-// knownWarnings.
+// knownWarnings. Recommendations are not judged.
 func TestShippedDefinitionsAreClean(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "vela-templates", "definitions")
 	n := checkCorpus(t, root)
@@ -93,6 +93,9 @@ func checkCorpus(t *testing.T, root string) int {
 		t.Run(path, func(t *testing.T) {
 			var got []string
 			for _, d := range res.Diagnostics {
+				if d.Severity == SeverityInfo {
+					continue
+				}
 				got = append(got, fmt.Sprintf("%d: %s", d.Range.Start.Line, d.Message))
 			}
 			assert.Equal(t, knownWarnings[rel], got)

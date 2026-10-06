@@ -58,6 +58,8 @@ const (
 	SeverityError Severity = 1
 	// SeverityWarning is accepted by the controller but does nothing.
 	SeverityWarning Severity = 2
+	// SeverityInfo is a recommendation.
+	SeverityInfo Severity = 3
 )
 
 // Diagnostic is one problem found in a definition file.
@@ -130,6 +132,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	res := Result{IsDefinition: true, Name: d.name, Type: d.typ}
 	// Markers are read before the template is compiled, which rewrites it.
 	diags := d.checkMarkers()
+	diags = append(diags, d.checkUsage()...)
 	diags = append(diags, d.checkHeader()...)
 	diags = append(diags, d.checkTemplateFields()...)
 	diags = append(diags, d.explainContext(d.checkTemplate())...)
