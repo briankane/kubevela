@@ -215,7 +215,7 @@ func yamlSchema(path, doc string, opts Options) (cue.Value, bool) {
 	if apiVersion == "" || kind == "" {
 		return cue.Value{}, false
 	}
-	if kind == "Application" && strings.HasPrefix(apiVersion, "core.oam.dev/") {
+	if applicationKind(apiVersion, kind) {
 		return compile(addonApplicationCUE, "#addonApplication")
 	}
 	if kind == "Package" && strings.HasPrefix(apiVersion, "cue.oam.dev/") {

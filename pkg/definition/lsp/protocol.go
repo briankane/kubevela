@@ -129,6 +129,8 @@ type ServerCapabilities struct {
 	DocumentSymbolProvider bool `json:"documentSymbolProvider,omitempty"`
 	// InlayHintProvider offers labels shown in the text.
 	InlayHintProvider bool `json:"inlayHintProvider,omitempty"`
+	// CodeLensProvider offers commands shown above lines.
+	CodeLensProvider *CodeLensOptions `json:"codeLensProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -184,7 +186,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 3
+const VelaProtocol = 4
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -403,9 +405,16 @@ type NewTestResult struct {
 // request.
 const MethodNewPackage = "vela/newPackage"
 
-// MethodComponentTypes lists the component types an Application can name:
-// the workspace's, the cluster's and the built-in ones, each once.
+// MethodComponentTypes lists the definitions of a type an Application can
+// name, components by default: the workspace's, the cluster's and the
+// built-in ones, each once.
 const MethodComponentTypes = "vela/componentTypes"
+
+// ComponentTypesParams name the definition type: component, trait, policy
+// or workflow-step.
+type ComponentTypesParams struct {
+	Type string `json:"type,omitempty"`
+}
 
 // ComponentType is one, with where it comes from.
 type ComponentType struct {
@@ -417,6 +426,52 @@ type ComponentType struct {
 // ComponentTypesResult is the component types, by name.
 type ComponentTypesResult struct {
 	Types []ComponentType `json:"types"`
+}
+
+// CodeLensOptions are the server's code lenses' options.
+type CodeLensOptions struct{}
+
+// CodeLensParams ask for a document's code lenses.
+type CodeLensParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// Command is a command a client runs.
+type Command struct {
+	Title     string        `json:"title"`
+	Command   string        `json:"command"`
+	Arguments []interface{} `json:"arguments,omitempty"`
+}
+
+// CodeLens is a command shown above a range.
+type CodeLens struct {
+	Range   Range    `json:"range"`
+	Command *Command `json:"command,omitempty"`
+}
+
+// CommandAddToApplication is the client's command a code lens of an
+// Application runs, with an AddToApplicationParams for argument.
+const CommandAddToApplication = "kubevela.addToApplication"
+
+// MethodAddToApplication is the edit adding a component, trait, policy or
+// workflow step to an Application.
+const MethodAddToApplication = "vela/addToApplication"
+
+// AddToApplicationParams name the Application by a line in it, what to add
+// and, for a trait, the component by a line in it.
+type AddToApplicationParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Line         uint32                 `json:"line"`
+	Kind         string                 `json:"kind"`
+	Type         string                 `json:"type,omitempty"`
+	Name         string                 `json:"name,omitempty"`
+}
+
+// AddToApplicationResult is the range to replace and the snippet to put
+// there.
+type AddToApplicationResult struct {
+	Range   Range  `json:"range"`
+	Snippet string `json:"snippet"`
 }
 
 // MethodNewApplication scaffolds an Application of one component.

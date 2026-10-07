@@ -30,6 +30,22 @@ import (
 // code actions.
 func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 	switch msg.Method {
+	case "textDocument/codeLens":
+		var p CodeLensParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		text := s.docs[p.TextDocument.URI]
+		lenses := []CodeLens{}
+		if ext := filepath.Ext(pathOf(p.TextDocument.URI)); ext == ".yaml" || ext == ".yml" {
+			titles := map[string]string{analysis.AddComponent: "Add component", analysis.AddTrait: "Add trait", analysis.AddPolicy: "Add policy", analysis.AddWorkflowStep: "Add workflow step"}
+			for _, l := range analysis.ApplicationLenses(text) {
+				line := uint32(l.Line - 1)
+				arg := AddToApplicationParams{TextDocument: p.TextDocument, Line: line, Kind: l.Kind}
+				lenses = append(lenses, CodeLens{Range: Range{Start: Position{Line: line}, End: Position{Line: line}}, Command: &Command{Title: titles[l.Kind], Command: CommandAddToApplication, Arguments: []interface{}{arg}}})
+			}
+		}
+		return lenses, nil
 	case "textDocument/inlayHint":
 		var p InlayHintParams
 		if rerr := decode(msg.Params, &p); rerr != nil {

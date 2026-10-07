@@ -243,10 +243,20 @@ func typeCompletions(defType, typed string, keyIndent int, hasProps bool, opts O
 // ComponentTypes are the component types an Application can name, each from
 // the most preferred source that has it, by name.
 func ComponentTypes(opts Options) []AppDefinition {
+	return DefinitionsOfType(componentType, opts)
+}
+
+// DefinitionsOfType are the definitions of a type (component, trait, policy
+// or workflow-step; component when empty) an Application can name, each
+// from the most preferred source that has it, by name.
+func DefinitionsOfType(defType string, opts Options) []AppDefinition {
+	if defType == "" {
+		defType = componentType
+	}
 	if opts.Applications == nil {
 		return nil
 	}
-	defs := opts.Applications.List(componentType)
+	defs := opts.Applications.List(defType)
 	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
 	return defs
 }

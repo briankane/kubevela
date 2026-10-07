@@ -220,11 +220,24 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
 		}
 	case MethodComponentTypes:
+		var p ComponentTypesParams
+		_ = decode(msg.Params, &p)
 		types := []ComponentType{}
-		for _, d := range analysis.ComponentTypes(s.options()) {
+		for _, d := range analysis.DefinitionsOfType(p.Type, s.options()) {
 			types = append(types, ComponentType{Name: d.Name, Description: d.Description, Source: d.Source})
 		}
 		result = ComponentTypesResult{Types: types}
+	case MethodAddToApplication:
+		var p AddToApplicationParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			text := s.docs[p.TextDocument.URI]
+			e, err := analysis.AddToApplication(text, int(p.Line)+1, p.Kind, p.Type, p.Name, s.options())
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = AddToApplicationResult{Range: protocolRange(text, e.Range), Snippet: e.Snippet}
+			}
+		}
 	case MethodNewApplication:
 		var p NewApplicationParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -388,9 +401,16 @@ func (s *Server) handle(msg message) error {
 					OpenClose: true,
 					Change:    TextDocumentSyncFull,
 				},
-				HoverProvider:      true,
-				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
-				Experimental:       &ExperimentalCapabilities{VelaProtocol: VelaProtocol},
+				HoverProvider:          true,
+				CompletionProvider:     &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
+				DefinitionProvider:     true,
+				ReferencesProvider:     true,
+				RenameProvider:         true,
+				CodeActionProvider:     true,
+				DocumentSymbolProvider: true,
+				InlayHintProvider:      true,
+				CodeLensProvider:       &CodeLensOptions{},
+				Experimental:           &ExperimentalCapabilities{VelaProtocol: VelaProtocol},
 			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
 		}
@@ -425,7 +445,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
@@ -434,7 +454,7 @@ func (s *Server) handle(msg message) error {
 				result = h
 			}
 		}
-	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint":
+	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint", "textDocument/codeLens":
 		result, rerr = s.navigationRequest(msg)
 	case "textDocument/completion":
 		var p CompletionParams

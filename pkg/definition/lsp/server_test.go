@@ -207,6 +207,17 @@ func TestServerLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["result"], &init))
 	assert.Equal(t, TextDocumentSyncFull, init.Capabilities.TextDocumentSync.Change)
 	assert.True(t, init.Capabilities.TextDocumentSync.OpenClose)
+	// A client sends only what the server announces: every method the server
+	// answers is announced.
+	caps := init.Capabilities
+	assert.True(t, caps.HoverProvider, "hover")
+	assert.True(t, caps.DefinitionProvider, "go to definition")
+	assert.True(t, caps.ReferencesProvider, "find references")
+	assert.True(t, caps.RenameProvider, "rename")
+	assert.True(t, caps.CodeActionProvider, "quick fixes")
+	assert.True(t, caps.DocumentSymbolProvider, "the outline")
+	assert.True(t, caps.InlayHintProvider, "inlay hints")
+	assert.NotNil(t, caps.CodeLensProvider, "code lenses")
 	require.NotNil(t, init.Capabilities.Experimental)
 	assert.Equal(t, VelaProtocol, init.Capabilities.Experimental.VelaProtocol)
 	c.send("initialized", map[string]interface{}{}, false)

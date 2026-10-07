@@ -52,6 +52,11 @@ var appItems = []struct {
 func isApplication(doc cue.Value) bool {
 	apiVersion, _ := doc.LookupPath(cue.ParsePath("apiVersion")).String()
 	kind, _ := doc.LookupPath(cue.ParsePath("kind")).String()
+	return applicationKind(apiVersion, kind)
+}
+
+// applicationKind reports whether an apiVersion and kind are an Application's.
+func applicationKind(apiVersion, kind string) bool {
 	return kind == "Application" && strings.HasPrefix(apiVersion, "core.oam.dev/")
 }
 

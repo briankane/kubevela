@@ -216,3 +216,26 @@ func TestNewApplicationRequests(t *testing.T) {
 	m = c.response(c.send(MethodNewApplication, NewApplicationParams{Name: "shop", Type: "nope"}, true))
 	assert.Contains(t, string(m["error"]), "no component type nope")
 }
+
+func TestApplicationLensesAndAdd(t *testing.T) {
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: shop\nspec:\n  components:\n    - name: web\n      type: webservice\n      properties:\n        image: nginx\n"
+	appURI := "file:///defs/shop.yaml"
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: appURI, LanguageID: "yaml", Version: 1, Text: app}}, false)
+	c.diagnostics()
+	m := c.response(c.send("textDocument/codeLens", CodeLensParams{TextDocument: TextDocumentIdentifier{URI: appURI}}, true))
+	var lenses []CodeLens
+	require.NoError(t, json.Unmarshal(m["result"], &lenses))
+	var titles []string
+	for _, l := range lenses {
+		titles = append(titles, l.Command.Title)
+		assert.Equal(t, CommandAddToApplication, l.Command.Command)
+	}
+	assert.Equal(t, []string{"Add policy", "Add workflow step", "Add component", "Add trait"}, titles)
+
+	m = c.response(c.send(MethodAddToApplication, AddToApplicationParams{TextDocument: TextDocumentIdentifier{URI: appURI}, Line: 6, Kind: "trait", Type: "scaler"}, true))
+	var add AddToApplicationResult
+	require.NoError(t, json.Unmarshal(m["result"], &add), string(m["error"]))
+	assert.Contains(t, add.Snippet, "traits:")
+	assert.Contains(t, add.Snippet, "- type: scaler")
+}
