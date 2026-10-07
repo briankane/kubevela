@@ -63,6 +63,11 @@ func CompleteYAMLFile(path, doc string, cursor int, opts Options) ([]Completion,
 	}
 	lines := strings.Split(before[start:], "\n")
 	last, above := lines[len(lines)-1], lines[:len(lines)-1]
+	if opts.Applications != nil && isApplicationText(doc[start:end]) {
+		if got, handled := completeApplication(strings.Split(doc[start:end], "\n"), above, last, opts); handled {
+			return got, true
+		}
+	}
 	if m := yamlValueTyped.FindStringSubmatch(last); m != nil {
 		keyIndent := len(m[1])
 		if m[2] != "" {
@@ -85,10 +90,19 @@ func CompleteYAMLFile(path, doc string, cursor int, opts Options) ([]Completion,
 // mapping a key at indent belongs to, read from the lines above it. item is
 // set when the key starts a list item.
 func yamlPath(above []string, indent int, item bool) []string {
+	path, _ := yamlPathItems(above, indent, item)
+	return path
+}
+
+// yamlPathItems is yamlPath with, for each list item on the path, the index
+// of the line that starts it, len(above) for the line being written; -1
+// for a key.
+func yamlPathItems(above []string, indent int, item bool) ([]string, []int) {
 	var rev []string
+	var revLines []int
 	level, listParent := indent, false
 	if item {
-		rev, level, listParent = append(rev, listItem), indent-2, true
+		rev, revLines, level, listParent = append(rev, listItem), append(revLines, len(above)), indent-2, true
 	}
 	for i := len(above) - 1; i >= 0 && (level > 0 || listParent); i-- {
 		m := yamlKeyLine.FindStringSubmatch(above[i])
@@ -104,22 +118,24 @@ func yamlPath(above []string, indent int, item bool) []string {
 		switch {
 		case keyIndent == level && m[2] != "" && !listParent:
 			// A sibling that starts the item the key is in.
-			rev, level, listParent = append(rev, listItem), dash, true
+			rev, revLines, level, listParent = append(rev, listItem), append(revLines, i), dash, true
 		case listParent && m[2] == "" && keyIndent <= level && empty:
-			rev, level, listParent = append(rev, strings.Trim(m[3], `"'`)), keyIndent, false
+			rev, revLines, level, listParent = append(rev, strings.Trim(m[3], `"'`)), append(revLines, -1), keyIndent, false
 		case !listParent && keyIndent < level && empty:
-			rev = append(rev, strings.Trim(m[3], `"'`))
+			rev, revLines = append(rev, strings.Trim(m[3], `"'`)), append(revLines, -1)
 			level = keyIndent
 			if m[2] != "" {
-				rev, level, listParent = append(rev, listItem), dash, true
+				rev, revLines, level, listParent = append(rev, listItem), append(revLines, i), dash, true
 			}
 		}
 	}
 	out := make([]string, 0, len(rev))
+	lines := make([]int, 0, len(rev))
 	for i := len(rev) - 1; i >= 0; i-- {
 		out = append(out, rev[i])
+		lines = append(lines, revLines[i])
 	}
-	return out
+	return out, lines
 }
 
 // walkYAML follows a YAML key path from v. The schemas recurse only into
@@ -199,6 +215,9 @@ func yamlSchema(path, doc string, opts Options) (cue.Value, bool) {
 	if apiVersion == "" || kind == "" {
 		return cue.Value{}, false
 	}
+	if kind == "Application" && strings.HasPrefix(apiVersion, "core.oam.dev/") {
+		return compile(addonApplicationCUE, "#addonApplication")
+	}
 	if kind == "Package" && strings.HasPrefix(apiVersion, "cue.oam.dev/") {
 		return compile(packageCUE, "#Package")
 	}
@@ -214,21 +233,37 @@ func yamlSchema(path, doc string, opts Options) (cue.Value, bool) {
 	return compile(src, kubeschema.Root(gvk))
 }
 
-// HoverYAMLFile describes the key at offset in YAML KubeVela reads: its type
-// and what it is.
+// HoverYAMLFile describes the key at offset in YAML KubeVela reads, its type
+// and what it is, or, in an Application, the definition a type names.
 func HoverYAMLFile(path, doc string, offset int, opts Options) (string, bool) {
-	if offset < 0 || offset >= len(doc) || !isWordByteAt(doc[offset]) {
+	if offset < 0 || offset >= len(doc) || !isNameByteAt(doc[offset]) {
 		return "", false
 	}
-	end := wordEnd(doc, offset)
-	if end >= len(doc) || doc[end] != ':' {
-		return "", false
+	end := offset
+	for end < len(doc) && isNameByteAt(doc[end]) {
+		end++
 	}
 	start := offset
-	for start > 0 && isWordByteAt(doc[start-1]) {
+	for start > 0 && isNameByteAt(doc[start-1]) {
 		start--
 	}
 	name := doc[start:end]
+	lineStart := strings.LastIndex(doc[:start], "\n") + 1
+	if typeValue.MatchString(doc[lineStart:start]) {
+		got, ok := CompleteYAMLFile(path, doc[:end]+doc[end:], end, opts)
+		if !ok {
+			return "", false
+		}
+		for _, c := range got {
+			if c.Label == name {
+				return "**" + name + "**, a definition from " + c.Detail + "\n\n" + c.Doc, true
+			}
+		}
+		return "", false
+	}
+	if end >= len(doc) || doc[end] != ':' {
+		return "", false
+	}
 	got, ok := CompleteYAMLFile(path, doc[:end], end, opts)
 	if !ok {
 		return "", false
@@ -239,4 +274,12 @@ func HoverYAMLFile(path, doc string, offset int, opts Options) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+var typeValue = regexp.MustCompile(`^\s*(?:-\s+)?type:\s*["']?$`)
+
+// isNameByteAt reports whether b may be part of a YAML key or a definition
+// name.
+func isNameByteAt(b byte) bool {
+	return isWordByteAt(b) || b == '-' || b == '.'
 }

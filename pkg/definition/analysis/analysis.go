@@ -115,6 +115,12 @@ type Options struct {
 	// Definitions finds a definition by name, such as the one a component
 	// extends.
 	Definitions DefinitionLookup
+	// Applications are the definitions an Application may name, from the
+	// workspace, the cluster and those built in.
+	Applications AppDefinitions
+	// ClusterRead is set when the cluster's definitions are among them, so a
+	// type none has is an error rather than one the cluster may have.
+	ClusterRead bool
 }
 
 // Analyze checks the definition in src, read from path.
