@@ -26,8 +26,9 @@ import (
 
 var (
 	// nameTyped is a name begun at the end of the text before the cursor,
-	// after what precedes a reference: an operator, a bracket or a colon.
-	nameTyped = regexp.MustCompile(`(?:^|[:&|(,\[+\-*/=!<>]\s*)([A-Za-z_#$][A-Za-z0-9_#$]*)$`)
+	// after what precedes a reference: an operator, a bracket or a colon, or
+	// nothing but the line's indentation.
+	nameTyped = regexp.MustCompile(`(?:^\s*|[:&|(,\[+\-*/=!<>]\s*)([A-Za-z_#$][A-Za-z0-9_#$]*)$`)
 	// importBlock is an import declaration, single or a block; importLine one
 	// of its specs, with its name if any.
 	importBlock = regexp.MustCompile(`(?m)^import\s*(\([^)]*\)|"[^"]*"|[A-Za-z_][A-Za-z0-9_]*\s+"[^"]*")`)
@@ -38,14 +39,14 @@ var (
 
 // CompleteRootName completes a reference's first name where one is begun at
 // cursor in doc: context, parameter, the file's imports by their names, and
-// the helpers, definitions and lets it declares. It reads the text, which
-// need not parse while the name is typed, and offers nothing where a field's
-// label is written, after a dot, or before a name is begun.
+// the names in scope there. A name alone on a line is completed too, as it
+// may be an expression embedded there. Nothing is offered after a dot, or
+// before a name is begun.
 func CompleteRootName(doc string, cursor int) []Completion {
 	lineStart := strings.LastIndex(doc[:cursor], "\n") + 1
 	line := doc[lineStart:cursor]
 	m := nameTyped.FindStringSubmatchIndex(line)
-	if m == nil || m[0] == 0 && strings.TrimSpace(line) == line[m[2]:m[3]] {
+	if m == nil {
 		return nil
 	}
 	typed := line[m[2]:m[3]]

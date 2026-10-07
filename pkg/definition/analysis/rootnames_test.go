@@ -65,9 +65,14 @@ func TestCompleteRootName(t *testing.T) {
 	assert.Equal(t, []string{"#Port"}, rootNames("#P"))
 	assert.Empty(t, rootNames(""), "nothing until a name is begun")
 
-	// Where a label is written, a reference does not go.
+	// A name alone on a line may be an expression embedded there, as well
+	// as a field's label being begun: it is completed.
 	doc := strings.Replace(rootNamesDoc, "\t\tspec: x: CURSOR\n", "\t\tcon\n", 1)
-	assert.Empty(t, CompleteRootName(doc, strings.Index(doc, "\t\tcon\n")+5))
+	var alone []string
+	for _, c := range CompleteRootName(doc, strings.Index(doc, "\t\tcon\n")+5) {
+		alone = append(alone, c.Label)
+	}
+	assert.Contains(t, alone, "context")
 	// Nor after a dot, which completes a field.
 	doc = strings.Replace(rootNamesDoc, "CURSOR", "parameter.con", 1)
 	assert.Empty(t, CompleteRootName(doc, strings.Index(doc, "parameter.con")+len("parameter.con")))

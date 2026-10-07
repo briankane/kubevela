@@ -101,3 +101,19 @@ template: {
 	doc, cursor := at(src)
 	assert.Contains(t, labels(CompleteValueAt(doc, cursor, nil)), "replicas")
 }
+
+// What a call reads, with no kind given yet, is offered as any Kubernetes
+// object: its apiVersion, kind, metadata (with its fields), spec and status.
+func TestCompleteReturnsOfAnUnknownKind(t *testing.T) {
+	doc := "import \"vela/kube\"\n\n\"web\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\tvalue: kube.#Get & {\n\t\t$params: resource: {apiVersion: \"\", kind: \"\", metadata: name: \"\"}\n\t}\n\tx: CURSOR\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n\tparameter: {}\n}\n"
+	labels := func(typed string) []string {
+		src := strings.Replace(doc, "CURSOR", typed, 1)
+		var out []string
+		for _, c := range CompleteValueAt(src, strings.Index(src, typed)+len(typed), nil) {
+			out = append(out, c.Label)
+		}
+		return out
+	}
+	assert.Subset(t, labels("value.$returns."), []string{"apiVersion", "kind", "metadata", "spec", "status"})
+	assert.Subset(t, labels("value.$returns.metadata."), []string{"name", "namespace", "labels"})
+}

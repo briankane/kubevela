@@ -161,22 +161,36 @@ func rootSelector(name string) cue.Selector {
 // $params name, when that kind's schema is known.
 func withResourceKind(call, returns cue.Value) cue.Value {
 	res := call.LookupPath(cue.ParsePath("$params.resource"))
-	apiVersion, err1 := res.LookupPath(cue.ParsePath("apiVersion")).String()
-	kind, err2 := res.LookupPath(cue.ParsePath("kind")).String()
-	if err1 != nil || err2 != nil {
+	if !res.Exists() {
 		return returns
 	}
+	apiVersion, _ := res.LookupPath(cue.ParsePath("apiVersion")).String()
+	kind, _ := res.LookupPath(cue.ParsePath("kind")).String()
 	gvk := kubeschema.ParseGVK(apiVersion, kind)
 	kinds := bundledKinds()
 	src, ok := kinds.CUE(gvk)
-	if !ok {
-		return returns
+	if !ok || apiVersion == "" || kind == "" {
+		return anyObject(returns.Context())
 	}
 	schema := returns.Context().CompileString(src).LookupPath(cue.ParsePath(kubeschema.Root(gvk)))
 	if !schema.Exists() {
 		return returns
 	}
 	return schema
+}
+
+// anyObject is what a resource of a kind not known has: apiVersion, kind,
+// a spec and a status, and the metadata every object has.
+func anyObject(ctx *cue.Context) cue.Value {
+	obj := ctx.CompileString("{apiVersion: string, kind: string, spec?: {...}, status?: {...}}")
+	gvk := kubeschema.ParseGVK("v1", "ConfigMap")
+	if src, ok := bundledKinds().CUE(gvk); ok {
+		cm := ctx.CompileString(src).LookupPath(cue.ParsePath(kubeschema.Root(gvk)))
+		if meta := schemaChild(cm, cue.Str("metadata")); meta.Exists() {
+			obj = obj.FillPath(cue.ParsePath("metadata"), meta)
+		}
+	}
+	return obj
 }
 
 // kindName is a value's kind, briefly.
