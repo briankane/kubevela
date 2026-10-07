@@ -479,6 +479,10 @@ type CodeLens struct {
 // Application runs, with an AddToApplicationParams for argument.
 const CommandAddToApplication = "kubevela.addToApplication"
 
+// CommandNewTestCase is the client's command a test file's code lens runs,
+// with the test file's URI for argument.
+const CommandNewTestCase = "kubevela.newTestCase"
+
 // MethodAddToApplication is the edit adding a component, trait, policy or
 // workflow step to an Application.
 const MethodAddToApplication = "vela/addToApplication"

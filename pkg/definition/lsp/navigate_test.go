@@ -267,3 +267,18 @@ func TestNewTestOfAKind(t *testing.T) {
 	assert.Contains(t, r.Cases, "test.#ComponentStatus & {")
 	assert.NotContains(t, r.Cases, "import")
 }
+
+// A test file has a code lens to add a case, above its first line.
+func TestTestFileLens(t *testing.T) {
+	testURI := "file:///defs/web_test.cue"
+	c := newClient(t)
+	c.drain()
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: testURI, LanguageID: "cue", Version: 1, Text: "import \"vela/test\"\n"}}, false)
+	m := c.response(c.send("textDocument/codeLens", CodeLensParams{TextDocument: TextDocumentIdentifier{URI: testURI}}, true))
+	var lenses []CodeLens
+	require.NoError(t, json.Unmarshal(m["result"], &lenses))
+	require.Len(t, lenses, 1)
+	assert.Equal(t, uint32(0), lenses[0].Range.Start.Line)
+	assert.Equal(t, CommandNewTestCase, lenses[0].Command.Command)
+	assert.Equal(t, []interface{}{testURI}, lenses[0].Command.Arguments)
+}

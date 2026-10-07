@@ -37,6 +37,9 @@ func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 		}
 		text := s.docs[p.TextDocument.URI]
 		lenses := []CodeLens{}
+		if utils.IsCUETestFile(pathOf(p.TextDocument.URI)) {
+			lenses = append(lenses, CodeLens{Command: &Command{Title: "Add test case", Command: CommandNewTestCase, Arguments: []interface{}{p.TextDocument.URI}}})
+		}
 		if ext := filepath.Ext(pathOf(p.TextDocument.URI)); ext == ".yaml" || ext == ".yml" {
 			titles := map[string]string{analysis.AddComponent: "Add component", analysis.AddTrait: "Add trait", analysis.AddPolicy: "Add policy", analysis.AddWorkflowStep: "Add workflow step"}
 			for _, l := range analysis.ApplicationLenses(text) {
