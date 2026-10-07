@@ -67,6 +67,10 @@ func CompleteFieldValue(path, doc string, cursor int, opts Options) []Completion
 		return nil
 	}
 	typed := doc[lineStart+m[2] : cursor]
+	// A reference being written is completed by its members, all of them.
+	if strings.Contains(typed, ".") {
+		return nil
+	}
 	start := cursor - len(typed)
 	patched := doc[:start] + "_ @" + cursorPlaceholder + "()" + doc[cursor:]
 	f, err := parser.ParseFile(path, patched, parser.ParseComments)
@@ -85,7 +89,7 @@ func CompleteFieldValue(path, doc string, cursor int, opts Options) []Completion
 		return nil
 	}
 	d.opts = opts
-	v, ok := d.evaluate()
+	v, ok := d.evaluateForCompletion()
 	if !ok {
 		return nil
 	}

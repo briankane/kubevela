@@ -99,3 +99,23 @@ func TestTypeHelpInCalls(t *testing.T) {
 	assert.Contains(t, labels, "parameter.who")
 	assert.NotContains(t, labels, "parameter.count")
 }
+
+// A template CUE rejects as a whole, as for a let nothing uses yet, is
+// still completed: what failed is set aside, as the checks set it aside.
+func TestCompleteWithAnUnusedLet(t *testing.T) {
+	doc := "\"web\": {\n\ttype: \"component\"\n\tattributes: workload: definition: {apiVersion: \"apps/v1\", kind: \"Deployment\"}\n}\ntemplate: {\n\tlet tag = \"v1\"\n\toutput: {\n\t\tapiVersion: \"apps/v1\"\n\t\tkind: \"Deployment\"\n\t\tmetadata: name: CURSOR\n\t}\n\tparameter: {\n\t\timage: string\n\t\treplicas: *1 | int\n\t}\n}\n"
+	labels := func(cs []Completion) []string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.Label)
+		}
+		return out
+	}
+	src := strings.Replace(doc, "CURSOR", "parameter.", 1)
+	at := strings.Index(src, "parameter.") + len("parameter.")
+	assert.Equal(t, []string{"image", "replicas"}, labels(CompleteValueAt(src, at, nil)), "parameter.")
+
+	src = strings.Replace(doc, "CURSOR", "", 1)
+	at = strings.Index(src, "name: ") + len("name: ")
+	assert.Contains(t, labels(CompleteFieldValue("web.cue", src, at, Options{})), "parameter.image", "a value's type help")
+}

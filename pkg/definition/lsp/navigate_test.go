@@ -282,3 +282,21 @@ func TestTestFileLens(t *testing.T) {
 	assert.Equal(t, CommandNewTestCase, lenses[0].Command.Command)
 	assert.Equal(t, []interface{}{testURI}, lenses[0].Command.Arguments)
 }
+
+// After parameter., every parameter is offered, not only those of the
+// field's type; with a let nothing uses yet in the template.
+func TestCompleteParameterMembers(t *testing.T) {
+	src := "\"web\": {\n\ttype: \"component\"\n\tattributes: workload: definition: {apiVersion: \"apps/v1\", kind: \"Deployment\"}\n}\ntemplate: {\n\tlet tag = \"v1\"\n\toutput: {\n\t\tapiVersion: \"apps/v1\"\n\t\tkind: \"Deployment\"\n\t\tmetadata: name: parameter.\n\t}\n\tparameter: {\n\t\timage: string\n\t\treplicas: *1 | int\n\t}\n}\n"
+	c := newClient(t)
+	c.drain()
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: src}}, false)
+	line := strings.Split(src, "\n")[9]
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: Position{Line: 9, Character: uint32(len(line))}}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label)
+	}
+	assert.Equal(t, []string{"image", "replicas"}, labels)
+}

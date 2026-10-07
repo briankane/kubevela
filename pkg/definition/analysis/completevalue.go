@@ -25,6 +25,7 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
+	cueerrors "cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/parser"
 
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
@@ -85,7 +86,7 @@ func CompleteValueAt(doc string, cursor int, ext *Externals) []Completion {
 	if !ok {
 		return nil
 	}
-	v, ok := d.evaluate()
+	v, ok := d.evaluateForCompletion()
 	if !ok {
 		return nil
 	}
@@ -192,4 +193,22 @@ func kindName(v cue.Value) string {
 // evaluate compiles the template as checkTemplate does, for its values.
 func (d *document) evaluate() (cue.Value, bool) {
 	return d.evaluateIn(cuecontext.New())
+}
+
+// evaluateForCompletion is evaluate, setting aside what fails as the checks
+// do, so a template CUE rejects as a whole, as one with a let nothing uses
+// yet, still has values to complete from. It changes the document's
+// compiled syntax, so is for a document made for one completion.
+func (d *document) evaluateForCompletion() (cue.Value, bool) {
+	f := d.compileFile()
+	for i := 0; ; i++ {
+		v, ok := d.evaluate()
+		if !ok {
+			return v, false
+		}
+		err := v.Err()
+		if err == nil || i >= maxRecoveries || !blankOut(f, cueerrors.Errors(err)) {
+			return v, true
+		}
+	}
 }

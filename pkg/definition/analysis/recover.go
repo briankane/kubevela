@@ -28,7 +28,8 @@ import (
 
 // blankOut replaces what each error points at with top (_): an unresolved
 // reference, a selection of a field that does not exist, or an import that
-// does not exist together with every use of it. It reports whether anything was replaced, since an error it
+// does not exist together with every use of it; a let nothing refers to is
+// removed. It reports whether anything was replaced, since an error it
 // cannot place would otherwise be recompiled forever.
 func blankOut(f *ast.File, errs []cueerrors.Error) bool {
 	at := map[token.Pos]bool{}
@@ -59,6 +60,13 @@ func blankOut(f *ast.File, errs []cueerrors.Error) bool {
 	f.Decls = decls
 	astutil.Apply(f, func(c astutil.Cursor) bool {
 		switch n := c.Node().(type) {
+		case *ast.LetClause:
+			// A let nothing refers to fails the whole file: it goes.
+			if at[n.Pos()] || at[n.Ident.Pos()] {
+				c.Delete()
+				changed = true
+				return false
+			}
 		case *ast.SelectorExpr:
 			if at[n.Sel.Pos()] {
 				c.Replace(ast.NewIdent("_"))
