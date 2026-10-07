@@ -53,6 +53,8 @@ type Cluster struct {
 	// Definitions are the definitions an Application may name: its
 	// components, traits, policies and workflow steps, in every namespace.
 	Definitions []unstructured.Unstructured
+	// DebugData reads an Application's workflow steps' debug data.
+	DebugData func(namespace, name string) ([]debugStep, error)
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -97,6 +99,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Definition = func(kind, name string) (*unstructured.Unstructured, string, error) {
 		return getDefinition(cfg, kind, name)
+	}
+	out.DebugData = func(namespace, name string) ([]debugStep, error) {
+		return readDebugData(cfg, namespace, name)
 	}
 	if !out.KubeVela {
 		return out, nil

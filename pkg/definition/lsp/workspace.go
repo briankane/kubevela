@@ -457,6 +457,7 @@ type clusterState struct {
 	context    string
 	err        error
 	definition func(kind, name string) (*unstructured.Unstructured, string, error)
+	debugData  func(namespace, name string) ([]debugStep, error)
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -502,7 +503,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData}
 	s.clusterPackages = pkgs
 	s.clusterDefs = nil
 	if len(c.Definitions) > 0 {
