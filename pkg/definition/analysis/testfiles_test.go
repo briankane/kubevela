@@ -19,6 +19,7 @@ package analysis
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -299,4 +300,33 @@ func TestDefinitionOfTest(t *testing.T) {
 	assert.Equal(t, def, got)
 	_, ok = DefinitionOfTest(filepath.Join(dir, "other_test.cue"), "import \"vela/test\"\n")
 	assert.False(t, ok)
+}
+
+// Two cases of one name merge, as CUE unifies fields of a name: a test file
+// names each case once.
+func TestTestCaseNamesAreUnique(t *testing.T) {
+	src := `import "vela/test"
+
+_base: {definition: "scaler"}
+
+"scales": test.#TraitRender & _base & {
+	parameter: replicas: 2
+}
+
+"defaults": test.#TraitRender & _base
+
+"scales": test.#TraitRender & _base & {
+	parameter: replicas: 3
+}
+
+_base: {}
+`
+	var got []string
+	for _, d := range CheckTestFile("scaler_test.cue", []byte(src), testExternals(t)) {
+		got = append(got, strconv.Itoa(d.Range.Start.Line)+" "+d.Message)
+	}
+	require.Len(t, got, 1, "%v", got)
+	assert.Contains(t, got[0], "11 ")
+	assert.Contains(t, got[0], `"scales"`)
+	assert.Contains(t, got[0], "line 5")
 }

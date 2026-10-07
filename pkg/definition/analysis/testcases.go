@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -40,7 +41,7 @@ func CheckTestFile(path string, src []byte, ext *Externals) []Diagnostic {
 		return nil
 	}
 	d := &document{path: path, src: src}
-	var diags []Diagnostic
+	diags := d.duplicateCases(f)
 	for _, decl := range f.Decls {
 		c, ok := decl.(*ast.Field)
 		if !ok {
@@ -297,4 +298,29 @@ func CompleteTestAttribute(before string) []Completion {
 		out = append(out, Completion{Label: "@" + a.Name, Insert: a.Name, Replace: len(m[1]), Doc: a.Doc, Snippet: snippet})
 	}
 	return out
+}
+
+// duplicateCases reports each case declared under a name an earlier case
+// has: CUE unifies fields of one name, so the two would merge into one case.
+// Helpers (_x) and definitions (#X) are not cases.
+func (d *document) duplicateCases(f *ast.File) []Diagnostic {
+	first := map[string]*ast.Field{}
+	var diags []Diagnostic
+	for _, decl := range f.Decls {
+		c, ok := decl.(*ast.Field)
+		if !ok {
+			continue
+		}
+		name := labelName(c.Label)
+		if strings.HasPrefix(name, "_") || strings.HasPrefix(name, "#") {
+			continue
+		}
+		prev, seen := first[name]
+		if !seen {
+			first[name] = c
+			continue
+		}
+		diags = append(diags, d.at(c.Label.Pos(), fmt.Sprintf("test case %q is also declared on line %d: CUE merges cases of one name into one. Give each case its own name", name, prev.Label.Pos().Line())))
+	}
+	return diags
 }
