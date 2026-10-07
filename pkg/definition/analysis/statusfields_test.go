@@ -304,3 +304,33 @@ func TestNativeDetails(t *testing.T) {
 
 	assert.Empty(t, warnings(strings.Replace(statusDef, "\t\t\tcustomStatus: {", "\t\t\tdetails: #\"\"\"\n\t\t\t\tready: \"\\(*context.output.status.readyReplicas | 0)\"\n\t\t\t\t\"\"\"#\n\t\t\tcustomStatus: {", 1)), "a string")
 }
+
+// A status field written as CUE without braces, as healthPolicy: isHealth:
+// bool, is checked as one with them; a detail read from the live object is
+// judged by the type its kind's schema gives it.
+func TestStatusFieldsWithoutBraces(t *testing.T) {
+	src := `"web": {
+	type: "component"
+	attributes: {
+		workload: definition: {apiVersion: "apps/v1", kind: "Deployment"}
+		status: {
+			healthPolicy: isHealth: bool
+			details: replicas: context.output.spec.replicas
+		}
+	}
+}
+template: {
+	output: {apiVersion: "apps/v1", kind: "Deployment", spec: replicas: 1}
+	parameter: {}
+}
+`
+	var got []string
+	for _, d := range AnalyzeWith("web.cue", []byte(src), Options{}).Diagnostics {
+		if d.Severity != SeverityInfo {
+			got = append(got, strconv.Itoa(d.Range.Start.Line)+":"+strconv.Itoa(d.Range.Start.Column)+" "+d.Message)
+		}
+	}
+	require.Len(t, got, 2, "%v", got)
+	assert.Contains(t, got[0], "6:18 healthPolicy: isHealth is only a type")
+	assert.Contains(t, got[1], "7:13 details: replicas is int")
+}

@@ -131,12 +131,20 @@ func (d *document) statusFields() []statusField {
 				sf.firstCol = v.Pos().Column() - 1 + len(v.Value) - len(raw) + 1
 			}
 		case *ast.StructLit:
-			if !v.Lbrace.IsValid() || !v.Rbrace.IsValid() {
+			if v.Lbrace.IsValid() && v.Rbrace.IsValid() {
+				sf.text = string(d.src[v.Lbrace.Offset()+1 : v.Rbrace.Offset()])
+				sf.start, sf.end = v.Lbrace.Offset()+1, v.Rbrace.Offset()
+				sf.line, sf.firstCol, sf.col = v.Lbrace.Line(), v.Lbrace.Column(), 0
+				break
+			}
+			// Written without braces, as healthPolicy: isHealth: bool: the
+			// text is the value's own.
+			if !v.Pos().IsValid() || !v.End().IsValid() {
 				continue
 			}
-			sf.text = string(d.src[v.Lbrace.Offset()+1 : v.Rbrace.Offset()])
-			sf.start, sf.end = v.Lbrace.Offset()+1, v.Rbrace.Offset()
-			sf.line, sf.firstCol, sf.col = v.Lbrace.Line(), v.Lbrace.Column(), 0
+			sf.text = string(d.src[v.Pos().Offset():v.End().Offset()])
+			sf.start, sf.end = v.Pos().Offset(), v.End().Offset()
+			sf.line, sf.firstCol, sf.col = v.Pos().Line(), v.Pos().Column()-1, 0
 		default:
 			continue
 		}
@@ -418,6 +426,11 @@ func (d *document) checkDetails(f statusField, file *ast.File, v cue.Value) []Di
 			warn(fd.Label.Pos(), fmt.Sprintf("%s is only a type, so KubeVela shows it as _|_: give it a value", label))
 		default:
 			got := v.LookupPath(cue.MakePath(cue.Str(label)))
+			if got.Err() != nil {
+				// A read of the live object's optional fields errors here, as
+				// they are not set: its type is the schema's at that path.
+				got = schemaOfRead(v, fd.Value)
+			}
 			if kind := got.IncompleteKind(); got.Exists() && got.Err() == nil && kind != cue.BottomKind && kind&cue.StringKind == 0 {
 				warn(fd.Label.Pos(), fmt.Sprintf("%s is %s, and status.details holds strings: KubeVela shows its CUE text. Make it a string, as in \"\\(...)\"", label, kind))
 			}
@@ -645,4 +658,22 @@ func DeclarationInStatusField(path, doc string, offset int) (Location, bool) {
 		param = next
 	}
 	return Location{Path: path, Range: span(param.Label.Pos(), param.Label.End())}, true
+}
+
+// schemaOfRead is the schema at what e reads, as root.a.b under v, its
+// optional fields followed; nothing for anything else.
+func schemaOfRead(v cue.Value, e ast.Expr) cue.Value {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok {
+		return cue.Value{}
+	}
+	root, chain := flatten(sel)
+	if root == nil {
+		return cue.Value{}
+	}
+	labels := make([]string, 0, len(chain))
+	for _, id := range chain {
+		labels = append(labels, id.Name)
+	}
+	return walk(schemaChild(v, cue.Str(root.Name)), labels)
 }
