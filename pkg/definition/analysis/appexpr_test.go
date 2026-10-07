@@ -85,3 +85,30 @@ func TestApplicationExpressions(t *testing.T) {
 	order := "  sources:\n    - name: first\n      type: infra\n      properties:\n        zone: \"$(source.second.host)\"\n    - name: second\n      type: infra\n"
 	check("a source reading a later one", "x", order, "prior sources")
 }
+
+// Inside $( ), completion offers what the expression can read there.
+func TestCompleteAppExpressions(t *testing.T) {
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  sources:\n    - name: cfg\n      type: infra\n    - name: second\n      type: infra\n      properties:\n        zone: \"SOURCE_PROP\n  components:\n    - name: web\n      type: webservice\n      properties:\n        image: \"COMP_PROP\n    - name: db\n      type: webservice\n"
+	complete := func(marker, typed string) []string {
+		doc := strings.Replace(app, marker, typed, 1)
+		for _, m := range []string{"SOURCE_PROP", "COMP_PROP"} {
+			doc = strings.Replace(doc, m, "x\"", 1)
+		}
+		at := strings.Index(doc, typed) + len(typed)
+		got, _ := CompleteYAMLFile("app.yaml", doc, at, exprDefs())
+		var out []string
+		for _, c := range got {
+			out = append(out, c.Label)
+		}
+		return out
+	}
+	assert.Equal(t, []string{"component", "context", "source"}, complete("COMP_PROP", "$("), "a component's roots")
+	assert.Equal(t, []string{"cfg", "second"}, complete("COMP_PROP", "$(source."))
+	assert.Equal(t, []string{"host"}, complete("COMP_PROP", "$(source.cfg.ho"))
+	assert.Equal(t, []string{"cfg"}, complete("SOURCE_PROP", "$(source."), "a source reads only those before it")
+	assert.Equal(t, []string{"context", "source"}, complete("SOURCE_PROP", "$("), "a source reads no component")
+	assert.Contains(t, complete("COMP_PROP", "$(context."), "appName")
+	assert.Equal(t, []string{"db"}, complete("COMP_PROP", "$(component."), "the other components")
+	assert.Equal(t, []string{"output", "outputs"}, complete("COMP_PROP", "$(component.db."))
+	assert.Contains(t, complete("COMP_PROP", "registry/$(source.cfg.h"), "host", "embedded in text")
+}

@@ -219,6 +219,7 @@ func TestServerLifecycle(t *testing.T) {
 	assert.True(t, caps.InlayHintProvider, "inlay hints")
 	assert.NotNil(t, caps.CodeLensProvider, "code lenses")
 	assert.True(t, caps.DocumentFormattingProvider, "formatting")
+	assert.Contains(t, caps.CompletionProvider.TriggerCharacters, "(", "$( opens expression completion")
 	require.NotNil(t, init.Capabilities.Experimental)
 	assert.Equal(t, VelaProtocol, init.Capabilities.Experimental.VelaProtocol)
 	c.send("initialized", map[string]interface{}{}, false)

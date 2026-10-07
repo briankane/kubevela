@@ -64,6 +64,9 @@ func CompleteYAMLFile(path, doc string, cursor int, opts Options) ([]Completion,
 	lines := strings.Split(before[start:], "\n")
 	last, above := lines[len(lines)-1], lines[:len(lines)-1]
 	if opts.Applications != nil && isApplicationText(doc[start:end]) {
+		if got, handled := completeAppExpression(strings.Split(doc[start:end], "\n"), len(above), last, opts); handled {
+			return got, true
+		}
 		if got, handled := completeApplication(strings.Split(doc[start:end], "\n"), above, last, opts); handled {
 			return got, true
 		}

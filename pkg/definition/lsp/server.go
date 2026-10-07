@@ -436,7 +436,7 @@ func (s *Server) handle(msg message) error {
 					Change:    TextDocumentSyncFull,
 				},
 				HoverProvider:              true,
-				CompletionProvider:         &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
+				CompletionProvider:         &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\"", "("}},
 				DefinitionProvider:         true,
 				ReferencesProvider:         true,
 				RenameProvider:             true,
