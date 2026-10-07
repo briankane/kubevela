@@ -169,6 +169,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkCalls()...)
 	diags = append(diags, d.checkUnnamedImports()...)
 	diags = append(diags, d.checkCustomProviders()...)
+	diags = append(diags, d.checkOptionalReferences()...)
 	diags = append(diags, d.checkUnusedImports()...)
 	diags = append(diags, d.checkUpgrades()...)
 	diags = append(diags, d.checkDefaultsThatWin()...)

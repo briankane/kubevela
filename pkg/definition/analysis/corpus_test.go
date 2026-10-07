@@ -63,6 +63,41 @@ var knownWarnings = map[string][]string{
 	// vela-go-definitions generates these steps with an import they never use.
 	"workflowstep/apply-terraform-provider.cue": {`5: imported and not used: "strings"`},
 	"workflowstep/build-push-image.cue":         {`5: imported and not used: "encoding/json"`},
+	// They read an optional parameter where it may not be given: under a
+	// condition on another parameter (k8s-update-strategy), in a
+	// length (ref-objects), or into a provider call (check-metrics).
+	"component/ref-objects.cue": {
+		"74: parameter.objects is optional: where it is not given, comparing it fails the render, and && does not stop it. Test it with (parameter.objects & value) != _|_, or under if parameter.objects != _|_ {...}",
+		"75: parameter.objects is optional: where it is not given, reading it fails the render. Read it under if parameter.objects != _|_ {...}",
+	},
+	"internal/component/ref-objects.cue": {
+		"74: parameter.objects is optional: where it is not given, comparing it fails the render, and && does not stop it. Test it with (parameter.objects & value) != _|_, or under if parameter.objects != _|_ {...}",
+		"75: parameter.objects is optional: where it is not given, reading it fails the render. Read it under if parameter.objects != _|_ {...}",
+	},
+	"internal/trait/k8s-update-strategy.cue": {
+		"24: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"25: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"37: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"49: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"50: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+	},
+	"internal/workflowstep/check-metrics.cue": {
+		"20: parameter.metricEndpoint is optional: where it is not given, reading it fails the render. Read it under if parameter.metricEndpoint != _|_ {...}",
+		"22: parameter.duration is optional: where it is not given, reading it fails the render. Read it under if parameter.duration != _|_ {...}",
+		"23: parameter.failDuration is optional: where it is not given, reading it fails the render. Read it under if parameter.failDuration != _|_ {...}",
+	},
+	"trait/k8s-update-strategy.cue": {
+		"21: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"22: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"32: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"42: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+		"43: parameter.strategy.rollingStrategy is optional: where it is not given, reading it fails the render. Read it under if parameter.strategy.rollingStrategy != _|_ {...}",
+	},
+	"workflowstep/check-metrics.cue": {
+		"20: parameter.duration is optional: where it is not given, reading it fails the render. Read it under if parameter.duration != _|_ {...}",
+		"21: parameter.failDuration is optional: where it is not given, reading it fails the render. Read it under if parameter.failDuration != _|_ {...}",
+		"22: parameter.metricEndpoint is optional: where it is not given, reading it fails the render. Read it under if parameter.metricEndpoint != _|_ {...}",
+	},
 }
 
 // knownBroken are definitions known not to compile, by path under the corpus
