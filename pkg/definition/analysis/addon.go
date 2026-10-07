@@ -634,7 +634,75 @@ func (d *document) checkAddonTemplate(root string) []Diagnostic {
 	diags = append(diags, d.requireFields("it is the Application the addon installs", "output")...)
 	diags = append(diags, d.checkTyped(v.LookupPath(cue.ParsePath("output.spec")))...)
 	diags = append(diags, d.checkAuxiliary(v.LookupPath(cue.ParsePath("outputs")), "outputs")...)
+	diags = append(diags, d.checkOwnTypes(root, v.LookupPath(cue.ParsePath("output.spec")))...)
 	return diags
+}
+
+// checkOwnTypes reports a type the addon's Application uses that only the
+// addon itself installs. KubeVela's installer makes an addon's Application
+// before it applies the addon's definitions, so admission finds no such
+// definition and refuses the first enable.
+func (d *document) checkOwnTypes(root string, spec cue.Value) []Diagnostic {
+	own := map[string]string{}
+	files, _ := filepath.Glob(filepath.Join(root, "definitions", "*.cue"))
+	for _, f := range files {
+		src, err := os.ReadFile(f) //nolint:gosec // the addon's own definitions
+		if err != nil {
+			continue
+		}
+		if name, typ, ok := DefinitionHeader(f, src); ok {
+			own[typ+"/"+name] = filepath.Base(f)
+		}
+	}
+	if len(own) == 0 {
+		return nil
+	}
+	builtin := map[string]bool{}
+	for _, b := range BuiltinDefinitions() {
+		builtin[b.Type+"/"+b.Name] = true
+	}
+	var diags []Diagnostic
+	var used func(list cue.Value, typ string)
+	used = func(list cue.Value, typ string) {
+		it, err := list.List()
+		if err != nil {
+			return
+		}
+		for it.Next() {
+			if typ == componentType {
+				used(it.Value().LookupPath(cue.ParsePath("traits")), traitType)
+			}
+			name, err := it.Value().LookupPath(cue.ParsePath("type")).String()
+			key := typ + "/" + name
+			if err != nil || own[key] == "" || builtin[key] {
+				continue
+			}
+			if d.opts.Applications != nil {
+				if def, ok := d.opts.Applications.Lookup(typ, name); ok && def.Source == SourceCluster {
+					continue
+				}
+			}
+			diags = append(diags, d.at(d.stringLiteral(name), fmt.Sprintf("%s %s is installed by this addon (definitions/%s), but KubeVela makes an addon's Application before it applies the addon's definitions, so admission finds no %s and refuses the first enable: use a type already installed, or install it first", typ, name, own[key], name)))
+		}
+	}
+	used(spec.LookupPath(cue.ParsePath("components")), componentType)
+	used(spec.LookupPath(cue.ParsePath("policies")), policyType)
+	used(spec.LookupPath(cue.ParsePath("workflow.steps")), workflowStepType)
+	return diags
+}
+
+// stringLiteral is where the file first writes a string, or no position.
+func (d *document) stringLiteral(value string) token.Pos {
+	pos := token.NoPos
+	ast.Walk(d.file, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && pos == token.NoPos && lit.Kind == token.STRING {
+			if s, err := strconv.Unquote(lit.Value); err == nil && s == value {
+				pos = lit.Pos()
+			}
+		}
+		return pos == token.NoPos
+	}, nil)
+	return pos
 }
 
 // typedLists are the lists of an Application's spec whose items name their

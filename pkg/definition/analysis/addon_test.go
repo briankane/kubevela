@@ -492,3 +492,19 @@ func TestAddonParameterEnableCanSchema(t *testing.T) {
 	}
 	assert.Empty(t, checkAddon(t, dir, "parameter.cue", "parameter: {\n\treplicas: *1 | >=1\n}\n"))
 }
+
+// KubeVela makes an addon's Application before its definitions, so the
+// Application cannot use a type only the addon itself installs.
+func TestAddonTemplateUsesItsOwnDefinition(t *testing.T) {
+	dir := addonDir(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "definitions"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "definitions", "cache.cue"), []byte("\"my-cache\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n\tparameter: {}\n}\n"), 0o600))
+	tmpl := strings.Replace(goodAddonTemplate, `type: "webservice"`, `type: "my-cache"`, 1)
+	got := checkAddon(t, dir, "template.cue", tmpl)
+	if assert.Len(t, got, 1, "%v", got) {
+		assert.Contains(t, got[0], "my-cache")
+		assert.Contains(t, got[0], "before it applies the addon's definitions")
+		assert.True(t, strings.HasPrefix(got[0], "8: "), "at the type: %s", got[0])
+	}
+	assert.Empty(t, checkAddon(t, dir, "template.cue", goodAddonTemplate), "a built-in type is there already")
+}
