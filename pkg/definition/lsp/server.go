@@ -253,13 +253,8 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 				result = NewApplicationResult{Snippet: snippet}
 			}
 		}
-	case MethodLocate:
-		var p LocateParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			if r, ok := s.locate(p); ok {
-				result = r
-			}
-		}
+	case MethodAddonSchema, MethodLocate:
+		return s.panelRequest(msg)
 	case MethodSource:
 		var p SourceParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -511,7 +506,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
