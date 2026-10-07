@@ -61,6 +61,8 @@ type Cluster struct {
 	// Watch calls each with an Application as it changes, nil once it is
 	// deleted, until ctx is done.
 	Watch func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
+	// Resource reads a resource as YAML.
+	Resource func(apiVersion, kind, namespace, name string) (string, error)
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -114,6 +116,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Watch = func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured)) {
 		watchApplication(ctx, cfg, namespace, name, each)
+	}
+	out.Resource = func(apiVersion, kind, namespace, name string) (string, error) {
+		return readResource(cfg, apiVersion, kind, namespace, name)
 	}
 	if !out.KubeVela {
 		return out, nil

@@ -461,6 +461,7 @@ type clusterState struct {
 	debugData  func(namespace, name string) ([]debugStep, error)
 	revision   func(namespace, app, typ, name string) (*unstructured.Unstructured, string, error)
 	watch      func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
+	resource   func(apiVersion, kind, namespace, name string) (string, error)
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -506,7 +507,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource}
 	s.clusterPackages = pkgs
 	s.clusterDefs = nil
 	if len(c.Definitions) > 0 {
