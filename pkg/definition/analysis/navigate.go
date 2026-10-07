@@ -51,7 +51,9 @@ type navIndex struct {
 	pathOf  map[*ast.Field]string
 	labelOf map[ast.Node]*ast.Field
 	chainOf map[*ast.Ident]navChain
-	idents  []*ast.Ident
+	// forOf is the for clause declaring each comprehension's variable.
+	forOf  map[*ast.Ident]*ast.ForClause
+	idents []*ast.Ident
 }
 
 // navChain is a reference, as root.a.b, up to one of its selectors.
@@ -65,7 +67,7 @@ func parseNav(path, doc string) (*navIndex, bool) {
 	if err != nil {
 		return nil, false
 	}
-	ix := &navIndex{path: path, file: f, fieldOf: map[ast.Node]*ast.Field{}, pathOf: map[*ast.Field]string{}, labelOf: map[ast.Node]*ast.Field{}, chainOf: map[*ast.Ident]navChain{}}
+	ix := &navIndex{path: path, file: f, fieldOf: map[ast.Node]*ast.Field{}, pathOf: map[*ast.Field]string{}, labelOf: map[ast.Node]*ast.Field{}, chainOf: map[*ast.Ident]navChain{}, forOf: map[*ast.Ident]*ast.ForClause{}}
 	var stack []string
 	ast.Walk(f, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -84,6 +86,11 @@ func parseNav(path, doc string) (*navIndex, bool) {
 					labels = append(labels, id.Name)
 					ix.chainOf[id] = navChain{root: root, labels: append([]string{}, labels...)}
 				}
+			}
+		case *ast.ForClause:
+			ix.forOf[x.Value] = x
+			if x.Key != nil {
+				ix.forOf[x.Key] = x
 			}
 		case *ast.Ident:
 			ix.idents = append(ix.idents, x)
@@ -165,13 +172,20 @@ func (ix *navIndex) resolve(root *ast.Ident, labels []string, siblings func(name
 			return decl{}, false
 		}
 	case *ast.LetClause:
+		// A let's field is the field of the value it is bound to.
 		if len(labels) > 0 {
-			return decl{}, false
+			if d, ok := ix.walk(ix.valueOf(target.Expr), labels); ok {
+				return d, true
+			}
 		}
 		return decl{ix: ix, node: target}, true
 	case *ast.Ident:
-		if len(labels) > 0 {
-			return decl{}, false
+		// A comprehension's value variable stands for an element of what it
+		// ranges over, so its fields are that element's.
+		if fc, ok := ix.forOf[target]; ok && len(labels) > 0 && fc.Value == target {
+			if d, ok := ix.walk(elementOf(ix.valueOf(fc.Source)), labels); ok {
+				return d, true
+			}
 		}
 		return decl{ix: ix, node: target}, true
 	case *ast.ImportSpec:
@@ -191,6 +205,123 @@ func (ix *navIndex) resolve(root *ast.Ident, labels []string, siblings func(name
 		d.field = next
 	}
 	return d, true
+}
+
+// valueOf is the expression a value is declared with: for a reference, the
+// value of the field it names; for an index, the indexed list's element.
+func (ix *navIndex) valueOf(e ast.Expr) ast.Expr {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return ix.valueOf(x.X)
+	case *ast.IndexExpr:
+		return elementOf(ix.valueOf(x.X))
+	case *ast.Ident, *ast.SelectorExpr:
+		var root *ast.Ident
+		var chain []*ast.Ident
+		if sel, ok := x.(*ast.SelectorExpr); ok {
+			root, chain = flatten(sel)
+		} else {
+			root = x.(*ast.Ident)
+		}
+		if root == nil {
+			return nil
+		}
+		var labels []string
+		for _, id := range chain {
+			labels = append(labels, id.Name)
+		}
+		d, ok := ix.resolve(root, labels, nil)
+		if !ok || d.field == nil {
+			return nil
+		}
+		return d.field.Value
+	}
+	return e
+}
+
+// elementOf is the element of a list, [...X] or [X, ...], or the value of a
+// struct's pattern, [string]: X; else e itself.
+func elementOf(e ast.Expr) ast.Expr {
+	switch x := e.(type) {
+	case *ast.ListLit:
+		for i := len(x.Elts) - 1; i >= 0; i-- {
+			if el, ok := x.Elts[i].(*ast.Ellipsis); ok && el.Type != nil {
+				return el.Type
+			}
+		}
+		if len(x.Elts) > 0 {
+			return x.Elts[0]
+		}
+	case *ast.StructLit:
+		for _, elt := range x.Elts {
+			if f, ok := elt.(*ast.Field); ok {
+				if _, pattern := f.Label.(*ast.ListLit); pattern {
+					return f.Value
+				}
+			}
+		}
+	case *ast.BinaryExpr:
+		if el := elementOf(x.X); el != x.X {
+			return el
+		}
+		return elementOf(x.Y)
+	case *ast.UnaryExpr:
+		return elementOf(x.X)
+	}
+	return e
+}
+
+// walk is the field labels name inside the value e, following references to
+// definitions and either side of a unification or disjunction.
+func (ix *navIndex) walk(e ast.Expr, labels []string) (decl, bool) {
+	var found *ast.Field
+	for _, l := range labels {
+		f, ok := ix.fieldInExpr(e, l, 0)
+		if !ok {
+			return decl{}, false
+		}
+		found, e = f, f.Value
+	}
+	if found == nil {
+		return decl{}, false
+	}
+	return decl{ix: ix, field: found}, true
+}
+
+// fieldInExpr is the field label in the struct e is, or refers to.
+func (ix *navIndex) fieldInExpr(e ast.Expr, label string, depth int) (*ast.Field, bool) {
+	if e == nil || depth > 8 {
+		return nil, false
+	}
+	switch x := e.(type) {
+	case *ast.StructLit:
+		for _, elt := range x.Elts {
+			if f, ok := elt.(*ast.Field); ok && labelName(f.Label) == label {
+				return f, true
+			}
+		}
+		for _, elt := range x.Elts {
+			if em, ok := elt.(*ast.EmbedDecl); ok {
+				if f, ok := ix.fieldInExpr(em.Expr, label, depth+1); ok {
+					return f, true
+				}
+			}
+		}
+	case *ast.ParenExpr:
+		return ix.fieldInExpr(x.X, label, depth+1)
+	case *ast.UnaryExpr:
+		return ix.fieldInExpr(x.X, label, depth+1)
+	case *ast.BinaryExpr:
+		if f, ok := ix.fieldInExpr(x.X, label, depth+1); ok {
+			return f, true
+		}
+		return ix.fieldInExpr(x.Y, label, depth+1)
+	case *ast.Ident, *ast.SelectorExpr:
+		if v := ix.valueOf(x); v != nil && v != e {
+			return ix.fieldInExpr(v, label, depth+1)
+		}
+	}
+	return nil, false
 }
 
 // target is the declaration offset names: a field whose label it is in, or

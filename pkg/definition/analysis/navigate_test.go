@@ -142,3 +142,55 @@ func applyRangeEdits(doc string, edits []RangeEdit) string {
 	}
 	return out
 }
+
+const comprehensionDoc = `"web": {
+	type: "component"
+	attributes: workload: type: "autodetects.core.oam.dev"
+}
+template: {
+	output: {
+		apiVersion: "v1"
+		kind:       "Service"
+		spec: ports: [for v in parameter.ports {port: v.port, name: v.name}]
+		spec: selector: {for k, l in parameter.labels {(k): l.value}}
+		metadata: annotations: {for p in parameter.probes {"\(p.path)": "x"}}
+	}
+	let first = parameter.ports[0]
+	let cfg = parameter.config
+	outputs: cm: {apiVersion: "v1", kind: "ConfigMap", data: x: cfg.key}
+	parameter: {
+		ports: [...{
+			port: int
+			name: string
+		}]
+		labels: [string]: {value: string}
+		#Probe: {path: string}
+		probes: [...#Probe]
+		config: {key: string}
+	}
+}
+`
+
+// A comprehension's variable, or a let's, leads through the value it stands
+// for: v.port to port in the element of parameter.ports.
+func TestDeclarationThroughComprehensions(t *testing.T) {
+	cases := map[string]struct {
+		word         string
+		n, within    int
+		line, column int
+	}{
+		"a list element's field":          {word: "v.port", within: 2, line: 18, column: 4},
+		"another":                         {word: "v.name", within: 2, line: 19, column: 4},
+		"a map value's field":             {word: "l.value", within: 2, line: 21, column: 22},
+		"a field of a definition element": {word: "p.path", within: 2, line: 22, column: 12},
+		"a let's field":                   {word: "cfg.key", within: 4, line: 24, column: 12},
+		"the variable itself":             {word: "v.port", within: 0, line: 9, column: 21},
+	}
+	for name, c := range cases {
+		loc, ok := Declaration("web.cue", comprehensionDoc, offsetOf(t, comprehensionDoc, c.word, max(c.n, 1), c.within))
+		if !assert.True(t, ok, name) {
+			continue
+		}
+		assert.Equal(t, []int{c.line, c.column}, []int{loc.Range.Start.Line, loc.Range.Start.Column}, name)
+	}
+}
