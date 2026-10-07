@@ -22,6 +22,8 @@ import (
 	"regexp"
 	"strings"
 
+	"cuelang.org/go/cue/format"
+
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/utils"
 )
@@ -30,6 +32,12 @@ import (
 // code actions.
 func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 	switch msg.Method {
+	case "textDocument/formatting":
+		var p DocumentFormattingParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		return formatEdits(s.docs[p.TextDocument.URI], pathOf(p.TextDocument.URI)), nil
 	case "textDocument/codeLens":
 		var p CodeLensParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
@@ -294,3 +302,20 @@ func documentSymbols(text string, syms []analysis.Symbol) []DocumentSymbol {
 // inlayHintType is the protocol's kind for a hint about a value's type or
 // value.
 const inlayHintType = 1
+
+// formatEdits format a CUE document as cue fmt does: one edit of the whole
+// document, or none for one formatted already, one that does not parse (its
+// errors are reported already), or one that is not CUE.
+func formatEdits(text, path string) []TextEdit {
+	edits := []TextEdit{}
+	if filepath.Ext(path) != ".cue" {
+		return edits
+	}
+	out, err := format.Source([]byte(text))
+	if err != nil || string(out) == text {
+		return edits
+	}
+	lines := strings.Split(text, "\n")
+	end := toProtocolPosition(text, len(lines), len(lines[len(lines)-1])+1)
+	return append(edits, TextEdit{Range: Range{End: end}, NewText: string(out)})
+}

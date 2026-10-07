@@ -131,6 +131,8 @@ type ServerCapabilities struct {
 	InlayHintProvider bool `json:"inlayHintProvider,omitempty"`
 	// CodeLensProvider offers commands shown above lines.
 	CodeLensProvider *CodeLensOptions `json:"codeLensProvider,omitempty"`
+	// DocumentFormattingProvider formats a document as cue fmt does.
+	DocumentFormattingProvider bool `json:"documentFormattingProvider,omitempty"`
 }
 
 // CompletionOptions is the server's completion capability.
@@ -452,6 +454,11 @@ type ComponentType struct {
 // ComponentTypesResult is the component types, by name.
 type ComponentTypesResult struct {
 	Types []ComponentType `json:"types"`
+}
+
+// DocumentFormattingParams ask for a document to be formatted.
+type DocumentFormattingParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }
 
 // CodeLensOptions are the server's code lenses' options.

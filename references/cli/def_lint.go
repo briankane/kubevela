@@ -35,9 +35,9 @@ import (
 // the language server does.
 func NewDefinitionLintCommand() *cobra.Command {
 	var (
-		asJSON, quiet, verbose, kinds, cluster bool
-		failOn                                 string
-		workspace                              []string
+		asJSON, quiet, verbose, kinds, cluster, fmtCheck bool
+		failOn                                           string
+		workspace                                        []string
 	)
 	cmd := &cobra.Command{
 		Use:   "lint [PATH...]",
@@ -82,7 +82,7 @@ func NewDefinitionLintCommand() *cobra.Command {
 				}
 				workspace = lintWorkspace(args, cwd, isDir)
 			}
-			opts := lsp.CheckOptions{Kinds: kinds, Workspace: workspace}
+			opts := lsp.CheckOptions{Kinds: kinds, Workspace: workspace, Format: fmtCheck}
 			if cluster {
 				opts.Cluster = lsp.ConnectKubeconfig
 			}
@@ -133,6 +133,7 @@ func NewDefinitionLintCommand() *cobra.Command {
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Print the summary only.")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print information findings too, such as missing +usage markers.")
 	cmd.Flags().BoolVar(&kinds, "kinds", true, "Check outputs against Kubernetes' own kinds and the CRDs among the files.")
+	cmd.Flags().BoolVar(&fmtCheck, "fmt", false, "Also report each CUE file cue fmt would change.")
 	cmd.Flags().BoolVar(&cluster, "cluster", false, "Also read the kubeconfig's cluster, read-only: the kinds it serves, when it runs KubeVela, and its Package resources.")
 	cmd.Flags().StringSliceVar(&workspace, "workspace", nil, "The folders the files around those checked come from: definitions they extend, Package resources and CRDs. Defaults to the current directory, or a path's own folder for a path outside it.")
 	cmd.Flags().StringVar(&failOn, "fail-on", lsp.FindingError, "Exit non-zero on findings of this severity or worse: error, warning or info.")

@@ -435,16 +435,17 @@ func (s *Server) handle(msg message) error {
 					OpenClose: true,
 					Change:    TextDocumentSyncFull,
 				},
-				HoverProvider:          true,
-				CompletionProvider:     &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
-				DefinitionProvider:     true,
-				ReferencesProvider:     true,
-				RenameProvider:         true,
-				CodeActionProvider:     true,
-				DocumentSymbolProvider: true,
-				InlayHintProvider:      true,
-				CodeLensProvider:       &CodeLensOptions{},
-				Experimental:           &ExperimentalCapabilities{VelaProtocol: VelaProtocol},
+				HoverProvider:              true,
+				CompletionProvider:         &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
+				DefinitionProvider:         true,
+				ReferencesProvider:         true,
+				RenameProvider:             true,
+				CodeActionProvider:         true,
+				DocumentSymbolProvider:     true,
+				InlayHintProvider:          true,
+				CodeLensProvider:           &CodeLensOptions{},
+				DocumentFormattingProvider: true,
+				Experimental:               &ExperimentalCapabilities{VelaProtocol: VelaProtocol},
 			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
 		}
@@ -488,7 +489,7 @@ func (s *Server) handle(msg message) error {
 				result = h
 			}
 		}
-	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint", "textDocument/codeLens":
+	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint", "textDocument/codeLens", "textDocument/formatting":
 		result, rerr = s.navigationRequest(msg)
 	case "textDocument/completion":
 		var p CompletionParams

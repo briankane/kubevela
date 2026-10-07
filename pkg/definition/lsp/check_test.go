@@ -176,3 +176,25 @@ func TestWorkspaceDiagnostics(t *testing.T) {
 	got = published(start(map[string]interface{}{"workspaceDiagnostics": false}))
 	assert.NotContains(t, got, "file://"+broken, "off: only open files")
 }
+
+// With Format, a CUE file cue fmt would change is reported.
+func TestCheckFormat(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "messy.cue"), []byte(strings.Replace(fixedDef, "\toutput: {", "output:   {", 1)), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tidy.cue"), []byte(fixedDef), 0o600))
+	findings, _, err := Check([]string{dir}, CheckOptions{Format: true})
+	require.NoError(t, err)
+	var formatted []string
+	for _, f := range findings {
+		if strings.Contains(f.Message, "cue fmt") {
+			formatted = append(formatted, filepath.Base(f.Path))
+		}
+	}
+	assert.Equal(t, []string{"messy.cue"}, formatted)
+
+	findings, _, err = Check([]string{dir}, CheckOptions{})
+	require.NoError(t, err)
+	for _, f := range findings {
+		assert.NotContains(t, f.Message, "cue fmt", "only when asked")
+	}
+}

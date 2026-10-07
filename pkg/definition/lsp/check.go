@@ -46,6 +46,8 @@ type CheckOptions struct {
 	// Cluster, when set, is read for its Package resources and, with Kinds,
 	// the kinds it serves.
 	Cluster ClusterConnector
+	// Format reports each CUE file checked that cue fmt would change.
+	Format bool
 	// Workspace is the folders indexed for what the files checked draw on:
 	// the definitions they extend, Package resources and CRDs. The paths
 	// checked are indexed too; with none, they are all there is.
@@ -90,6 +92,9 @@ func Check(roots []string, opts CheckOptions) ([]Finding, int, error) {
 		text, err := os.ReadFile(path)
 		if err != nil {
 			return nil, 0, err
+		}
+		if opts.Format && len(formatEdits(string(text), path)) > 0 {
+			findings = append(findings, Finding{Path: path, Line: 1, Column: 1, Severity: FindingWarning, Message: "not formatted as cue fmt formats it: run cue fmt, or Format Document in the editor"})
 		}
 		for _, d := range s.diagnose("file://"+path, string(text)) {
 			findings = append(findings, Finding{

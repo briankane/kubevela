@@ -218,6 +218,7 @@ func TestServerLifecycle(t *testing.T) {
 	assert.True(t, caps.DocumentSymbolProvider, "the outline")
 	assert.True(t, caps.InlayHintProvider, "inlay hints")
 	assert.NotNil(t, caps.CodeLensProvider, "code lenses")
+	assert.True(t, caps.DocumentFormattingProvider, "formatting")
 	require.NotNil(t, init.Capabilities.Experimental)
 	assert.Equal(t, VelaProtocol, init.Capabilities.Experimental.VelaProtocol)
 	c.send("initialized", map[string]interface{}{}, false)
@@ -261,7 +262,7 @@ func TestServerIgnoresPlainCUE(t *testing.T) {
 
 func TestServerRejectsUnknownRequests(t *testing.T) {
 	c := newClient(t)
-	c.send("textDocument/formatting", map[string]interface{}{}, true)
+	c.send("textDocument/semanticTokens/full", map[string]interface{}{}, true)
 	m := c.read()
 	var e ResponseError
 	require.NoError(t, json.Unmarshal(m["error"], &e))
@@ -310,4 +311,25 @@ func TestGuardedRecoversAPanic(t *testing.T) {
 	diags, err = guarded(func() []Diagnostic { return []Diagnostic{{Message: "fine"}} })
 	require.NoError(t, err)
 	assert.Len(t, diags, 1)
+}
+
+// Format Document formats CUE as cue fmt does, as one edit of the whole
+// document; a formatted document, or one that does not parse, gets none.
+func TestFormatting(t *testing.T) {
+	c := newClient(t)
+	c.drain()
+	format := func(text string) []TextEdit {
+		c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+		m := c.response(c.send("textDocument/formatting", DocumentFormattingParams{TextDocument: TextDocumentIdentifier{URI: uri}}, true))
+		var edits []TextEdit
+		require.NoError(t, json.Unmarshal(m["result"], &edits), string(m["result"]))
+		return edits
+	}
+	edits := format("template: {\noutput:   {a: 1}\n}\n")
+	require.Len(t, edits, 1)
+	assert.Equal(t, "template: {\n\toutput: {a: 1}\n}\n", edits[0].NewText)
+	assert.Equal(t, Position{Line: 0, Character: 0}, edits[0].Range.Start)
+
+	assert.Empty(t, format("template: {\n\toutput: {a: 1}\n}\n"), "formatted already")
+	assert.Empty(t, format("template: {\n"), "does not parse")
 }
