@@ -19,6 +19,7 @@ package lsp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -459,6 +460,7 @@ type clusterState struct {
 	definition func(kind, name string) (*unstructured.Unstructured, string, error)
 	debugData  func(namespace, name string) ([]debugStep, error)
 	revision   func(namespace, app, typ, name string) (*unstructured.Unstructured, string, error)
+	watch      func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -504,7 +506,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch}
 	s.clusterPackages = pkgs
 	s.clusterDefs = nil
 	if len(c.Definitions) > 0 {

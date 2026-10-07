@@ -58,6 +58,9 @@ type Cluster struct {
 	// RevisionDefinition reads a definition as an Application's current
 	// revision recorded it, and names the revision.
 	RevisionDefinition func(namespace, app, typ, name string) (*unstructured.Unstructured, string, error)
+	// Watch calls each with an Application as it changes, nil once it is
+	// deleted, until ctx is done.
+	Watch func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -108,6 +111,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.RevisionDefinition = func(namespace, app, typ, name string) (*unstructured.Unstructured, string, error) {
 		return readRevisionDefinition(cfg, namespace, app, typ, name)
+	}
+	out.Watch = func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured)) {
+		watchApplication(ctx, cfg, namespace, name, each)
 	}
 	if !out.KubeVela {
 		return out, nil

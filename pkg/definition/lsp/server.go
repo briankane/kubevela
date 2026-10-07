@@ -53,6 +53,9 @@ type Server struct {
 	mu       sync.Mutex
 	out      io.Writer
 	shutdown bool
+	// watches end each Application watch, by namespace/name. Only the
+	// message loop uses it.
+	watches map[string]context.CancelFunc
 	// docs is the text of each open document. Only the message loop uses it.
 	docs map[string]string
 	// folders are the workspace's roots; published is what each global policy
@@ -478,6 +481,17 @@ func (s *Server) handle(msg message) error {
 		}
 	case "shutdown":
 		s.shutdown = true
+		s.stopWatches()
+	case MethodWatchApplication, MethodUnwatchApplication:
+		var p WatchApplicationParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			if msg.Method == MethodWatchApplication {
+				rerr = s.startWatch(p)
+			} else {
+				s.stopWatch(p)
+			}
+			result = struct{}{}
+		}
 	case "textDocument/didOpen":
 		var p DidOpenTextDocumentParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
