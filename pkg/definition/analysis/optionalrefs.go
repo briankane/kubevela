@@ -29,17 +29,15 @@ import (
 	"cuelang.org/go/cue/token"
 )
 
-// checkOptionalReferences warns of each read of an optional parameter that
-// nothing gates and that reaches what KubeVela renders: where the user does
-// not give it, the render fails. What is rendered is the type's output
-// fields (a component's output and outputs, a trait's patch, patchOutputs
-// and outputs; every field of any other type), and the helpers and lets they
-// use. A read is gated under if p != _|_ (for p or an ancestor of it), in a
-// test against _|_, in a disjunction, which falls back to another branch, or
-// written into an optional field. A for or if at the template's level, or
-// directly in outputs, only chooses what is rendered. && does not
-// short-circuit, so a comparison is not gated by a guard before it in the
-// same condition.
+// checkOptionalReferences warns of each read of an optional parameter in
+// the template that nothing gates: where the user does not give it, the
+// read fails the render, or will once what reads it is used. A read is
+// gated under if p != _|_ (for p or an ancestor of it), in a test against
+// _|_, in a disjunction, which falls back to another branch, or written into
+// an optional field. A for or if at the template's level, or directly in
+// outputs, only chooses what is declared, so its clauses are safe. && does
+// not short-circuit, so a comparison is not gated by a guard before it in
+// the same condition.
 func (d *document) checkOptionalReferences() []Diagnostic {
 	tmpl, ok := d.template.Value.(*ast.StructLit)
 	if !ok {
@@ -49,21 +47,13 @@ func (d *document) checkOptionalReferences() []Diagnostic {
 	if !ok {
 		return nil
 	}
-	c := &optionalCheck{d: d, param: param, used: usedNames(tmpl)}
+	c := &optionalCheck{d: d, param: param}
 	c.top(tmpl.Elts, nil)
 	return c.diags
 }
 
-// renderedFields are the template fields a definition type renders; nil
-// for a type every field of which is evaluated.
-var renderedFields = map[string]map[string]bool{
-	componentType: {"output": true, "outputs": true},
-	traitType:     {"patch": true, "patchOutputs": true, "outputs": true},
-}
-
 // top checks the template's own declarations under guards.
 func (c *optionalCheck) top(elts []ast.Decl, guards [][]string) {
-	rendered := renderedFields[c.d.typ]
 	for _, elt := range elts {
 		switch x := elt.(type) {
 		case *ast.Field:
@@ -73,13 +63,11 @@ func (c *optionalCheck) top(elts []ast.Decl, guards [][]string) {
 			case x.Constraint == token.OPTION:
 			case label == "outputs":
 				c.chooser(x.Value, guards)
-			case rendered == nil && !strings.HasPrefix(label, "_") && !strings.HasPrefix(label, "#"), rendered[label], c.used[label]:
+			default:
 				c.visit(x.Value, guards, x, false)
 			}
 		case *ast.LetClause:
-			if c.used[x.Ident.Name] {
-				c.visit(x.Expr, guards, nil, false)
-			}
+			c.visit(x.Expr, guards, nil, false)
 		case *ast.Comprehension:
 			// It chooses what the template declares: its clauses are safe,
 			// and what it declares is the template's own.
@@ -120,27 +108,6 @@ func (c *optionalCheck) chooser(v ast.Expr, guards [][]string) {
 		}
 		c.chooser(cmp.Value, inner)
 	}
-}
-
-// usedNames are the names the template refers to, so the helpers and lets
-// that something uses.
-func usedNames(tmpl *ast.StructLit) map[string]bool {
-	used := map[string]bool{}
-	labels := map[ast.Node]bool{}
-	ast.Walk(tmpl, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Field:
-			labels[x.Label] = true
-		case *ast.LetClause:
-			labels[x.Ident] = true
-		case *ast.Ident:
-			if !labels[x] {
-				used[x.Name] = true
-			}
-		}
-		return true
-	}, nil)
-	return used
 }
 
 // parameterSchema is the template's parameter evaluated on its own, from a
@@ -184,8 +151,6 @@ func (d *document) parameterSchema() (cue.Value, bool) {
 type optionalCheck struct {
 	d     *document
 	param cue.Value
-	// used are the names the template refers to.
-	used  map[string]bool
 	diags []Diagnostic
 }
 

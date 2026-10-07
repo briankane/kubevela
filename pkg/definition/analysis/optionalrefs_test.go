@@ -59,10 +59,14 @@ func ungated(t *testing.T, body string) []string {
 	return out
 }
 
-// What fails is a read that reaches what KubeVela renders; each case here
-// was checked against vela dry-run with the parameter left out.
+// Every read in the template is checked, rendered or not: one nothing uses
+// yet fails the render once something does. The safe forms were checked
+// against vela dry-run with the parameter left out.
 func TestOptionalReferences(t *testing.T) {
 	flagged := map[string]string{
+		"a helper nothing uses":                 "\tvalue: {inner: parameter.param}",
+		"a hidden helper nothing uses":          "\t_value: parameter.param",
+		"a let nothing uses":                    "\tlet v = parameter.param",
 		"a read by index":                       "\toutput: data: inner: parameter[\"param\"]",
 		"a read in output":                      "\toutput: data: inner: parameter.param",
 		"a read in an outputs object":           "\toutputs: x: {apiVersion: \"v1\", kind: \"ConfigMap\", data: v: parameter.param}",
@@ -91,8 +95,6 @@ func TestOptionalReferences(t *testing.T) {
 		"a required parameter":          "\toutput: data: v: parameter.image",
 		"a defaulted parameter":         "\toutput: data: v: parameter.count",
 		"a guard on a for":              "\toutput: data: {if parameter.list != _|_ {for x in parameter.list {\"\\(x)\": x}}}",
-		"a helper nothing uses":         "\tvalue: {inner: parameter.param}",
-		"a hidden helper nothing uses":  "\t_value: parameter.param",
 		"an optional field":             "\toutput: data: v?: parameter.param",
 		"a for choosing outputs":        "\toutputs: {for x in parameter.list {\"\\(x)\": {apiVersion: \"v1\", kind: \"ConfigMap\"}}}",
 		"an if choosing outputs":        "\toutputs: {if parameter.mode == \"a\" {y: {apiVersion: \"v1\", kind: \"ConfigMap\"}}}",
