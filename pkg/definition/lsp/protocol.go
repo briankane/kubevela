@@ -695,6 +695,10 @@ type ClusterDefinitionParams struct {
 	// as a definition's header writes it, and its name.
 	Type string `json:"type,omitempty"`
 	Name string `json:"name,omitempty"`
+	// Application, in Namespace, reads the definition as that Application's
+	// current revision recorded it, rather than as the cluster holds it now.
+	Application string `json:"application,omitempty"`
+	Namespace   string `json:"namespace,omitempty"`
 }
 
 // ClusterDefinitionResult is the applied definition in CUE, where it is.
@@ -702,6 +706,8 @@ type ClusterDefinitionResult struct {
 	CUE       string `json:"cue"`
 	Namespace string `json:"namespace"`
 	Context   string `json:"context"`
+	// Revision is the ApplicationRevision it was read from, if it was.
+	Revision string `json:"revision,omitempty"`
 }
 
 // MethodDefinitionFiles lists the files of the workspace's definitions. It

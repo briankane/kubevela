@@ -458,6 +458,7 @@ type clusterState struct {
 	err        error
 	definition func(kind, name string) (*unstructured.Unstructured, string, error)
 	debugData  func(namespace, name string) ([]debugStep, error)
+	revision   func(namespace, app, typ, name string) (*unstructured.Unstructured, string, error)
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -503,7 +504,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition}
 	s.clusterPackages = pkgs
 	s.clusterDefs = nil
 	if len(c.Definitions) > 0 {
@@ -657,6 +658,22 @@ func (s *Server) clusterDefinition(id json.RawMessage, p ClusterDefinitionParams
 		return
 	}
 	read, kubeContext := s.cluster.definition, s.cluster.context
+	revision := ""
+	if p.Application != "" {
+		fromRevision := s.cluster.revision
+		if fromRevision == nil {
+			fail("the cluster's revisions cannot be read")
+			return
+		}
+		read = func(_, name string) (*unstructured.Unstructured, string, error) {
+			obj, rev, err := fromRevision(p.Namespace, p.Application, typ, name)
+			revision = rev
+			if err != nil {
+				return nil, "", err
+			}
+			return obj, obj.GetNamespace(), nil
+		}
+	}
 	go func() {
 		obj, namespace, err := read(kind, name)
 		s.post(func() {
@@ -670,7 +687,7 @@ func (s *Server) clusterDefinition(id json.RawMessage, p ClusterDefinitionParams
 				fail(err.Error())
 				return
 			}
-			_ = s.reply(id, ClusterDefinitionResult{CUE: src, Namespace: namespace, Context: kubeContext}, nil)
+			_ = s.reply(id, ClusterDefinitionResult{CUE: src, Namespace: namespace, Context: kubeContext, Revision: revision}, nil)
 		})
 	}()
 }
