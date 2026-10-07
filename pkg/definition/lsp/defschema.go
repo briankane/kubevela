@@ -71,24 +71,25 @@ func uiSchemaName(typ, name string) string {
 
 // parameterSchema is a definition's parameter as the controller publishes it
 // for VelaUX. A template that does not compile on its own, as one extending
-// another or importing a workspace package, has its parameter compiled alone.
+// another or importing a workspace package, has its parameter compiled alone;
+// one the generator refuses is read field by field.
 func parameterSchema(def analysis.AppDefinition) ([]byte, error) {
 	tmpl, ok := analysis.TemplateSource(def.Name+".cue", []byte(def.CUE))
 	if !ok {
 		return nil, fmt.Errorf("%s has no template", def.Name)
 	}
 	s, err := schema.ParsePropertiesToSchema(context.Background(), tmpl.Body)
-	if err != nil {
-		param, found := webhookapp.TargetParameter(tmpl.Body)
-		if !found {
-			return nil, err
-		}
-		s, err = schema.ParseValueToSchema(param.Context().CompileString("{}").FillPath(cue.ParsePath("parameter"), param))
-		if err != nil {
-			return nil, err
-		}
+	if err == nil {
+		return s.MarshalJSON()
 	}
-	return s.MarshalJSON()
+	param, found := webhookapp.TargetParameter(tmpl.Body)
+	if !found {
+		return nil, err
+	}
+	if s, err := schema.ParseValueToSchema(param.Context().CompileString("{}").FillPath(cue.ParsePath("parameter"), param)); err == nil {
+		return s.MarshalJSON()
+	}
+	return json.Marshal(fallbackSchema(param))
 }
 
 // workspaceUISchema is the UI schema file a workspace folder holds for a

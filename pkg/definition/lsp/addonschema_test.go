@@ -63,3 +63,14 @@ func TestAddonSchema(t *testing.T) {
 	m = c.response(c.send(MethodAddonSchema, AddonSchemaParams{Folder: filepath.Join(dir, "nope")}, true))
 	assert.Contains(t, string(m["error"]), "metadata.yaml")
 }
+
+// An addon whose parameters the generator refuses still gives a form.
+func TestAddonSchemaTheGeneratorRefuses(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "metadata.yaml"), []byte("name: x\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "parameter.cue"), []byte("parameter: {\n\treplicas: *1 | int & >=1\n}\n"), 0o600))
+	r, err := addonSchema(dir)
+	require.NoError(t, err)
+	assert.Empty(t, r.SchemaError)
+	assert.Contains(t, string(r.Schema), `"replicas"`)
+}

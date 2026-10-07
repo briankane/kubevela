@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"cuelang.org/go/cue"
+	"cuelang.org/go/cue/cuecontext"
 	"sigs.k8s.io/yaml"
 
 	"github.com/oam-dev/kubevela/pkg/schema"
@@ -77,10 +79,17 @@ func addonSchema(folder string) (AddonSchemaResult, error) {
 		out.Dependencies = append(out.Dependencies, d.Name)
 	}
 	if param, err := os.ReadFile(filepath.Join(folder, "parameter.cue")); err == nil { //nolint:gosec // the workspace's own addon
-		if s, err := schema.ParsePropertiesToSchema(context.Background(), string(param)); err != nil {
+		if s, err := schema.ParsePropertiesToSchema(context.Background(), string(param)); err == nil {
+			if b, err := s.MarshalJSON(); err == nil {
+				out.Schema = b
+			}
+		} else if v := cuecontext.New().CompileBytes(param).LookupPath(cue.ParsePath("parameter")); v.Err() == nil && v.Exists() {
+			// The generator refuses some constraints it could not express: read it field by field.
+			if b, err := json.Marshal(fallbackSchema(v)); err == nil {
+				out.Schema = b
+			}
+		} else {
 			out.SchemaError = err.Error()
-		} else if b, err := s.MarshalJSON(); err == nil {
-			out.Schema = b
 		}
 	}
 	if ui, ok := workspaceUISchema([]string{filepath.Join(folder, "schemas")}, "addon-uischema-"+meta.Name); ok {
