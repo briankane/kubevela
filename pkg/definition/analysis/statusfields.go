@@ -142,8 +142,9 @@ func (d *document) statusFields() []statusField {
 			if !v.Pos().IsValid() || !v.End().IsValid() {
 				continue
 			}
-			sf.text = string(d.src[v.Pos().Offset():v.End().Offset()])
-			sf.start, sf.end = v.Pos().Offset(), v.End().Offset()
+			end := furthestEnd(v)
+			sf.text = string(d.src[v.Pos().Offset():end])
+			sf.start, sf.end = v.Pos().Offset(), end
 			sf.line, sf.firstCol, sf.col = v.Pos().Line(), v.Pos().Column()-1, 0
 		default:
 			continue
@@ -676,4 +677,18 @@ func schemaOfRead(v cue.Value, e ast.Expr) cue.Value {
 		labels = append(labels, id.Name)
 	}
 	return walk(schemaChild(v, cue.Str(root.Name)), labels)
+}
+
+// furthestEnd is the offset after the last of n's nodes. CUE gives an
+// interpolation's end as its last expression's, before the string closing
+// it, so n's own end can fall short.
+func furthestEnd(n ast.Node) int {
+	end := n.End().Offset()
+	ast.Walk(n, func(c ast.Node) bool {
+		if e := c.End(); e.IsValid() && e.Offset() > end {
+			end = e.Offset()
+		}
+		return true
+	}, nil)
+	return end
 }

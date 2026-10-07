@@ -315,6 +315,7 @@ func TestStatusFieldsWithoutBraces(t *testing.T) {
 		workload: definition: {apiVersion: "apps/v1", kind: "Deployment"}
 		status: {
 			healthPolicy: isHealth: bool
+			customStatus: message: "\(*context.output.status.readyReplicas | 0) ready"
 			details: replicas: context.output.spec.replicas
 		}
 	}
@@ -332,5 +333,5 @@ template: {
 	}
 	require.Len(t, got, 2, "%v", got)
 	assert.Contains(t, got[0], "6:18 healthPolicy: isHealth is only a type")
-	assert.Contains(t, got[1], "7:13 details: replicas is int")
+	assert.Contains(t, got[1], "8:13 details: replicas is int", "and an interpolation, read to its end, is fine")
 }
