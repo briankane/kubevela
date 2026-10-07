@@ -177,3 +177,22 @@ func TestDefinitionInSources(t *testing.T) {
 		assert.Contains(t, got[locs[0].Range.Start.Character:], strings.TrimPrefix(word[strings.LastIndex(word, ".")+1:], "."), word)
 	}
 }
+
+// After field:, completion offers the types a parameter can declare.
+func TestCompleteFieldType(t *testing.T) {
+	src := strings.Replace(fixedDef, "template: {\n", "template: {\n\tparameter: {\n\t\ttimeout: \n\t}\n", 1)
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: src}}, false)
+	c.diagnostics()
+	line := 6
+	col := len(strings.Split(src, "\n")[line])
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: Position{Line: uint32(line), Character: uint32(col)}}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label)
+	}
+	assert.Contains(t, labels, "string")
+	assert.Contains(t, labels, "*default | type")
+}

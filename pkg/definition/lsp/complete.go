@@ -65,6 +65,9 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 	if len(candidates) == 0 {
 		candidates = analysis.CompleteInCall(text, len(upToCursor), ext)
 	}
+	if len(candidates) == 0 && !utils.IsCUETestFile(pathOf(uri)) {
+		candidates = analysis.CompleteFieldValue(pathOf(uri), text, len(upToCursor), opts)
+	}
 	if len(candidates) == 0 {
 		candidates = append(candidates, analysis.CompleteMarker(before)...)
 		candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
