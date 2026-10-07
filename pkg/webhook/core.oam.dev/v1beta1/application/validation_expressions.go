@@ -153,46 +153,13 @@ func (h *ValidatingHandler) validateExpressionTargetTypes(ctx context.Context, a
 				continue
 			}
 
-			srcKind, srcType, err := expressionValueType(raw, schemasFor, ctxSchema)
-			if err != nil {
-				errs = append(errs, field.Invalid(lf.fieldPath, raw, err.Error()))
-				continue
-			}
-			if param == nil {
-				continue
-			}
-			dstKind, declared := param.kindAt(lf.segments)
-			if !declared {
-				// The consuming template may accept it via an open struct; do not
-				// over-report, exactly as the directive's check does not.
-				continue
-			}
-			if !kindsCompatible(srcKind, dstKind) {
-				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
-					fmt.Sprintf("type mismatch: expression %s is %s but %s expects %s",
-						raw, kindName(srcKind), targetDesc, kindName(dstKind))))
-				continue
-			}
-			// The kinds agree, which for a collection means only "both lists".
-			if dv, ok := param.valueAt(lf.segments); ok {
-				if agree, want, got := celexpr.ElementsCompatible(srcType, dv); !agree {
-					errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
-						fmt.Sprintf("type mismatch: expression %s is %s but %s expects %s",
-							raw, got, targetDesc, want)))
-					continue
-				}
-			}
-
-			// The same rule the directive follows: a default is required only
-			// when a value that may be absent feeds a required parameter.
-			undefended, uerr := undefendedReads(raw, schemasFor)
-			if uerr != nil || len(undefended) == 0 {
-				continue
-			}
-			if param.requiredAt(lf.segments) {
-				errs = append(errs, field.Invalid(lf.fieldPath, lf.path,
-					fmt.Sprintf("%s may be absent and feeds required %s; %s",
-						undefended[0], targetDesc, defaultHint(undefended[0].String()))))
+			msg, ofExpr := expressionTargetError(raw, schemasFor, ctxSchema, param, lf.segments, targetDesc)
+			switch {
+			case msg == "":
+			case ofExpr:
+				errs = append(errs, field.Invalid(lf.fieldPath, raw, msg))
+			default:
+				errs = append(errs, field.Invalid(lf.fieldPath, lf.path, msg))
 			}
 		}
 	}
@@ -410,6 +377,51 @@ func expressionValueType(raw string, schemas map[string]string,
 		return cue.BottomKind, nil, err
 	}
 	return celKind(t), t, nil
+}
+
+// expressionTargetError is why admission refuses a property's expression,
+// raw, feeding the parameter at segs of param, or "" when it accepts it.
+// ofExpr reports whether the fault is the expression's own rather than its
+// fit to the parameter. schemas maps each source binding to its
+// SourceDefinition's schema text.
+func expressionTargetError(raw string, schemas map[string]string, ctxSchema propexpr.ContextSchema,
+	param *cueStruct, segs []string, targetDesc string) (msg string, ofExpr bool) {
+	srcKind, srcType, err := expressionValueType(raw, schemas, ctxSchema)
+	if err != nil {
+		return err.Error(), true
+	}
+	if param == nil {
+		return "", false
+	}
+	dstKind, declared := param.kindAt(segs)
+	if !declared {
+		// The consuming template may accept it via an open struct; do not
+		// over-report, exactly as the directive's check does not.
+		return "", false
+	}
+	if !kindsCompatible(srcKind, dstKind) {
+		return fmt.Sprintf("type mismatch: expression %s is %s but %s expects %s",
+			raw, kindName(srcKind), targetDesc, kindName(dstKind)), false
+	}
+	// The kinds agree, which for a collection means only "both lists".
+	if dv, ok := param.valueAt(segs); ok {
+		if agree, want, got := celexpr.ElementsCompatible(srcType, dv); !agree {
+			return fmt.Sprintf("type mismatch: expression %s is %s but %s expects %s",
+				raw, got, targetDesc, want), false
+		}
+	}
+
+	// The same rule the directive follows: a default is required only
+	// when a value that may be absent feeds a required parameter.
+	undefended, uerr := undefendedReads(raw, schemas)
+	if uerr != nil || len(undefended) == 0 {
+		return "", false
+	}
+	if param.requiredAt(segs) {
+		return fmt.Sprintf("%s may be absent and feeds required %s; %s",
+			undefended[0], targetDesc, defaultHint(undefended[0].String())), false
+	}
+	return "", false
 }
 
 // celKind maps a CEL type onto the CUE kind the target check compares against.
