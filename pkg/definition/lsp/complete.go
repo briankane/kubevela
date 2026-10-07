@@ -79,6 +79,9 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 	if len(candidates) == 0 {
 		candidates = analysis.CompleteValueAt(text, len(upToCursor), ext)
 	}
+	if len(candidates) == 0 && filepath.Ext(pathOf(uri)) == ".cue" {
+		candidates = analysis.CompleteRootName(text, len(upToCursor))
+	}
 	return completionList(list, candidates, before, pos)
 }
 
