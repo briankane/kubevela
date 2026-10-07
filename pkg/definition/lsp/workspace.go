@@ -254,8 +254,10 @@ func (s *Server) options() analysis.Options {
 		open[uri] = text
 	}
 	return analysis.Options{
-		Kinds:     s.kinds,
-		Externals: s.externals,
+		Kinds:        s.kinds,
+		Externals:    s.externals,
+		Applications: appDefinitions{s: s},
+		ClusterRead:  s.clusterEnabled && s.cluster != nil && s.cluster.vela && s.clusterDefs != nil,
 		Definitions: func(name string) (string, []byte, bool) {
 			path, ok := byName[name]
 			if !ok {
@@ -491,6 +493,10 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 	}
 	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition}
 	s.clusterPackages = pkgs
+	s.clusterDefs = nil
+	if len(c.Definitions) > 0 {
+		s.clusterDefs = newClusterDefinitions(c.Definitions)
+	}
 	if len(pkgs) > 0 {
 		s.rebuildExternals()
 	}
@@ -498,7 +504,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 	if s.cluster.vela {
 		s.rebuildKinds()
 	}
-	return s.cluster.vela || len(pkgs) > 0
+	return s.cluster.vela || len(pkgs) > 0 || s.clusterDefs != nil
 }
 
 // rebuildKinds builds the schemas outputs are checked against: Kubernetes'
@@ -537,6 +543,7 @@ func (s *Server) rebuildKinds() {
 func (s *Server) dropCluster() {
 	s.cluster = nil
 	s.clusterPackages = nil
+	s.clusterDefs = nil
 	s.rebuildExternals()
 	s.rebuildKinds()
 	s.republish()
@@ -547,6 +554,7 @@ func (s *Server) dropCluster() {
 func (s *Server) reconnectCluster() {
 	s.cluster = nil
 	s.clusterPackages = nil
+	s.clusterDefs = nil
 	s.connectCluster()
 }
 

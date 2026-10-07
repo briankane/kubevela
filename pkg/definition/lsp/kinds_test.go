@@ -276,3 +276,63 @@ func TestClusterDefinition(t *testing.T) {
 	m = c.response(c.send(MethodClusterDefinition, ClusterDefinitionParams{TextDocument: TextDocumentIdentifier{URI: other}}, true))
 	assert.Contains(t, string(m["error"]), "not applied")
 }
+
+// clusterDef is a definition as the cluster holds one.
+func clusterDef(kind, name, template string) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "core.oam.dev/v1beta1",
+		"kind":       kind,
+		"metadata":   map[string]interface{}{"name": name, "namespace": "vela-system", "annotations": map[string]interface{}{"definition.oam.dev/description": "from the cluster"}},
+		"spec": map[string]interface{}{
+			"workload":  map[string]interface{}{"type": "autodetects.core.oam.dev"},
+			"schematic": map[string]interface{}{"cue": map[string]interface{}{"template": template}},
+		},
+	}}
+}
+
+// withDefinitions is a cluster with KubeVela holding a cluster-web
+// component and a web component the workspace overrides.
+func withDefinitions() (Cluster, error) {
+	c, err := velaCluster()
+	c.Definitions = []unstructured.Unstructured{
+		clusterDef("ComponentDefinition", "cluster-web", "output: {apiVersion: \"v1\", kind: \"ConfigMap\"}\nparameter: {\n\t// +usage=The colour\n\tcolour: string\n}\n"),
+		clusterDef("ComponentDefinition", "web", "output: {apiVersion: \"v1\", kind: \"ConfigMap\"}\nparameter: size: int\n"),
+	}
+	return c, err
+}
+
+func TestApplicationsWithClusterDefinitions(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "web.cue"), []byte(parentSrc), 0o600))
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  components:\n    - name: one\n      type: cluster-web\n      properties:\n        colur: red\n    - name: two\n      type: web\n      properties:\n        size: 2\n    - name: three\n      type: nowhere\n"
+	c := newClientWith(t, NewServer(WithCluster(withDefinitions)))
+	c.drain()
+	c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	clusterStatus(t, c)
+	u := "file://" + filepath.Join(dir, "app.yaml")
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "yaml", Version: 1, Text: app}}, false)
+	all := func(d []Diagnostic) bool {
+		m := messages(d)
+		return strings.Contains(m, "colur") && strings.Contains(m, "size") && strings.Contains(m, "nowhere")
+	}
+	got := settledUntil(c, u, all)
+	m := messages(got)
+	assert.Contains(t, m, "cluster-web takes no parameter colur", "a cluster's definition")
+	assert.Contains(t, m, "web takes no parameter size", "the workspace's web, not the cluster's")
+	for _, d := range got {
+		if strings.Contains(d.Message, "nowhere") {
+			assert.Equal(t, SeverityError, d.Severity, "the cluster's definitions are known, so an unknown type is an error")
+		}
+	}
+
+	pos := Position{Line: 7, Character: uint32(len("      type: cluster-"))}
+	res := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: u}, Position: pos}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(res["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label+"/"+it.Detail)
+	}
+	assert.Contains(t, labels, "cluster-web/cluster")
+}

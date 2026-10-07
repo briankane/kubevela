@@ -50,6 +50,9 @@ type Cluster struct {
 	// Definition reads the definition of a kind and name applied to it,
 	// and the namespace it is in.
 	Definition func(kind, name string) (*unstructured.Unstructured, string, error)
+	// Definitions are the definitions an Application may name: its
+	// components, traits, policies and workflow steps, in every namespace.
+	Definitions []unstructured.Unstructured
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -98,6 +101,7 @@ func ConnectKubeconfig() (Cluster, error) {
 	if !out.KubeVela {
 		return out, nil
 	}
+	out.Definitions = listDefinitions(cfg)
 	paths, err := dc.OpenAPIV3().Paths()
 	if err != nil {
 		return out, err
@@ -164,4 +168,26 @@ func getDefinition(cfg *rest.Config, kind, name string) (*unstructured.Unstructu
 	}
 	obj := list.Items[0]
 	return &obj, obj.GetNamespace(), nil
+}
+
+// appDefinitionKinds are the kinds of definition an Application names.
+var appDefinitionKinds = []string{"ComponentDefinition", "TraitDefinition", "PolicyDefinition", "WorkflowStepDefinition"}
+
+// listDefinitions are the cluster's definitions of the kinds an Application
+// names, in every namespace; a kind it cannot list is passed over.
+func listDefinitions(cfg *rest.Config) []unstructured.Unstructured {
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil
+	}
+	var out []unstructured.Unstructured
+	for _, kind := range appDefinitionKinds {
+		ctx, cancel := context.WithTimeout(context.Background(), clusterTimeout)
+		list, err := client.Resource(v1beta1.SchemeGroupVersion.WithResource(strings.ToLower(kind)+"s")).List(ctx, metav1.ListOptions{})
+		cancel()
+		if err == nil {
+			out = append(out, list.Items...)
+		}
+	}
+	return out
 }

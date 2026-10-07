@@ -64,6 +64,8 @@ type Server struct {
 	externals   *analysis.Externals
 	// clusterPackages are the cluster's Package resources.
 	clusterPackages []cuexruntime.Package
+	// clusterDefs are the cluster's definitions an Application may name.
+	clusterDefs *clusterDefinitions
 	// crds are the CustomResourceDefinitions each workspace file holds.
 	crds map[string][][]byte
 
@@ -492,6 +494,9 @@ func diagnose(uri, text string, opts analysis.Options) []Diagnostic {
 		// A Package may sit anywhere, an addon's resources included.
 		if pkgDiags, ok := analysis.CheckPackageFile(path, []byte(text), opts.Externals); ok {
 			found = append(found, pkgDiags...)
+		}
+		if appDiags, ok := analysis.CheckApplicationFile(path, []byte(text), opts); ok {
+			found = append(found, appDiags...)
 		}
 		return toProtocol(text, found)
 	}
