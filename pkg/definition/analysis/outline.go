@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"cuelang.org/go/cue/ast"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
 )
@@ -96,9 +97,21 @@ func span(start, end token.Pos) Range {
 	return Range{Start: Position{Line: start.Line(), Column: start.Column()}, End: Position{Line: end.Line(), Column: end.Column()}}
 }
 
+// symbolName is a label's name, or a pattern's text as written: an editor
+// rejects a symbol with no name.
+func symbolName(l ast.Label) string {
+	if name := labelName(l); name != "" {
+		return name
+	}
+	if b, err := format.Node(l); err == nil && len(b) > 0 {
+		return string(b)
+	}
+	return "…"
+}
+
 // fieldSymbol is a field's entry, under the labels of the fields it is in.
 func fieldSymbol(f *ast.Field, under []string, depth int) Symbol {
-	name := labelName(f.Label)
+	name := symbolName(f.Label)
 	sym := Symbol{Name: name, Kind: SymbolField, Range: span(f.Pos(), f.End()), Selection: span(f.Label.Pos(), f.Label.End())}
 	inParameter := false
 	for _, u := range under {

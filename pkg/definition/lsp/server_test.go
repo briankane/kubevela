@@ -299,3 +299,15 @@ func TestServerSendsRecommendationsAsInformation(t *testing.T) {
 	assert.Equal(t, SeverityInformation, p.Diagnostics[0].Severity)
 	assert.Contains(t, p.Diagnostics[0].Message, "replicas has no +usage")
 }
+
+// A check that panics fails its file, not the server.
+func TestGuardedRecoversAPanic(t *testing.T) {
+	diags, err := guarded(func() []Diagnostic { panic("boom") })
+	assert.Nil(t, diags)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+
+	diags, err = guarded(func() []Diagnostic { return []Diagnostic{{Message: "fine"}} })
+	require.NoError(t, err)
+	assert.Len(t, diags, 1)
+}

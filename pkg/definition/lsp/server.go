@@ -24,10 +24,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -549,6 +551,28 @@ func (s *Server) diagnose(uri, text string) []Diagnostic {
 // diagnose analyses a document and converts the result to protocol positions.
 // A CUE test file is checked by loading it, as `vela def test` would.
 func diagnose(uri, text string, opts analysis.Options) []Diagnostic {
+	diags, err := guarded(func() []Diagnostic { return diagnoseUnguarded(uri, text, opts) })
+	if err != nil {
+		return []Diagnostic{{Severity: SeverityWarning, Source: diagnosticSource, Message: "vela could not check this file: " + err.Error() + ". The stack is in the KubeVela Definitions output."}}
+	}
+	return diags
+}
+
+// guarded runs check, turning a panic into an error, its stack written to
+// stderr, which the client shows: one check's failure must not stop the
+// server for every file.
+func guarded(check func() []Diagnostic) (diags []Diagnostic, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "vela def lsp: a check panicked: %v\n%s\n", r, debug.Stack())
+			err = fmt.Errorf("a check failed (%v)", r)
+		}
+	}()
+	return check(), nil
+}
+
+// diagnoseUnguarded is diagnose, a panic and all.
+func diagnoseUnguarded(uri, text string, opts analysis.Options) []Diagnostic {
 	path := pathOf(uri)
 	if utils.IsCUETestFile(path) {
 		return testDiagnostics(path, text)

@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -60,4 +61,24 @@ func TestOutline(t *testing.T) {
 	}
 	assert.Equal(t, []string{"tagged"}, outputs)
 	assert.Equal(t, "apps/v1 Deployment", byName["output"].Detail, "an object says its kind")
+}
+
+// A pattern's label is an expression, not a name: it is named as written,
+// as an editor rejects a symbol with no name.
+func TestOutlineNamesPatterns(t *testing.T) {
+	src := "\"web\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n\tparameter: {\n\t\tlabels?: [string]: string\n\t\t[=~\"^x-\"]: int\n\t}\n}\n"
+	syms, ok := Outline("web.cue", src)
+	require.True(t, ok)
+	var names []string
+	var walk func([]Symbol)
+	walk = func(ss []Symbol) {
+		for _, s := range ss {
+			assert.NotEmpty(t, strings.TrimSpace(s.Name), "every symbol is named")
+			names = append(names, s.Name)
+			walk(s.Children)
+		}
+	}
+	walk(syms)
+	assert.Contains(t, names, "[string]")
+	assert.Contains(t, names, `[=~"^x-"]`)
 }
