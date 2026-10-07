@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/utils"
 )
 
 // navigationRequest answers go to definition, find references, rename and
@@ -130,7 +131,15 @@ func (s *Server) definitionAt(uri string, pos Position) []Location {
 	if loc, ok := s.workspaceTarget(path, text, line, col); ok {
 		return []Location{loc}
 	}
-	if d, ok := analysis.Declaration(path, text, byteOffset(text, pos)); ok {
+	ext := s.externals
+	if utils.IsCUETestFile(path) {
+		ext = testExternals()
+	}
+	if d, ok := analysis.DeclarationWith(path, text, byteOffset(text, pos), ext); ok {
+		if analysis.IsSource(d.Path) {
+			source, _ := analysis.Source(d.Path, ext)
+			return []Location{{URI: d.Path, Range: protocolRange(source, d.Range)}}
+		}
 		target := text
 		if d.Path != path {
 			target = s.textOf(d.Path)

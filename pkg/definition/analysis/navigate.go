@@ -54,6 +54,53 @@ type navIndex struct {
 	// forOf is the for clause declaring each comprehension's variable.
 	forOf  map[*ast.Ident]*ast.ForClause
 	idents []*ast.Ident
+	// imported is the index of a package's source, by import path, and
+	// context the index of the context's, for what the file does not
+	// declare; nil where neither is followed.
+	imported func(path string) (*navIndex, bool)
+	context  func() (*navIndex, bool)
+	// linked are the indexes of other documents a resolution entered.
+	linked []*navIndex
+}
+
+// owner is the index, of ix and those it entered, holding f.
+func (ix *navIndex) owner(f *ast.Field) *navIndex {
+	if _, ok := ix.pathOf[f]; ok {
+		return ix
+	}
+	for _, l := range ix.linked {
+		if _, ok := l.pathOf[f]; ok {
+			return l
+		}
+	}
+	return ix
+}
+
+// fieldOfValue is the field a value node is declared by, in ix or the
+// indexes it entered.
+func (ix *navIndex) fieldOfValue(n ast.Node) (*ast.Field, bool) {
+	if f, ok := ix.fieldOf[n]; ok {
+		return f, true
+	}
+	for _, l := range ix.linked {
+		if f, ok := l.fieldOf[n]; ok {
+			return f, true
+		}
+	}
+	return nil, false
+}
+
+// enter is the top-level field name of another document's index, linked so
+// what is found there is located there.
+func (ix *navIndex) enter(other *navIndex, name string) (*ast.Field, bool) {
+	ix.linked = append(ix.linked, other)
+	other.linked = ix.linked
+	for _, d := range other.file.Decls {
+		if f, ok := d.(*ast.Field); ok && labelName(f.Label) == name {
+			return f, true
+		}
+	}
+	return nil, false
 }
 
 // navChain is a reference, as root.a.b, up to one of its selectors.
@@ -164,6 +211,18 @@ func (ix *navIndex) resolve(root *ast.Ident, labels []string, siblings func(name
 	var d decl
 	switch target := root.Node.(type) {
 	case nil:
+		if root.Name == contextLabel && ix.context != nil {
+			cix, ok := ix.context()
+			if !ok {
+				return decl{}, false
+			}
+			f, ok := ix.enter(cix, contextLabel)
+			if !ok {
+				return decl{}, false
+			}
+			d = decl{ix: cix, field: f}
+			break
+		}
 		if siblings == nil {
 			return decl{}, false
 		}
@@ -171,6 +230,7 @@ func (ix *navIndex) resolve(root *ast.Ident, labels []string, siblings func(name
 		if d, ok = siblings(root.Name); !ok {
 			return decl{}, false
 		}
+		ix.linked = append(ix.linked, d.ix)
 	case *ast.LetClause:
 		// A let's field is the field of the value it is bound to.
 		if len(labels) > 0 {
@@ -189,22 +249,55 @@ func (ix *navIndex) resolve(root *ast.Ident, labels []string, siblings func(name
 		}
 		return decl{ix: ix, node: target}, true
 	case *ast.ImportSpec:
-		return decl{}, false
+		// A package's member is declared in the package's source.
+		if ix.imported == nil || len(labels) == 0 {
+			return decl{}, false
+		}
+		path, err := strconv.Unquote(target.Path.Value)
+		if err != nil {
+			return decl{}, false
+		}
+		pix, ok := ix.imported(path)
+		if !ok {
+			return decl{}, false
+		}
+		f, ok := ix.enter(pix, labels[0])
+		if !ok {
+			return decl{}, false
+		}
+		d, labels = decl{ix: pix, field: f}, labels[1:]
 	default:
-		f, ok := ix.fieldOf[target]
+		f, ok := ix.fieldOfValue(target)
 		if !ok {
 			return decl{}, false
 		}
-		d = decl{ix: ix, field: f}
+		d = decl{ix: ix.owner(f), field: f}
 	}
-	for _, l := range labels {
-		next, ok := fieldIn(d.field, l)
-		if !ok {
-			return decl{}, false
+	if len(labels) == 0 {
+		return d, true
+	}
+	// What a field's own struct does not declare may be declared by what it
+	// unifies with, as _req: http.#Do & {...} has $returns.
+	return ix.walk(d.field.Value, labels)
+}
+
+// linkSources lets ix follow what doc does not declare into the read-only
+// documents of the packages it can import and of its context.
+func (ix *navIndex) linkSources(doc string, ext *Externals) {
+	kind, ok := completionKind(doc)
+	if !ok {
+		return
+	}
+	pkgs := packages{builtin: packagesFor(kind), ext: ext}
+	ix.imported = func(path string) (*navIndex, bool) {
+		if _, ok := pkgs.value(path); !ok {
+			return nil, false
 		}
-		d.field = next
+		return sourceIndex(packageSourcePrefix+path+".cue", ext)
 	}
-	return d, true
+	if t := headerType.FindStringSubmatch(doc); t != nil && ContextFields(t[1]) != nil {
+		ix.context = func() (*navIndex, bool) { return sourceIndex(contextSourcePrefix+t[1]+".cue", ext) }
+	}
 }
 
 // valueOf is the expression a value is declared with: for a reference, the
@@ -285,7 +378,7 @@ func (ix *navIndex) walk(e ast.Expr, labels []string) (decl, bool) {
 	if found == nil {
 		return decl{}, false
 	}
-	return decl{ix: ix, field: found}, true
+	return decl{ix: ix.owner(found), field: found}, true
 }
 
 // fieldInExpr is the field label in the struct e is, or refers to.
@@ -381,10 +474,18 @@ func addonSiblings(path string) func(string) (decl, bool) {
 // declared: a field, a let or a comprehension's variable, in the file or,
 // for an addon's CUE, in the files compiled with it.
 func Declaration(path, doc string, offset int) (Location, bool) {
+	return DeclarationWith(path, doc, offset, nil)
+}
+
+// DeclarationWith is Declaration, following what KubeVela declares into a
+// read-only document of its source: a package's member, from those built in
+// for the definition's type or ext, and a field of the context.
+func DeclarationWith(path, doc string, offset int, ext *Externals) (Location, bool) {
 	ix, ok := parseNav(path, doc)
 	if !ok {
 		return Location{}, false
 	}
+	ix.linkSources(doc, ext)
 	d, ok := ix.target(offset, addonSiblings(path))
 	if !ok {
 		return Location{}, false
@@ -446,6 +547,9 @@ var cueIdent = regexp.MustCompile(`^[A-Za-z_$#][A-Za-z0-9_$#]*$`)
 func RenameEdits(path, doc string, offset int, name string) ([]RangeEdit, error) {
 	if !cueIdent.MatchString(name) {
 		return nil, fmt.Errorf("%s is not a name a reference can use: letters, digits, _, $ and #, not starting with a digit", strconv.Quote(name))
+	}
+	if loc, ok := DeclarationWith(path, doc, offset, nil); ok && IsSource(loc.Path) {
+		return nil, fmt.Errorf("this is declared by KubeVela, not in the workspace, so it cannot be renamed")
 	}
 	refs, ok := References(path, doc, offset)
 	if !ok || len(refs) == 0 {

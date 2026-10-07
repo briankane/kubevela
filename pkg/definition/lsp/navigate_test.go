@@ -153,3 +153,27 @@ func TestStatusFieldRequests(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["result"], &h))
 	assert.Contains(t, h.Contents.Value, "readyReplicas")
 }
+
+// Go to definition on what KubeVela declares leads to a read-only document
+// of its source, which vela/source returns.
+func TestDefinitionInSources(t *testing.T) {
+	src := "import \"vela/kube\"\n\n\"web\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\t_dep: kube.#Get & {$params: resource: {apiVersion: \"v1\", kind: \"ConfigMap\", metadata: name: context.name}}\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n\tparameter: {}\n}\n"
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: src}}, false)
+	c.diagnostics()
+	line := strings.Split(src, "\n")[7]
+	for word, want := range map[string]string{"#Get": "vela-source:/package/vela/kube.cue", "context.name": "vela-source:/context/component.cue"} {
+		at := strings.Index(line, word) + len(word) - 1
+		m := c.response(c.send("textDocument/definition", TextDocumentPositionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: Position{Line: 7, Character: uint32(at)}}, true))
+		var locs []Location
+		require.NoError(t, json.Unmarshal(m["result"], &locs), string(m["result"]))
+		require.Len(t, locs, 1, word)
+		assert.Equal(t, want, locs[0].URI, word)
+
+		m = c.response(c.send(MethodSource, SourceParams{URI: want}, true))
+		var r SourceResult
+		require.NoError(t, json.Unmarshal(m["result"], &r))
+		got := strings.Split(r.Text, "\n")[locs[0].Range.Start.Line]
+		assert.Contains(t, got[locs[0].Range.Start.Character:], strings.TrimPrefix(word[strings.LastIndex(word, ".")+1:], "."), word)
+	}
+}

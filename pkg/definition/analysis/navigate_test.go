@@ -82,8 +82,9 @@ func TestDeclaration(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 16, loc.Range.Start.Line, "a let")
 
-	_, ok = Declaration("def.cue", navDoc, offsetOf(t, navDoc, "context.name", 1, 2))
-	assert.False(t, ok, "context is KubeVela's, declared nowhere in the file")
+	loc, ok = Declaration("def.cue", navDoc, offsetOf(t, navDoc, "context.name", 1, 2))
+	require.True(t, ok)
+	assert.Equal(t, "vela-source:/context/component.cue", loc.Path, "context is KubeVela's: its own document")
 }
 
 func TestReferencesAndRename(t *testing.T) {
@@ -193,4 +194,56 @@ func TestDeclarationThroughComprehensions(t *testing.T) {
 		}
 		assert.Equal(t, []int{c.line, c.column}, []int{loc.Range.Start.Line, loc.Range.Start.Column}, name)
 	}
+}
+
+const sourcesDoc = `import (
+	"vela/kube"
+	"vela/http"
+)
+
+"web": {
+	type: "component"
+	attributes: workload: type: "autodetects.core.oam.dev"
+}
+template: {
+	_req: http.#Do & {$params: {method: "GET", url: "http://x"}}
+	_dep: kube.#Get & {$params: resource: {apiVersion: "apps/v1", kind: "Deployment", metadata: name: context.name}}
+	output: {apiVersion: "v1", kind: "ConfigMap", data: code: "\(_req.$returns.statusCode)"}
+	parameter: {}
+}
+`
+
+// What KubeVela declares, a vela/* package's function or the context, is
+// declared in a read-only document of its source.
+func TestDeclarationInSources(t *testing.T) {
+	cases := map[string]struct {
+		word, uri, line string
+		within          int
+	}{
+		"a package function":         {word: "kube.#Get", within: 6, uri: "vela-source:/package/vela/kube.cue", line: "#Get:"},
+		"a field of what it returns": {word: "_req.$returns.statusCode", within: 20, uri: "vela-source:/package/vela/http.cue", line: "statusCode"},
+		"a field of the context":     {word: "context.name", within: 9, uri: "vela-source:/context/component.cue", line: "name:"},
+	}
+	for name, c := range cases {
+		loc, ok := DeclarationWith("web.cue", sourcesDoc, offsetOf(t, sourcesDoc, c.word, 1, c.within), nil)
+		if !assert.True(t, ok, name) {
+			continue
+		}
+		assert.Equal(t, c.uri, loc.Path, name)
+		text, ok := Source(loc.Path, nil)
+		require.True(t, ok, name)
+		line := strings.Split(text, "\n")[loc.Range.Start.Line-1]
+		assert.Contains(t, line[loc.Range.Start.Column-1:], strings.TrimSuffix(c.line, ":"), name)
+		assert.Contains(t, line, c.line, name)
+	}
+
+	// The context document is the type's context, with each field's usage, and
+	// none of the fields the registry excludes.
+	text, ok := Source("vela-source:/context/component.cue", nil)
+	require.True(t, ok)
+	assert.Contains(t, text, "appName:")
+	assert.NotContains(t, text, "appSourceCacheStore")
+
+	_, err := RenameEdits("web.cue", sourcesDoc, offsetOf(t, sourcesDoc, "context.name", 1, 9), "nom")
+	assert.Error(t, err, "what KubeVela declares cannot be renamed")
 }

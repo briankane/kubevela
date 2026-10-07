@@ -219,6 +219,16 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
 		}
+	case MethodSource:
+		var p SourceParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			text, ok := analysis.Source(p.URI, s.externals)
+			if !ok {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: "no such document: " + p.URI}
+			} else {
+				result = SourceResult{Text: text}
+			}
+		}
 	case MethodNewPackage:
 		var p NewPackageParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -399,7 +409,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

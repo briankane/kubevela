@@ -184,7 +184,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 1
+const VelaProtocol = 2
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -402,6 +402,20 @@ type NewTestResult struct {
 // MethodNewPackage scaffolds a Package resource. It is this server's own
 // request.
 const MethodNewPackage = "vela/newPackage"
+
+// MethodSource is the vela/source request: the text of a read-only document
+// of what KubeVela declares, at a vela-source: URI.
+const MethodSource = "vela/source"
+
+// SourceParams name the read-only document.
+type SourceParams struct {
+	URI string `json:"uri"`
+}
+
+// SourceResult is its text.
+type SourceResult struct {
+	Text string `json:"text"`
+}
 
 // NewPackageParams name the package, its import path, and the protocol its
 // provider speaks, or none for a package of plain CUE.
