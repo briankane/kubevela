@@ -101,7 +101,8 @@ func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field)
 			reported := false
 			report := func(msg string) {
 				reported = true
-				diags = append(diags, Diagnostic{Range: r, Severity: SeverityError, Message: msg})
+				// An expression's fault is its own, beside any of the property's.
+				diags = append(diags, Diagnostic{Range: r, Severity: SeverityError, Message: msg, distinct: true})
 			}
 			// What a read faults is said once: typing it would say it again.
 			defer func() {
@@ -128,7 +129,7 @@ func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field)
 				}
 				for _, ref := range refs {
 					if !contains(roots, ref.Root) {
-						report(fmt.Sprintf("%q cannot be read here; this surface permits %q", ref.Root, roots))
+						report(fmt.Sprintf("%q cannot be read here; this surface permits %q", ref.Root, strings.Join(roots, `", "`)))
 						continue
 					}
 					switch {

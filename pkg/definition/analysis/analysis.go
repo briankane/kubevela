@@ -69,6 +69,9 @@ type Diagnostic struct {
 	Message  string
 	// Fixes are edits that resolve it, offered as quick fixes.
 	Fixes []Fix
+	// distinct marks a finding no other at its position stands for, so
+	// firstPerPosition keeps it.
+	distinct bool
 }
 
 // Result is what Analyze found.
@@ -415,10 +418,15 @@ func withoutVagueInterpolation(diags []Diagnostic) []Diagnostic {
 
 // firstPerPosition keeps one diagnostic per position: CUE often reports one
 // mistake twice, as with an unknown import being both undefined and not found.
+// A distinct one is kept beside it.
 func firstPerPosition(diags []Diagnostic) []Diagnostic {
 	kept := map[Position]int{}
 	var out []Diagnostic
 	for _, d := range diags {
+		if d.distinct {
+			out = append(out, d)
+			continue
+		}
 		i, seen := kept[d.Range.Start]
 		if !seen {
 			kept[d.Range.Start] = len(out)

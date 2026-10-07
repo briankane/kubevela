@@ -158,3 +158,28 @@ func TestApplicationExpressionTypes(t *testing.T) {
 	got = check("image", `"$(source.cfg.labels)"`)
 	assert.Len(t, got, 1, "a map into a string: %v", got)
 }
+
+// A property the item's definition does not declare is refused, as admission
+// refuses it, when that definition's parameter is empty too.
+func TestPropertyOfAnEmptyParameter(t *testing.T) {
+	empty := AppDefinition{Name: "facts", Type: sourceType, Source: SourceWorkspace, CUE: "facts: {\n\ttype: \"source\"\n}\ntemplate: {\n\tschema: host: string\n\toutput: host: \"h\"\n\tparameter: {}\n}\n"}
+	opts := Options{Applications: LayeredDefinitions{{empty}, BuiltinDefinitions()}}
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  sources:\n    - name: f\n      type: facts\n      properties:\n        zone: eu\n  components:\n    - name: web\n      type: webservice\n      properties:\n        image: x\n"
+	diags, _ := CheckApplicationFile("app.yaml", []byte(app), opts)
+	var msgs []string
+	for _, d := range diags {
+		msgs = append(msgs, d.Message)
+	}
+	assert.Contains(t, strings.Join(msgs, "\n"), "zone", "%v", msgs)
+
+	// An expression's own fault at the same property does not hide it.
+	app = strings.Replace(app, "zone: eu", "zone: \"$(source.later.host)\"", 1)
+	diags, _ = CheckApplicationFile("app.yaml", []byte(app), opts)
+	msgs = nil
+	for _, d := range diags {
+		msgs = append(msgs, d.Message)
+	}
+	all := strings.Join(msgs, "\n")
+	assert.Contains(t, all, "takes no parameter zone", "%v", msgs)
+	assert.Contains(t, all, `"later" is not declared`, "%v", msgs)
+}
