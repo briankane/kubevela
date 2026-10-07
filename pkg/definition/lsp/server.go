@@ -364,6 +364,7 @@ func (s *Server) handle(msg message) error {
 				},
 				HoverProvider:      true,
 				CompletionProvider: &CompletionOptions{TriggerCharacters: []string{"+", ":", "=", ".", "/", "\""}},
+				Experimental:       &ExperimentalCapabilities{VelaProtocol: VelaProtocol},
 			},
 			ServerInfo: ServerInfo{Name: "vela-def-lsp", Version: version.VelaVersion},
 		}

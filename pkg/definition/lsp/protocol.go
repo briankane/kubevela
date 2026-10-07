@@ -116,13 +116,15 @@ type TextDocumentSyncOptions struct {
 
 // ServerCapabilities the server announces.
 type ServerCapabilities struct {
-	TextDocumentSync   TextDocumentSyncOptions `json:"textDocumentSync"`
-	CompletionProvider *CompletionOptions      `json:"completionProvider,omitempty"`
-	HoverProvider      bool                    `json:"hoverProvider,omitempty"`
-	CodeActionProvider bool                    `json:"codeActionProvider,omitempty"`
-	DefinitionProvider bool                    `json:"definitionProvider,omitempty"`
-	ReferencesProvider bool                    `json:"referencesProvider,omitempty"`
-	RenameProvider     bool                    `json:"renameProvider,omitempty"`
+	TextDocumentSync TextDocumentSyncOptions `json:"textDocumentSync"`
+	// Experimental carries what is particular to this server, for its client.
+	Experimental       *ExperimentalCapabilities `json:"experimental,omitempty"`
+	CompletionProvider *CompletionOptions        `json:"completionProvider,omitempty"`
+	HoverProvider      bool                      `json:"hoverProvider,omitempty"`
+	CodeActionProvider bool                      `json:"codeActionProvider,omitempty"`
+	DefinitionProvider bool                      `json:"definitionProvider,omitempty"`
+	ReferencesProvider bool                      `json:"referencesProvider,omitempty"`
+	RenameProvider     bool                      `json:"renameProvider,omitempty"`
 	// DocumentSymbolProvider offers a document's outline.
 	DocumentSymbolProvider bool `json:"documentSymbolProvider,omitempty"`
 	// InlayHintProvider offers labels shown in the text.
@@ -179,6 +181,16 @@ type CompletionItem struct {
 type CompletionList struct {
 	IsIncomplete bool             `json:"isIncomplete"`
 	Items        []CompletionItem `json:"items"`
+}
+
+// VelaProtocol is the version of the vela/* methods this server answers.
+const VelaProtocol = 1
+
+// ExperimentalCapabilities are this server's own capabilities.
+type ExperimentalCapabilities struct {
+	// VelaProtocol is the version of the vela/* requests and notifications
+	// the server answers, raised whenever one is added or changed.
+	VelaProtocol int `json:"velaProtocol"`
 }
 
 // ServerInfo names the server.

@@ -207,6 +207,8 @@ func TestServerLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["result"], &init))
 	assert.Equal(t, TextDocumentSyncFull, init.Capabilities.TextDocumentSync.Change)
 	assert.True(t, init.Capabilities.TextDocumentSync.OpenClose)
+	require.NotNil(t, init.Capabilities.Experimental)
+	assert.Equal(t, VelaProtocol, init.Capabilities.Experimental.VelaProtocol)
 	c.send("initialized", map[string]interface{}{}, false)
 
 	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
