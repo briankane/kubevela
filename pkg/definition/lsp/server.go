@@ -488,16 +488,8 @@ func (s *Server) handle(msg message) error {
 	case "shutdown":
 		s.shutdown = true
 		s.stopWatches()
-	case MethodWatchApplication, MethodUnwatchApplication:
-		var p WatchApplicationParams
-		if rerr = decode(msg.Params, &p); rerr == nil {
-			if msg.Method == MethodWatchApplication {
-				rerr = s.startWatch(p)
-			} else {
-				s.stopWatch(p)
-			}
-			result = struct{}{}
-		}
+	case MethodWatchApplication, MethodUnwatchApplication, MethodWatchEvents, MethodUnwatchEvents:
+		result, rerr = s.watchRequest(msg)
 	case "textDocument/didOpen":
 		var p DidOpenTextDocumentParams
 		if rerr = decode(msg.Params, &p); rerr == nil {

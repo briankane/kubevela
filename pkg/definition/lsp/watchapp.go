@@ -144,10 +144,7 @@ func (s *Server) startWatch(p WatchApplicationParams) *ResponseError {
 
 // stopWatch ends the watch of an Application, if there is one.
 func (s *Server) stopWatch(p WatchApplicationParams) {
-	if cancel, ok := s.watches[watchKey(p)]; ok {
-		cancel()
-		delete(s.watches, watchKey(p))
-	}
+	s.stopKey(watchKey(p))
 }
 
 // stopWatches ends every watch, as the server shuts down.
@@ -155,5 +152,31 @@ func (s *Server) stopWatches() {
 	for key, cancel := range s.watches {
 		cancel()
 		delete(s.watches, key)
+	}
+}
+
+// watchRequest answers the requests that start and end watches.
+func (s *Server) watchRequest(msg message) (interface{}, *ResponseError) {
+	switch msg.Method {
+	case MethodWatchApplication, MethodUnwatchApplication:
+		var p WatchApplicationParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		if msg.Method == MethodUnwatchApplication {
+			s.stopWatch(p)
+			return struct{}{}, nil
+		}
+		return struct{}{}, s.startWatch(p)
+	default:
+		var p WatchEventsParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		if msg.Method == MethodUnwatchEvents {
+			s.stopKey(eventsKey(p.Namespace, p.Application))
+			return struct{}{}, nil
+		}
+		return struct{}{}, s.startEventsWatch(p)
 	}
 }

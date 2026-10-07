@@ -63,6 +63,9 @@ type Cluster struct {
 	Watch func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
 	// Resource reads a resource as YAML.
 	Resource func(apiVersion, kind, namespace, name string) (string, error)
+	// Events calls each with every event in a namespace as they change,
+	// until ctx is done.
+	Events func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured))
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -119,6 +122,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Resource = func(apiVersion, kind, namespace, name string) (string, error) {
 		return readResource(cfg, apiVersion, kind, namespace, name)
+	}
+	out.Events = func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured)) {
+		watchEvents(ctx, cfg, namespace, each)
 	}
 	if !out.KubeVela {
 		return out, nil
