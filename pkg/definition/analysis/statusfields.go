@@ -342,7 +342,11 @@ func (d *document) statusReads(f statusField, file *ast.File, v, param cue.Value
 			}
 			if !cur.Allows(s) {
 				diag := d.statusDiag(f, id.Pos(), fmt.Sprintf("%s: %s has no field %s", f.name, strings.Join(walked, "."), id.Name))
-				if to := closest(id.Name, fieldNames(cur)); to != "" {
+				names := fieldNames(cur)
+				if len(walked) == 1 && root.Name == contextLabel {
+					names = offeredContext(names, d.typ)
+				}
+				if to := closest(id.Name, names); to != "" {
 					start := f.at(id.Pos())
 					diag.Fixes = []Fix{{Title: "Change to " + to, Edits: []RangeEdit{{Range: Range{Start: start, End: Position{Line: start.Line, Column: start.Column + len(id.Name)}}, NewText: to}}}}
 				}
@@ -493,7 +497,45 @@ func CompleteStatusField(path, doc string, offset int, opts Options) ([]Completi
 	default:
 		cur = schemaChild(v, cue.Str(root))
 	}
-	return fieldsOf(walk(cur, chain), typed), true
+	out := fieldsOf(walk(cur, chain), typed)
+	if root == contextLabel && len(chain) == 0 {
+		out = withoutHidden(out, d.typ)
+	}
+	return out, true
+}
+
+// withoutHidden drops the context fields not offered from completions of
+// context's own fields.
+func withoutHidden(cs []Completion, defType string) []Completion {
+	hidden := hiddenContext(defType)
+	out := cs[:0]
+	for _, c := range cs {
+		if !hidden[c.Label] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// offeredContext is names without the context fields not offered.
+func offeredContext(names []string, defType string) []string {
+	hidden := hiddenContext(defType)
+	var out []string
+	for _, n := range names {
+		if !hidden[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// hiddenContext is the set of a type's context fields not offered.
+func hiddenContext(defType string) map[string]bool {
+	hidden := map[string]bool{}
+	for _, f := range ContextFields(defType) {
+		hidden[f.Name] = f.Hidden
+	}
+	return hidden
 }
 
 // HoverStatusField describes the field read at offset in a status field.

@@ -230,3 +230,39 @@ func TestCompleteInStatusComparison(t *testing.T) {
 	}
 	assert.Contains(t, labels, "readyReplicas")
 }
+
+// The render context's internal fields stay readable, guarded, but are not
+// offered.
+func TestContextCompletionHidesExcluded(t *testing.T) {
+	labels := func(cs []Completion) []string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.Label)
+		}
+		return out
+	}
+	at := strings.Index(statusDef, "context.output.spec.replicas") + len("context.")
+	got, ok := CompleteStatusField("def.cue", statusDef[:at]+statusDef[at+len("output.spec.replicas"):], at, Options{})
+	require.True(t, ok)
+	inStatus := labels(got)
+	inTemplate := labels(CompleteContextWith(statusDef, "\tname: context.", nil))
+	for name, cs := range map[string][]string{"status": inStatus, "template": inTemplate} {
+		assert.Contains(t, cs, "output", name)
+		assert.Contains(t, cs, "appName", name)
+		assert.NotContains(t, cs, "appSourceCacheStore", name)
+		assert.NotContains(t, cs, "appComponents", name)
+	}
+	assert.Contains(t, inStatus, "status")
+
+	guarded := strings.Replace(statusDef, "isHealth: ready == context.output.spec.replicas", "isHealth: ready == context.output.spec.replicas && context.appComponents != _|_", 1)
+	assert.Empty(t, statusErrors(t, guarded), "an internal field is still readable")
+
+	// appComponent is closest to appComponents, which is not offered, so the
+	// fix names nothing internal.
+	misspelt := strings.Replace(statusDef, "isHealth: ready == context.output.spec.replicas", "isHealth: ready == context.output.spec.replicas && context.appComponent != _|_", 1)
+	for _, d := range AnalyzeWith("def.cue", []byte(misspelt), Options{}).Diagnostics {
+		for _, f := range d.Fixes {
+			assert.NotContains(t, f.Title, "appComponents")
+		}
+	}
+}

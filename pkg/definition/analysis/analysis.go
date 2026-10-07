@@ -313,7 +313,9 @@ func (d *document) explainContext(diags []Diagnostic) []Diagnostic {
 		}
 		var names []string
 		for _, f := range ContextFields(d.typ) {
-			names = append(names, f.Name)
+			if !f.Hidden {
+				names = append(names, f.Name)
+			}
 		}
 		if to := closest(m[1], names); to != "" {
 			end := Position{Line: diag.Range.Start.Line, Column: diag.Range.Start.Column + len(m[1])}

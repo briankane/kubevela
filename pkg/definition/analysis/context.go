@@ -66,6 +66,9 @@ type ContextField struct {
 	Doc  string
 	// Required is false for a field the render may leave out.
 	Required bool
+	// Hidden is set for a field the registry excludes: readable, guarded,
+	// but not offered.
+	Hidden bool
 }
 
 // ContextFields lists the context fields a definition type's template can
@@ -95,7 +98,7 @@ func ContextFields(defType string) []ContextField {
 		case name == process.OutputsFieldName:
 			fields = append(fields, ContextField{Name: name, Type: "[string]: {...}", Doc: "The rendered outputs, by name.", Required: defType == traitType})
 		default:
-			fields = append(fields, ContextField{Name: name, Type: "_", Doc: reason})
+			fields = append(fields, ContextField{Name: name, Type: "_", Doc: reason, Hidden: true})
 		}
 	}
 	// BaseTemplate declares config, which the registry does not know.

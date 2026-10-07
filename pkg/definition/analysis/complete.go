@@ -143,7 +143,7 @@ func CompleteContextWith(doc, before string, published []Published) []Completion
 	var out []Completion
 	if len(path) == 0 {
 		for _, f := range fields {
-			if strings.HasPrefix(f.Name, typed) {
+			if !f.Hidden && strings.HasPrefix(f.Name, typed) {
 				out = append(out, Completion{Label: f.Name, Insert: f.Name, Replace: len(typed), Doc: f.Doc, Detail: f.Type})
 			}
 		}
