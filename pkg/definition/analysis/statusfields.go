@@ -304,7 +304,7 @@ func (d *document) checkStatusFields() []Diagnostic {
 		diags = append(diags, d.statusReads(f, file, v, param)...)
 		diags = append(diags, d.statusResult(f, file, v)...)
 		if f.name == "details" {
-			diags = append(diags, d.checkDetails(f, file)...)
+			diags = append(diags, d.checkDetails(f, file, v)...)
 		}
 	}
 	return diags
@@ -391,10 +391,11 @@ func (d *document) statusResult(f statusField, file *ast.File, v cue.Value) []Di
 const maxDetailLabel = 32
 
 // checkDetails warns of the details KubeVela will not show as written: a
-// label too long, which it skips, and a value that is only a type, which it
-// shows as _|_. A detail named context or parameter unifies with the
+// label too long, which it skips; a value that is only a type, which it
+// shows as _|_; and a value that cannot be a string, which status.details
+// holds, so it shows as the value's CUE text. A detail named context or parameter unifies with the
 // runtime context's own, so CUE reports what conflicts.
-func (d *document) checkDetails(f statusField, file *ast.File) []Diagnostic {
+func (d *document) checkDetails(f statusField, file *ast.File, v cue.Value) []Diagnostic {
 	var diags []Diagnostic
 	warn := func(pos token.Pos, msg string) {
 		diag := d.statusDiag(f, pos, "details: "+msg)
@@ -415,6 +416,11 @@ func (d *document) checkDetails(f statusField, file *ast.File) []Diagnostic {
 			warn(fd.Label.Pos(), fmt.Sprintf("%s is %d characters: KubeVela skips a label of %d or more", label, len(label), maxDetailLabel))
 		case onlyAType(fd.Value):
 			warn(fd.Label.Pos(), fmt.Sprintf("%s is only a type, so KubeVela shows it as _|_: give it a value", label))
+		default:
+			got := v.LookupPath(cue.MakePath(cue.Str(label)))
+			if kind := got.IncompleteKind(); got.Exists() && got.Err() == nil && kind != cue.BottomKind && kind&cue.StringKind == 0 {
+				warn(fd.Label.Pos(), fmt.Sprintf("%s is %s, and status.details holds strings: KubeVela shows its CUE text. Make it a string, as in \"\\(...)\"", label, kind))
+			}
 		}
 	}
 	return diags
@@ -445,6 +451,13 @@ func onlyAType(e ast.Expr) bool {
 // text.
 func statusFieldAt(path, doc string, offset int, opts Options) (*document, statusField, int, bool) {
 	f, err := parser.ParseFile(path, doc, parser.ParseComments)
+	if err != nil && offset >= 0 && offset <= len(doc) {
+		// A status field written as CUE breaks the file's parse while a
+		// reference in it is half typed, as context.output.; a placeholder at
+		// the cursor completes it, and what is completed is what precedes it.
+		doc = doc[:offset] + cursorPlaceholder + doc[offset:]
+		f, err = parser.ParseFile(path, doc, parser.ParseComments)
+	}
 	if err != nil {
 		return nil, statusField{}, 0, false
 	}
@@ -460,6 +473,9 @@ func statusFieldAt(path, doc string, offset int, opts Options) (*document, statu
 	}
 	return nil, statusField{}, 0, false
 }
+
+// cursorPlaceholder stands for the reference being typed at the cursor.
+const cursorPlaceholder = "velaCursor"
 
 // CompleteStatusField completes in a status field: a field of context, the
 // live output by its kind, of parameter, or of a value the field declares.

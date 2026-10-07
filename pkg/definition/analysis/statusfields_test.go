@@ -266,3 +266,41 @@ func TestContextCompletionHidesExcluded(t *testing.T) {
 		}
 	}
 }
+
+// details written as CUE, not a string: completion works while the file
+// does not parse, a reference half typed, and each value should be a
+// string, which status.details holds.
+func TestNativeDetails(t *testing.T) {
+	native := func(body string) string {
+		return strings.Replace(statusDef, "\t\t\tcustomStatus: {", "\t\t\tdetails: {\n"+body+"\t\t\t}\n\t\t\tcustomStatus: {", 1)
+	}
+	labels := func(src, marker string) []string {
+		got, ok := CompleteStatusField("def.cue", src, strings.Index(src, marker)+len(marker), Options{})
+		require.True(t, ok, "in details, at %q", marker)
+		var out []string
+		for _, c := range got {
+			out = append(out, c.Label)
+		}
+		return out
+	}
+	assert.Contains(t, labels(native("\t\t\t\tready: context.output.status.\n"), "ready: context.output.status."), "readyReplicas")
+	assert.Contains(t, labels(native("\t\t\t\tready: context.\n"), "ready: context."), "output")
+	assert.Contains(t, labels(native("\t\t\t\tready: parameter.\n"), "ready: parameter."), "replicas")
+
+	warnings := func(src string) []string {
+		var out []string
+		for _, d := range AnalyzeWith("def.cue", []byte(src), Options{}).Diagnostics {
+			if d.Severity == SeverityWarning && strings.HasPrefix(d.Message, "details:") {
+				out = append(out, strconv.Itoa(d.Range.Start.Line)+" "+d.Message)
+			}
+		}
+		return out
+	}
+	got := warnings(native("\t\t\t\t\"new\": 1\n\t\t\t\tready: *context.output.status.readyReplicas | 0\n\t\t\t\tshown: \"\\(*context.output.status.readyReplicas | 0)\"\n\t\t\t\t$hidden: 1\n"))
+	require.Len(t, got, 2, "%v", got)
+	assert.Contains(t, got[0], "new is int")
+	assert.Contains(t, got[0], "string")
+	assert.Contains(t, got[1], "ready is int")
+
+	assert.Empty(t, warnings(strings.Replace(statusDef, "\t\t\tcustomStatus: {", "\t\t\tdetails: #\"\"\"\n\t\t\t\tready: \"\\(*context.output.status.readyReplicas | 0)\"\n\t\t\t\t\"\"\"#\n\t\t\tcustomStatus: {", 1)), "a string")
+}
