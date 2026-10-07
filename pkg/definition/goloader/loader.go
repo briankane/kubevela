@@ -33,9 +33,15 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/oam-dev/kubevela/pkg/definition/defkit"
 	"github.com/oam-dev/kubevela/pkg/definition/defkit/placement"
 )
+
+// kubeVelaModule is KubeVela's module path, which a definition module's
+// generator imports defkit from.
+const kubeVelaModule = "github.com/oam-dev/kubevela"
 
 // GoExtension is the file extension for Go files
 const GoExtension = ".go"
@@ -147,29 +153,11 @@ func NewGeneratorEnvironment(moduleRoot string) (*GeneratorEnvironment, error) {
 	// Discover all Go packages in the module (components, traits, etc.)
 	subPackages := discoverSubPackages(moduleRoot, moduleName)
 
-	// Create go.mod that references the original module
-	// First, try to copy replace directives from the source module's go.mod
-	// This handles cases where the user has a local replace for kubevela
-	sourceReplaces := getReplacesFromGoMod(moduleRoot)
-
-	// If no kubevela replace in source, try to find it locally
-	kubeVelaReplace := ""
-	if !strings.Contains(sourceReplaces, "github.com/oam-dev/kubevela") {
-		kubeVelaRoot := findKubeVelaRoot()
-		if kubeVelaRoot != "" {
-			kubeVelaReplace = fmt.Sprintf("replace github.com/oam-dev/kubevela => %s\n", kubeVelaRoot)
-		}
+	goMod, err := generatorGoMod(moduleRoot, moduleName)
+	if err != nil {
+		_ = os.RemoveAll(tempDir)
+		return nil, err
 	}
-
-	goMod := fmt.Sprintf(`module vela-def-gen
-
-go 1.21
-
-require github.com/oam-dev/kubevela v0.0.0
-require %s v0.0.0
-
-%s%sreplace %s => %s
-`, moduleName, sourceReplaces, kubeVelaReplace, moduleName, moduleRoot)
 
 	if err := os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(goMod), 0600); err != nil {
 		_ = os.RemoveAll(tempDir)
@@ -575,25 +563,10 @@ func GenerateCUEFromGoFile(filePath string, defInfo DefinitionInfo) (string, err
 		return "", fmt.Errorf("failed to write generator program: %w", err)
 	}
 
-	// Create go.mod that references the original module
-	// We need to add replace directives for:
-	// 1. github.com/oam-dev/kubevela -> the kubevela repo (for defkit) - only if found locally
-	// 2. The user's module -> their local path (so go mod tidy doesn't try to fetch from remote)
-	kubeVelaRoot := findKubeVelaRoot()
-	var kubeVelaReplace string
-	if kubeVelaRoot != "" {
-		kubeVelaReplace = fmt.Sprintf("replace github.com/oam-dev/kubevela => %s\n", kubeVelaRoot)
+	goMod, err := generatorGoMod(moduleRoot, moduleName)
+	if err != nil {
+		return "", err
 	}
-	goMod := fmt.Sprintf(`module vela-def-gen
-
-go 1.21
-
-require github.com/oam-dev/kubevela v0.0.0
-require %s v0.0.0
-
-%sreplace %s => %s
-`, moduleName, kubeVelaReplace, moduleName, moduleRoot)
-
 	if err := os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(goMod), 0600); err != nil {
 		return "", fmt.Errorf("failed to write go.mod: %w", err)
 	}
@@ -638,46 +611,72 @@ func getModuleNameFromRoot(moduleRoot string) (string, error) {
 	return "", errors.New("could not find module name in go.mod")
 }
 
-// getReplacesFromGoMod reads replace directives from a go.mod file
-// and returns them as a string that can be included in another go.mod.
-// This allows copying replace directives from the source module to the temp module.
-func getReplacesFromGoMod(moduleRoot string) string {
-	goModContent, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod")) //nolint:gosec // G304: Reading go.mod from user-specified module
+// generatorGoMod is the go.mod of the program that generates a module's
+// definitions: the module's own Go version, requirements and replaces, with
+// a local path made absolute, as the program is built in another directory;
+// a KubeVela checkout found locally where the module replaces KubeVela with
+// nothing; and the module itself, replaced by its directory.
+func generatorGoMod(moduleRoot, moduleName string) (string, error) {
+	path := filepath.Join(moduleRoot, "go.mod")
+	data, err := os.ReadFile(path) //nolint:gosec // G304: Reading go.mod from user-specified module
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("failed to read go.mod: %w", err)
 	}
-
-	var replaces strings.Builder
-	lines := strings.Split(string(goModContent), "\n")
-	inReplaceBlock := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Handle replace block: replace ( ... )
-		if trimmed == "replace (" {
-			inReplaceBlock = true
-			continue
+	src, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+	gen := &modfile.File{}
+	if err := gen.AddModuleStmt("vela-def-gen"); err != nil {
+		return "", err
+	}
+	goVersion := "1.21"
+	if src.Go != nil {
+		goVersion = src.Go.Version
+	}
+	if err := gen.AddGoStmt(goVersion); err != nil {
+		return "", err
+	}
+	velaRequired, velaReplaced := false, false
+	for _, r := range src.Require {
+		if err := gen.AddRequire(r.Mod.Path, r.Mod.Version); err != nil {
+			return "", err
 		}
-		if inReplaceBlock {
-			if trimmed == ")" {
-				inReplaceBlock = false
-				continue
-			}
-			// Each line in the block is a replace directive
-			if trimmed != "" && !strings.HasPrefix(trimmed, "//") {
-				replaces.WriteString("replace " + trimmed + "\n")
-			}
-			continue
-		}
-
-		// Handle single-line replace: replace foo => bar
-		if strings.HasPrefix(trimmed, "replace ") {
-			replaces.WriteString(trimmed + "\n")
+		velaRequired = velaRequired || r.Mod.Path == kubeVelaModule
+	}
+	if !velaRequired {
+		if err := gen.AddRequire(kubeVelaModule, "v0.0.0"); err != nil {
+			return "", err
 		}
 	}
-
-	return replaces.String()
+	for _, r := range src.Replace {
+		target := r.New.Path
+		if r.New.Version == "" && !filepath.IsAbs(target) {
+			target = filepath.Join(moduleRoot, target)
+		}
+		if err := gen.AddReplace(r.Old.Path, r.Old.Version, target, r.New.Version); err != nil {
+			return "", err
+		}
+		velaReplaced = velaReplaced || r.Old.Path == kubeVelaModule
+	}
+	if !velaReplaced {
+		if root := findKubeVelaRoot(); root != "" {
+			if err := gen.AddReplace(kubeVelaModule, "", root, ""); err != nil {
+				return "", err
+			}
+		}
+	}
+	if err := gen.AddRequire(moduleName, "v0.0.0"); err != nil {
+		return "", err
+	}
+	if err := gen.AddReplace(moduleName, "", moduleRoot, ""); err != nil {
+		return "", err
+	}
+	out, err := gen.Format()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // findKubeVelaRoot attempts to find the kubevela repository root
