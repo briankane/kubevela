@@ -215,58 +215,160 @@ func depth(text string) int {
 	return n
 }
 
-// NewTestFile is the test file to create for the definitions at path: its
-// path beside it, and its text as a snippet, a case per definition calling
-// its type's render test with its fields to fill in. src is a CUE
+// TestKind is a kind of test a definition can have: the test function, and
+// what it checks.
+type TestKind struct {
+	Function string
+	Label    string
+	Doc      string
+}
+
+// testKindLabels say what each test function checks.
+var testKindLabels = map[string]string{
+	"#ComponentRender":         "Render: what it outputs for given parameters",
+	"#ComponentStatus":         "Status: its health and message for a live object",
+	"#TraitRender":             "Render: what it patches and outputs, for a workload",
+	"#TraitStatus":             "Status: its health and message for a live object",
+	"#PolicyRender":            "Render: what it outputs",
+	"#ApplicationPolicyRender": "Render: what it does to an Application",
+	"#WorkflowStepExec":        "Exec: run it as the workflow engine does",
+	"#SourceExec":              "Exec: resolve it as the controller does",
+}
+
+// testFunctionsOf are the test functions for a definition of type defType,
+// whose template kind is kind: an Application-scoped policy has its own.
+func testFunctionsOf(defType, kind string) []string {
+	switch {
+	case kind == applicationPolicy:
+		return []string{"#ApplicationPolicyRender"}
+	case defType == policyType:
+		return []string{"#PolicyRender"}
+	}
+	return testsFor[defType]
+}
+
+// TestKinds are the kinds of test the definitions at path can have, by
+// their type: src is a CUE definition's text; a DefKit Go file is read from
+// disk.
+func TestKinds(path string, src []byte, ext *Externals) []TestKind {
+	var fns []string
+	if strings.HasSuffix(path, ".go") {
+		defs, err := goloader.AnalyzeGoFile(path)
+		if err != nil {
+			return nil
+		}
+		seen := map[string]bool{}
+		for _, d := range defs {
+			for _, fn := range testFunctionsOf(d.Type, d.Type) {
+				if !seen[fn] {
+					seen[fn] = true
+					fns = append(fns, fn)
+				}
+			}
+		}
+	} else {
+		_, defType, ok := DefinitionHeader(path, src)
+		if !ok {
+			return nil
+		}
+		fns = testFunctionsOf(defType, kindFromText(string(src), defType))
+	}
+	out := make([]TestKind, 0, len(fns))
+	for _, fn := range fns {
+		out = append(out, TestKind{Function: fn, Label: testKindLabels[fn], Doc: testDoc(ext, fn)})
+	}
+	return out
+}
+
+// DefinitionOfTest is the definition file a test file tests: the one its
+// cases name, or the one it is named after.
+func DefinitionOfTest(path, doc string) (string, bool) {
+	ref, _, ok := testTarget(doc, path)
+	if !ok {
+		return "", false
+	}
+	ref, _, _ = strings.Cut(ref, "#")
+	file := filepath.Join(filepath.Dir(path), ref)
+	if !strings.HasSuffix(file, ".go") {
+		file += ".cue"
+	}
+	if _, err := os.Stat(file); err != nil {
+		return "", false
+	}
+	return file, true
+}
+
+// NewTestFile is NewTestFileOf for each definition's first kind of test.
+func NewTestFile(path string, src []byte, ext *Externals) (string, string, bool) {
+	file, snippet, _, ok := NewTestFileOf(path, src, ext, "")
+	return file, snippet, ok
+}
+
+// NewTestFileOf is the test file to create for the definitions at path:
+// its path beside it, its text as a snippet, and the cases alone, to add to
+// a test file that exists. Each definition gets a case calling fn, or its
+// type's first test where fn is empty, with its fields to fill in. src is a CUE
 // definition's text; a DefKit Go file is read from disk. It is false for a
 // file that defines nothing testable, or is a test file.
-func NewTestFile(path string, src []byte, ext *Externals) (string, string, bool) {
+func NewTestFileOf(path string, src []byte, ext *Externals, fn string) (file, snippet, cases string, ok bool) {
 	if strings.HasSuffix(path, "_test.cue") || isTestDoc(string(src)) {
-		return "", "", false
+		return "", "", "", false
 	}
 	pkg, ok := ext.documented(testPackagePath)
 	if !ok {
-		return "", "", false
+		return "", "", "", false
 	}
-	type target struct{ ref, typ, name string }
+	type target struct{ ref, typ, kind, name string }
 	var targets []target
 	base := filepath.Base(path)
 	if strings.HasSuffix(path, ".go") {
 		defs, err := goloader.AnalyzeGoFile(path)
 		if err != nil {
-			return "", "", false
+			return "", "", "", false
 		}
 		for _, d := range defs {
 			ref := base
 			if len(defs) > 1 {
 				ref += "#" + d.Name
 			}
-			targets = append(targets, target{ref: ref, typ: d.Type, name: d.Name})
+			targets = append(targets, target{ref: ref, typ: d.Type, kind: d.Type, name: d.Name})
 		}
 	} else {
 		name, defType, ok := DefinitionHeader(path, src)
 		if !ok {
-			return "", "", false
+			return "", "", "", false
 		}
-		targets = append(targets, target{ref: strings.TrimSuffix(base, ".cue"), typ: defType, name: name})
+		targets = append(targets, target{ref: strings.TrimSuffix(base, ".cue"), typ: defType, kind: kindFromText(string(src), defType), name: name})
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "import \"%s\"\n", testPackagePath)
 	n := 1
 	for _, t := range targets {
-		if len(testsFor[t.typ]) == 0 {
+		fns := testFunctionsOf(t.typ, t.kind)
+		use := ""
+		for _, f := range fns {
+			if f == fn || fn == "" && use == "" {
+				use = f
+			}
+		}
+		if use == "" {
 			continue
 		}
-		fn := testsFor[t.typ][0]
-		body := pkg.LookupPath(cue.MakePath(cue.Def(fn)))
-		fmt.Fprintf(&b, "\n\"${%d:%s renders with its defaults}\": test.%s & {\n", n, t.name, fn)
+		body := pkg.LookupPath(cue.MakePath(cue.Def(use)))
+		what := "renders with its defaults"
+		if strings.HasSuffix(use, "Status") {
+			what = "is healthy"
+		} else if strings.HasSuffix(use, "Exec") {
+			what = "runs"
+		}
+		fmt.Fprintf(&b, "\n\"${%d:%s %s}\": test.%s & {\n", n, t.name, what, use)
 		b.WriteString(caseBody(body, t.ref, n+1))
 		b.WriteString("}\n")
 		n += 1 + strings.Count(caseBody(body, t.ref, 0), "${")
 	}
 	if n == 1 {
-		return "", "", false
+		return "", "", "", false
 	}
 	stem := strings.TrimSuffix(strings.TrimSuffix(base, ".cue"), ".go")
-	return filepath.Join(filepath.Dir(path), stem+"_test.cue"), b.String(), true
+	cases = b.String()
+	return filepath.Join(filepath.Dir(path), stem+"_test.cue"), fmt.Sprintf("import \"%s\"\n", testPackagePath) + cases, cases, true
 }

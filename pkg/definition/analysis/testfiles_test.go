@@ -250,3 +250,53 @@ func TestNewTestFileForDefKit(t *testing.T) {
 	assert.Contains(t, labels, "#TraitRender")
 	assert.NotContains(t, labels, "#ComponentRender")
 }
+
+// The kinds of test a definition can have follow its type.
+func TestTestKinds(t *testing.T) {
+	ext := testExternals(t)
+	kinds := func(src string) []string {
+		var out []string
+		for _, k := range TestKinds("d.cue", []byte(src), ext) {
+			assert.NotEmpty(t, k.Label, k.Function)
+			out = append(out, k.Function)
+		}
+		return out
+	}
+	assert.Equal(t, []string{"#TraitRender", "#TraitStatus"}, kinds(scalerWithParams))
+	step := "\"s\": {\n\ttype: \"workflow-step\"\n}\ntemplate: parameter: {}\n"
+	assert.Equal(t, []string{"#WorkflowStepExec"}, kinds(step))
+	appPolicy := "\"p\": {\n\ttype: \"policy\"\n\tattributes: scope: \"Application\"\n}\ntemplate: {\n\toutput: {}\n\tparameter: {}\n}\n"
+	assert.Equal(t, []string{"#ApplicationPolicyRender"}, kinds(appPolicy))
+	assert.Empty(t, kinds("x: 1\n"))
+}
+
+// A test of a chosen kind: the file to create, and the case alone, to add
+// to one that exists.
+func TestNewTestFileOfAKind(t *testing.T) {
+	ext := testExternals(t)
+	dir := t.TempDir()
+	def := filepath.Join(dir, "scaler.cue")
+	path, snippet, cases, ok := NewTestFileOf(def, []byte(scalerWithParams), ext, "#TraitStatus")
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(dir, "scaler_test.cue"), path)
+	assert.Contains(t, snippet, `import "vela/test"`)
+	assert.Contains(t, snippet, "test.#TraitStatus & {")
+	assert.NotContains(t, cases, "import", "the case alone")
+	assert.Contains(t, cases, "test.#TraitStatus & {")
+
+	_, _, _, ok = NewTestFileOf(def, []byte(scalerWithParams), ext, "#WorkflowStepExec")
+	assert.False(t, ok, "a kind the type has not")
+}
+
+// A test file leads to the definition it tests.
+func TestDefinitionOfTest(t *testing.T) {
+	dir := t.TempDir()
+	def := filepath.Join(dir, "scaler.cue")
+	require.NoError(t, os.WriteFile(def, []byte(scalerWithParams), 0o600))
+	test := filepath.Join(dir, "scaler_test.cue")
+	got, ok := DefinitionOfTest(test, "import \"vela/test\"\n\nx: test.#TraitRender & {definition: \"scaler\"}\n")
+	require.True(t, ok)
+	assert.Equal(t, def, got)
+	_, ok = DefinitionOfTest(filepath.Join(dir, "other_test.cue"), "import \"vela/test\"\n")
+	assert.False(t, ok)
+}

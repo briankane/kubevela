@@ -186,7 +186,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 4
+const VelaProtocol = 5
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -391,14 +391,40 @@ const MethodNewTest = "vela/newTest"
 
 // NewTestParams names the definition, with its text when it is open.
 type NewTestParams struct {
+	// TextDocument is the definition, or a test file of it.
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Text         string                 `json:"text,omitempty"`
+	// Function is the kind of test, as #ComponentStatus; empty for the
+	// definition type's first.
+	Function string `json:"function,omitempty"`
 }
 
-// NewTestResult is where the test file goes and its text, as a snippet.
+// NewTestResult is where the test file goes and its text, as a snippet,
+// and its cases alone, to add to a test file that exists.
 type NewTestResult struct {
 	Path    string `json:"path"`
 	Snippet string `json:"snippet"`
+	Cases   string `json:"cases"`
+}
+
+// MethodTestKinds lists the kinds of test a definition can have.
+const MethodTestKinds = "vela/testKinds"
+
+// TestKindsParams name the definition.
+type TestKindsParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+// TestKindsResult is the kinds, each a test function and what it checks.
+type TestKindsResult struct {
+	Kinds []TestKindItem `json:"kinds"`
+}
+
+// TestKindItem is a kind of test.
+type TestKindItem struct {
+	Function string `json:"function"`
+	Label    string `json:"label"`
+	Doc      string `json:"doc,omitempty"`
 }
 
 // MethodNewPackage scaffolds a Package resource. It is this server's own

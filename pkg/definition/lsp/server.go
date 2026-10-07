@@ -268,18 +268,23 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 	case MethodNewTest:
 		var p NewTestParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			path := pathOf(p.TextDocument.URI)
-			src := []byte(p.Text)
-			if len(src) == 0 {
-				//nolint:gosec // reading the definition the client names is the point
-				src, _ = os.ReadFile(path)
-			}
-			file, snippet, ok := analysis.NewTestFile(path, src, testExternals())
+			path, src := s.testedDefinition(p.TextDocument.URI, p.Text)
+			file, snippet, cases, ok := analysis.NewTestFileOf(path, src, testExternals(), p.Function)
 			if !ok {
-				rerr = &ResponseError{Code: CodeInvalidParams, Message: "not a definition KubeVela's tests can run: a component, trait, policy, workflow step or source"}
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: "not a definition KubeVela's tests can run, or not of a type with that test: a component, trait, policy, workflow step or source"}
 			} else {
-				result = NewTestResult{Path: file, Snippet: snippet}
+				result = NewTestResult{Path: file, Snippet: snippet, Cases: cases}
 			}
+		}
+	case MethodTestKinds:
+		var p TestKindsParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			path, src := s.testedDefinition(p.TextDocument.URI, "")
+			kinds := []TestKindItem{}
+			for _, k := range analysis.TestKinds(path, src, testExternals()) {
+				kinds = append(kinds, TestKindItem{Function: k.Function, Label: k.Label, Doc: k.Doc})
+			}
+			result = TestKindsResult{Kinds: kinds}
 		}
 	case MethodTestCases:
 		var p TestCasesParams
@@ -288,6 +293,33 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 		}
 	}
 	return result, rerr
+}
+
+// testedDefinition is the definition a request names, by its own file or a
+// test file of it, and its text: text when given, else the open document's
+// or the file's.
+func (s *Server) testedDefinition(uri, text string) (string, []byte) {
+	path := pathOf(uri)
+	if utils.IsCUETestFile(path) {
+		doc := s.docs[uri]
+		if doc == "" {
+			//nolint:gosec // reading the test file the client names is the point
+			b, _ := os.ReadFile(path)
+			doc = string(b)
+		}
+		if def, ok := analysis.DefinitionOfTest(path, doc); ok {
+			path, uri, text = def, "file://"+def, ""
+		}
+	}
+	if text == "" {
+		text = s.docs[uri]
+	}
+	if text == "" {
+		//nolint:gosec // reading the definition the client names is the point
+		b, _ := os.ReadFile(path)
+		text = string(b)
+	}
+	return path, []byte(text)
 }
 
 // laterRequest starts answering a request that replies once work off the
@@ -447,7 +479,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

@@ -239,3 +239,31 @@ func TestApplicationLensesAndAdd(t *testing.T) {
 	assert.Contains(t, add.Snippet, "traits:")
 	assert.Contains(t, add.Snippet, "- type: scaler")
 }
+
+// The Testing view's New Test: the kinds of test a definition has, and a
+// case of one, asked from the definition or from a test file of it.
+func TestNewTestOfAKind(t *testing.T) {
+	dir := t.TempDir()
+	def := filepath.Join(dir, "web.cue")
+	require.NoError(t, os.WriteFile(def, []byte(fixedDef), 0o600))
+	test := filepath.Join(dir, "web_test.cue")
+	require.NoError(t, os.WriteFile(test, []byte("import \"vela/test\"\n\nx: test.#ComponentRender & {definition: \"web\"}\n"), 0o600))
+	c := newClient(t)
+	c.drain()
+
+	m := c.response(c.send(MethodTestKinds, TestKindsParams{TextDocument: TextDocumentIdentifier{URI: "file://" + test}}, true))
+	var kinds TestKindsResult
+	require.NoError(t, json.Unmarshal(m["result"], &kinds))
+	var fns []string
+	for _, k := range kinds.Kinds {
+		fns = append(fns, k.Function)
+	}
+	assert.Equal(t, []string{"#ComponentRender", "#ComponentStatus"}, fns)
+
+	m = c.response(c.send(MethodNewTest, NewTestParams{TextDocument: TextDocumentIdentifier{URI: "file://" + test}, Function: "#ComponentStatus"}, true))
+	var r NewTestResult
+	require.NoError(t, json.Unmarshal(m["result"], &r), string(m["error"]))
+	assert.Equal(t, test, r.Path)
+	assert.Contains(t, r.Cases, "test.#ComponentStatus & {")
+	assert.NotContains(t, r.Cases, "import")
+}
