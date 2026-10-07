@@ -150,6 +150,11 @@ func TestApplicationExpressionTypes(t *testing.T) {
 	if assert.Len(t, got, 1) {
 		assert.Contains(t, got[0], "type mismatch")
 	}
+	assert.Empty(t, check("image", `"$(context.appName)"`), "a context field the component reads")
+	got = check("image", `"$(context.nope)"`)
+	if assert.Len(t, got, 1, "a context field no component gets") {
+		assert.Contains(t, got[0], "nope")
+	}
 	got = check("image", `"$(source.cfg.labels)"`)
 	assert.Len(t, got, 1, "a map into a string: %v", got)
 }
