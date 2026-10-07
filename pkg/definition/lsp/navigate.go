@@ -49,7 +49,7 @@ func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 			lenses = append(lenses, CodeLens{Command: &Command{Title: "Add test case", Command: CommandNewTestCase, Arguments: []interface{}{p.TextDocument.URI}}})
 		}
 		if ext := filepath.Ext(pathOf(p.TextDocument.URI)); ext == ".yaml" || ext == ".yml" {
-			titles := map[string]string{analysis.AddComponent: "Add component", analysis.AddTrait: "Add trait", analysis.AddPolicy: "Add policy", analysis.AddWorkflowStep: "Add workflow step"}
+			titles := map[string]string{analysis.AddComponent: "Add component", analysis.AddTrait: "Add trait", analysis.AddPolicy: "Add policy", analysis.AddWorkflowStep: "Add workflow step", analysis.AddSource: "Add source"}
 			for _, l := range analysis.ApplicationLenses(text) {
 				line := uint32(l.Line - 1)
 				arg := AddToApplicationParams{TextDocument: p.TextDocument, Line: line, Kind: l.Kind}

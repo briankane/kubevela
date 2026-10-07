@@ -231,7 +231,7 @@ func TestApplicationLensesAndAdd(t *testing.T) {
 		titles = append(titles, l.Command.Title)
 		assert.Equal(t, CommandAddToApplication, l.Command.Command)
 	}
-	assert.Equal(t, []string{"Add policy", "Add workflow step", "Add component", "Add trait"}, titles)
+	assert.Equal(t, []string{"Add source", "Add policy", "Add workflow step", "Add component", "Add trait"}, titles)
 
 	m = c.response(c.send(MethodAddToApplication, AddToApplicationParams{TextDocument: TextDocumentIdentifier{URI: appURI}, Line: 6, Kind: "trait", Type: "scaler"}, true))
 	var add AddToApplicationResult

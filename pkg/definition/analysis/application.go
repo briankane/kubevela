@@ -46,6 +46,7 @@ var appItems = []struct {
 	{"spec.components", componentType},
 	{"spec.policies", policyType},
 	{"spec.workflow.steps", workflowStepType},
+	{"spec.sources", sourceType},
 }
 
 // isApplication reports whether a YAML document is a KubeVela Application.

@@ -79,6 +79,7 @@ func TestApplicationLenses(t *testing.T) {
 		got = append(got, l.Kind+"@"+strings.TrimSpace(strings.Split(editApp, "\n")[l.Line-1]))
 	}
 	assert.Equal(t, []string{
+		AddSource + "@spec:",
 		AddPolicy + "@spec:",
 		AddWorkflowStep + "@spec:",
 		AddComponent + "@components:",
@@ -133,4 +134,17 @@ func TestAddToApplication(t *testing.T) {
 	_, err := AddToApplication(editApp, lineOf(editApp, "metadata:"), AddTrait, "scaler", "", opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "component")
+}
+
+// Sources are added as the other lists' items are.
+func TestAddSource(t *testing.T) {
+	var kinds []string
+	for _, l := range ApplicationLenses(editApp) {
+		kinds = append(kinds, l.Kind)
+	}
+	assert.Contains(t, kinds, AddSource)
+	e, err := AddToApplication(editApp, lineOf(editApp, "spec:"), AddSource, "http-get", "cfg", builtinOnly())
+	require.NoError(t, err)
+	got := applyEdit(t, editApp, e)
+	assert.Contains(t, got, "  sources:\n    - name: cfg\n      type: http-get\n      properties:\n        url: X\n")
 }

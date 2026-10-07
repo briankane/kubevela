@@ -52,6 +52,8 @@ func itemDefinitionType(path []string) string {
 		return componentType
 	case list == "spec.policies":
 		return policyType
+	case list == "spec.sources":
+		return sourceType
 	case strings.HasPrefix(list, "spec.components.") && strings.HasSuffix(list, ".traits"):
 		return traitType
 	case list == "spec.workflow.steps", strings.HasPrefix(list, "spec.workflow.steps.") && strings.HasSuffix(list, ".subSteps"):

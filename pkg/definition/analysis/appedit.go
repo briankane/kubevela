@@ -31,6 +31,7 @@ const (
 	AddTrait        = "trait"
 	AddPolicy       = "policy"
 	AddWorkflowStep = "workflow-step"
+	AddSource       = "source"
 )
 
 // addDefType is the definition type of what is added.
@@ -39,6 +40,7 @@ var addDefType = map[string]string{
 	AddTrait:        traitType,
 	AddPolicy:       policyType,
 	AddWorkflowStep: workflowStepType,
+	AddSource:       sourceType,
 }
 
 // AppLens is a place in an Application to add something, at a 1-based line.
@@ -131,8 +133,8 @@ func scalar(n *yaml.Node) string {
 }
 
 // ApplicationLenses are where each Application in src can have something
-// added: a policy and a workflow step at their lists, or at spec without
-// them; a component at components; a trait at each component.
+// added: a source, a policy and a workflow step at their lists, or at spec
+// without them; a component at components; a trait at each component.
 func ApplicationLenses(src string) []AppLens {
 	var out []AppLens
 	for _, app := range applications(src) {
@@ -144,6 +146,7 @@ func ApplicationLenses(src string) []AppLens {
 			return specLine
 		}
 		out = append(out,
+			AppLens{Line: at(mapKey(app.spec, "sources")), Kind: AddSource},
 			AppLens{Line: at(mapKey(app.spec, "policies")), Kind: AddPolicy},
 			AppLens{Line: at(mapKey(app.spec, "workflow")), Kind: AddWorkflowStep},
 			AppLens{Line: at(mapKey(app.spec, "components")), Kind: AddComponent})
@@ -204,6 +207,8 @@ func AddToApplication(src string, line int, kind, typeName, name string, opts Op
 		return addToList(lines, app.spec, "components", item), nil
 	case AddPolicy:
 		return addToList(lines, app.spec, "policies", item), nil
+	case AddSource:
+		return addToList(lines, app.spec, "sources", item), nil
 	default:
 		wf := mapValue(app.spec, "workflow")
 		if wf == nil {

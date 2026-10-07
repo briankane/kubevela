@@ -260,3 +260,19 @@ func TestNewApplication(t *testing.T) {
 	}
 	assert.Contains(t, names, "webservice")
 }
+
+// An Application's sources are checked as its components are: the type
+// names a source definition, its properties what that takes.
+func TestApplicationSources(t *testing.T) {
+	opts := builtinOnly()
+	app := func(source string) string {
+		return "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  sources:\n" + source + "  components:\n    - name: web\n      type: webservice\n      properties:\n        image: nginx\n"
+	}
+	assert.Empty(t, checkApp(t, app("    - name: cfg\n      type: http-get\n      properties:\n        url: https://example.com\n"), opts), "a source as its type takes it")
+	got := checkApp(t, app("    - name: cfg\n      type: http-get\n      properties: {}\n"), opts)
+	require.Len(t, got, 1, "%v", got)
+	assert.Contains(t, got[0], "url")
+	got = checkApp(t, app("    - name: cfg\n      type: no-such-source\n"), opts)
+	require.Len(t, got, 1, "%v", got)
+	assert.Contains(t, got[0], "no-such-source")
+}
