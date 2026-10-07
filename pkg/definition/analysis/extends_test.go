@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,6 +42,8 @@ template: {
 		replicas: *1 | int
 		#Probe: path: string
 		probe?: #Probe
+		// +usage=Resources, each with a default
+		resources: cpu: *"500m" | string
 	}
 }
 `
@@ -88,9 +91,9 @@ func TestExtends(t *testing.T) {
 			src:  child("web", "\t$super: properties: replicas: 2\n"),
 			want: []wantSev{{6, SeverityError, "web requires image"}},
 		},
-		"a parent not in the workspace": {
+		"a parent found nowhere": {
 			src:  child("elsewhere", "\t$super: properties: anything: 1\n"),
-			want: []wantSev{{3, SeverityInfo, "elsewhere is not in the workspace"}},
+			want: []wantSev{{3, SeverityInfo, "elsewhere is not in the workspace, the cluster or KubeVela's own definitions"}},
 		},
 	}
 	for name, tc := range cases {
@@ -113,10 +116,29 @@ func TestExtends(t *testing.T) {
 	}
 }
 
+// A parent outside the workspace is found as an Application's component
+// type is: on the cluster, else among KubeVela's own definitions.
+func TestExtendsAParentOutsideTheWorkspace(t *testing.T) {
+	errorsOf := func(src string, opts Options) []string {
+		var out []string
+		for _, d := range AnalyzeWith("tenant-web.cue", []byte(src), opts).Diagnostics {
+			if d.Severity == SeverityError || strings.Contains(d.Message, "workspace") {
+				out = append(out, strconv.Itoa(d.Range.Start.Line)+": "+d.Message)
+			}
+		}
+		return out
+	}
+	assert.Equal(t, []string{"6: webservice requires image in $super.properties"}, errorsOf(child("webservice", "\t$super: properties: {}\n"), Options{}), "a built-in parent")
+	assert.Empty(t, errorsOf(child("webservice", "\t$super: properties: image: \"nginx\"\n"), Options{}), "a built-in parent, given what it requires")
+
+	cluster := LayeredDefinitions{{{Name: "cluster-web", Type: componentType, Source: SourceCluster, CUE: strings.Replace(parentWeb, `"web": {`, `"cluster-web": {`, 1)}}}
+	assert.Equal(t, []string{"6: cluster-web requires image in $super.properties"}, errorsOf(child("cluster-web", "\t$super: properties: replicas: 2\n"), Options{Applications: cluster}), "a parent on the cluster")
+}
+
 func TestCompleteSuperProperties(t *testing.T) {
 	doc := child("web", "\t$super: properties: {\n\t\t\n\t}\n")
 	cs := CompleteSuperProperties(doc, "\t$super: properties: ", Options{Definitions: webLookup})
-	assert.ElementsMatch(t, []string{"image", "probe", "replicas"}, labels(cs))
+	assert.ElementsMatch(t, []string{"image", "probe", "replicas", "resources"}, labels(cs))
 	for _, c := range cs {
 		if c.Label == "image" {
 			assert.Equal(t, "Image to run", c.Doc)

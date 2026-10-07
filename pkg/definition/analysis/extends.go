@@ -82,13 +82,10 @@ func (d *document) checkExtends() []Diagnostic {
 		return []Diagnostic{d.at(d.template.Label.Pos(),
 			fmt.Sprintf("a component that extends %s must declare $super, with the properties %s takes: $super: properties: {...}", parent, parent))}
 	}
-	if d.opts.Definitions == nil {
-		return nil
-	}
 	ctx := cuecontext.New()
 	params, ok := d.parentParameter(ctx, parent)
 	if !ok {
-		diag := d.at(d.extendsPos(), fmt.Sprintf("%s is not in the workspace, so the properties passed to it are not checked", parent))
+		diag := d.at(d.extendsPos(), fmt.Sprintf("%s is not in the workspace, the cluster or KubeVela's own definitions, so the properties passed to it are not checked", parent))
 		diag.Severity = SeverityInfo
 		return []Diagnostic{diag}
 	}
@@ -123,7 +120,10 @@ func (d *document) checkExtends() []Diagnostic {
 	}
 	var missing []string
 	for it.Next() {
-		if _, hasDefault := it.Value().Default(); hasDefault {
+		f := it.Value()
+		// A struct of declared fields is required only for those of its
+		// fields that are.
+		if !isRequired(f) || f.IncompleteKind() == cue.StructKind && hasDeclaredFields(f) && len(requiredLeaves(f)) == 0 {
 			continue
 		}
 		if !given.LookupPath(cue.MakePath(it.Selector())).Exists() {
@@ -165,9 +165,11 @@ func (d *document) unknownParameters(f *ast.Field, params cue.Value, parent stri
 }
 
 // parentParameter is the closed parameter of the parent definition, built in
-// ctx so a child's values can be unified with it.
+// ctx so a child's values can be unified with it. The parent is the
+// workspace's, else found as an Application's component type is: on the
+// cluster, else among KubeVela's own definitions.
 func (d *document) parentParameter(ctx *cue.Context, name string) (cue.Value, bool) {
-	path, src, ok := d.opts.Definitions(name)
+	path, src, ok := d.parentSource(name)
 	if !ok {
 		return cue.Value{}, false
 	}
@@ -186,6 +188,24 @@ func (d *document) parentParameter(ctx *cue.Context, name string) (cue.Value, bo
 	}
 	params := v.LookupPath(cue.MakePath(cue.Def(closedParameterPath)))
 	return params, params.Exists()
+}
+
+// parentSource is the path and source of the parent definition name.
+func (d *document) parentSource(name string) (string, []byte, bool) {
+	if d.opts.Definitions != nil {
+		if path, src, ok := d.opts.Definitions(name); ok {
+			return path, src, true
+		}
+	}
+	var defs AppDefinitions = LayeredDefinitions{BuiltinDefinitions()}
+	if d.opts.Applications != nil {
+		defs = d.opts.Applications
+	}
+	def, ok := defs.Lookup(d.typ, name)
+	if !ok {
+		return "", nil, false
+	}
+	return name + ".cue", []byte(def.CUE), true
 }
 
 // evaluateIn compiles the template as checkTemplate does, in ctx.
