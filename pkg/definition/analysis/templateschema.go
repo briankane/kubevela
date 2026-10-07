@@ -140,7 +140,8 @@ var objectFields = map[string]struct{ single, many bool }{
 }
 
 // checkObjects reports output, or an entry of outputs, written as a struct
-// in the template without an apiVersion or kind, so not a Kubernetes object.
+// in the template without an apiVersion or kind, so not a Kubernetes object,
+// and outputs declaring none.
 // Only what the template spells out is judged: an object read from a
 // parameter or a helper, or one with an embedding, is filled in at render.
 // A definition that extends another inherits what it leaves out.
@@ -176,10 +177,19 @@ func (d *document) checkObjects() []Diagnostic {
 	if decls := all["output"]; which.single && len(decls) > 0 {
 		check("output", decls)
 	}
-	if decls := all["outputs"]; which.many {
+	if decls := all["outputs"]; which.many && len(decls) > 0 {
 		entries := map[string][]*ast.Field{}
+		empty := true
 		for _, f := range decls {
+			if st, ok := f.Value.(*ast.StructLit); !ok || len(st.Elts) > 0 {
+				empty = false
+			}
 			allTopLevelFields(f.Value, entries)
+		}
+		if empty {
+			diag := d.at(decls[0].Label.Pos(), "outputs declares no Kubernetes object: there is nothing to render. Add one, or leave outputs out")
+			diag.Severity = SeverityWarning
+			diags = append(diags, diag)
 		}
 		for name, e := range entries {
 			check("outputs."+name, e)
