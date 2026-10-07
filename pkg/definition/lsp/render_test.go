@@ -111,3 +111,16 @@ func TestRenderDefKitSupersedesAnOlderRender(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["error"], &e))
 	assert.Equal(t, CodeRequestCancelled, e.Code, "a save that was rendered over is not shown")
 }
+
+// A rendered definition is checked with what the workspace offers, as a
+// hand-written one is: here, the parent it extends.
+func TestRenderDefKitChecksWithTheWorkspace(t *testing.T) {
+	c := newClientWith(t, NewServer(WithGoRenderer(func(string) ([]goloader.LoadResult, error) {
+		return []goloader.LoadResult{{Definition: goloader.DefinitionInfo{Name: "tenant-web", Type: "component"}, CUE: childSrc}}, nil
+	})))
+	c.drain()
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: "file:///defs/web.cue", LanguageID: "cue", Version: 1, Text: parentSrc}}, false)
+	r := renderResult(t, c.response(renderRequest(c)))
+	require.Len(t, r.Definitions, 1)
+	assert.Contains(t, messages(r.Definitions[0].Diagnostics), "image", "the workspace's web requires image")
+}

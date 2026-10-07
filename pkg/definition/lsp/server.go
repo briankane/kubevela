@@ -532,22 +532,22 @@ func (s *Server) renderDefKit(id json.RawMessage, path string) {
 		return
 	}
 	s.post(func() {
-		checkRendered(path, &result)
+		s.checkRendered(path, &result)
 		_ = s.reply(id, result, nil)
 	})
 }
 
-// checkRendered checks the CUE each DefKit definition rendered to.
-func checkRendered(path string, result *RenderDefKitResult) {
+// checkRendered checks the CUE each DefKit definition rendered to as a
+// hand-written definition is checked, with what the workspace offers.
+func (s *Server) checkRendered(path string, result *RenderDefKitResult) {
+	opts := s.options()
 	for i, d := range result.Definitions {
 		if d.CUE != "" {
-			result.Definitions[i].Diagnostics = diagnose(path+"#"+d.Name+".cue", d.CUE, analysis.Options{})
+			result.Definitions[i].Diagnostics = diagnose(path+"#"+d.Name+".cue", d.CUE, opts)
 		}
 	}
 }
 
-// renderGo renders a DefKit file and checks each definition's CUE as a
-// hand-written definition is checked.
 // renderGo renders the DefKit definitions of a Go file. It runs Go, so off
 // the message loop; checking what it rendered compiles CUE, so is left to
 // checkRendered, on the loop.
