@@ -25,8 +25,8 @@ import (
 	"cuelang.org/go/cue/token"
 )
 
-// checkCalls reports a call of a provider function that leaves out a
-// $params it requires: one neither optional nor defaulted, inside a struct of
+// checkCalls reports a call of a package function that leaves out an input
+// it requires (for a provider function, in its $params): one neither optional nor defaulted, inside a struct of
 // declared fields to any depth. CUE says nothing of a missing field until a
 // value is concrete. A parameter given by reference, or with an embedding, is
 // filled in at render and counts as given.
@@ -42,15 +42,28 @@ func (d *document) checkCalls() []Diagnostic {
 		if !ok {
 			return
 		}
-		params := pkg.LookupPath(cue.MakePath(cue.Def(chain[0].Name), cue.Str("$params")))
-		if !params.Exists() {
+		function := pkg.LookupPath(cue.MakePath(cue.Def(chain[0].Name)))
+		inputs, wrapper := functionInputs(function)
+		if !function.Exists() || legacyProvider(function) {
 			return
 		}
-		given := map[string][]*ast.Field{}
-		if s, ok := body.(*ast.StructLit); ok {
-			allTopLevelFields(s, given)
+		var given []*ast.Field
+		if wrapper == "" {
+			// A function of plain CUE written alone is a schema, filled in
+			// elsewhere; only a call with a body gives its inputs.
+			s, ok := body.(*ast.StructLit)
+			if !ok {
+				return
+			}
+			given = []*ast.Field{{Value: s}}
+		} else {
+			top := map[string][]*ast.Field{}
+			if s, ok := body.(*ast.StructLit); ok {
+				allTopLevelFields(s, top)
+			}
+			given = top[wrapper]
 		}
-		if missing := missingParams(params, given["$params"], "$params"); len(missing) > 0 {
+		if missing := missingParams(inputs, given, wrapper); len(missing) > 0 {
 			diags = append(diags, d.at(chain[0].Pos(), fmt.Sprintf("%s.%s needs %s", root.Name, chain[0].Name, strings.Join(missing, ", "))))
 		}
 	}
@@ -96,7 +109,10 @@ func missingParams(want cue.Value, given []*ast.Field, prefix string) []string {
 			continue
 		}
 		name := it.Selector().Unquoted()
-		path := prefix + "." + name
+		path := name
+		if prefix != "" {
+			path = prefix + "." + name
+		}
 		if f.IncompleteKind() == cue.StructKind && hasDeclaredFields(f) {
 			if decls := inner[name]; len(decls) > 0 {
 				missing = append(missing, missingParams(f, decls, path)...)
@@ -137,7 +153,7 @@ func requiredLeaves(v cue.Value) []string {
 // isRequired reports whether a caller must give a field: it has no default,
 // and the function does not set it itself.
 func isRequired(f cue.Value) bool {
-	if _, hasDefault := f.Default(); hasDefault {
+	if _, hasDefault := f.Default(); hasDefault || derived(f) {
 		return false
 	}
 	return f.IncompleteKind() == cue.StructKind || !f.IsConcrete()

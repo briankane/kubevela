@@ -263,33 +263,6 @@ func completeMember(pkgs packages, path, typed string) []Completion {
 	return out
 }
 
-// describeMember summarises a provider function: the $params it takes, and
-// each one's +usage.
-func describeMember(v cue.Value) (detail, doc string) {
-	params := v.LookupPath(cue.MakePath(cue.Str("$params")))
-	it, err := params.Fields(cue.Optional(true))
-	if err != nil {
-		return "", ""
-	}
-	var names, lines []string
-	for it.Next() {
-		name := it.Selector().Unquoted()
-		if it.IsOptional() {
-			name += "?"
-		}
-		names = append(names, name)
-		line := "- `" + name + "`"
-		if usage := usageOf(it.Value()); usage != "" {
-			line += ": " + usage
-		}
-		lines = append(lines, line)
-	}
-	if returns := usageOf(v.LookupPath(cue.MakePath(cue.Str("$returns")))); returns != "" {
-		lines = append(lines, "", "Returns: "+returns)
-	}
-	return "$params: " + strings.Join(names, ", "), strings.Join(lines, "\n")
-}
-
 // CompleteImport completes the path of an import, given the whole document
 // and its text up to the cursor: the vela/* packages the definition type can
 // import, on an import line or inside an import block.
@@ -359,16 +332,27 @@ func customFields(published []Published) []ContextField {
 	return out
 }
 
-// callSnippet is a call of a provider function with its required $params
-// to fill in: those neither optional nor defaulted, a struct of required
+// callSnippet is a call of a package function with its required inputs to
+// fill in, inside $params for a provider function: those neither optional nor defaulted, a struct of required
 // fields spelled out, anything else one tab stop.
 func callSnippet(label string, fn cue.Value) string {
 	n := 0
-	body := requiredParams(fn.LookupPath(cue.MakePath(cue.Str("$params"))), "\t\t", &n)
+	inputs, wrapper := functionInputs(fn)
+	if legacyProvider(fn) {
+		return label + " & {\n\t$0\n}"
+	}
+	if wrapper == "" {
+		body := requiredParams(inputs, "\t", &n)
+		if body == "" {
+			body = "\t$0\n"
+		}
+		return label + " & {\n" + body + "}"
+	}
+	body := requiredParams(inputs, "\t\t", &n)
 	if body == "" {
 		body = "\t\t$0\n"
 	}
-	return label + " & {\n\t\\$params: {\n" + body + "\t}\n}"
+	return label + " & {\n\t" + snippetEscape(wrapper) + ": {\n" + body + "\t}\n}"
 }
 
 // requiredParams writes the required fields of a struct, each on a line at

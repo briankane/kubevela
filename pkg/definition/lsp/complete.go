@@ -63,6 +63,9 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 		candidates = append(candidates, analysis.CompleteTestAttribute(before)...)
 	}
 	if len(candidates) == 0 {
+		candidates = analysis.CompleteInCall(text, len(upToCursor), ext)
+	}
+	if len(candidates) == 0 {
 		candidates = append(candidates, analysis.CompleteMarker(before)...)
 		candidates = append(candidates, analysis.CompleteContextWith(text, before, published)...)
 		candidates = append(candidates, analysis.CompletePackageMemberWith(text, before, ext)...)
