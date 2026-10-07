@@ -58,6 +58,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/cue/upgrade"
 	pkgdef "github.com/oam-dev/kubevela/pkg/definition"
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/gen_sdk"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 	"github.com/oam-dev/kubevela/pkg/definition/nsrestrict"
@@ -476,7 +477,17 @@ func defaultSpec(cmd *cobra.Command, kind string) (map[string]interface{}, error
 		return nil, errors.Wrapf(err, "failed to get `%s`", FlagExtends)
 	}
 	if extends != "" {
-		return pkgdef.GetDefinitionDefaultSpecExtending(kind, extends)
+		spec, err := pkgdef.GetDefinitionDefaultSpecExtending(kind, extends)
+		if err != nil {
+			return nil, err
+		}
+		// A parent among KubeVela's own has its required properties passed
+		// through, each a parameter of the new definition.
+		defType := map[string]string{v1beta1.ComponentDefinitionKind: "component", v1beta1.TraitDefinitionKind: "trait"}[kind]
+		if tmpl, ok := analysis.SuperPassThrough(extends, defType, analysis.Options{}); ok {
+			spec["schematic"] = map[string]interface{}{"cue": map[string]interface{}{"template": tmpl}}
+		}
+		return spec, nil
 	}
 	return pkgdef.GetDefinitionDefaultSpecVariant(kind, variant)
 }

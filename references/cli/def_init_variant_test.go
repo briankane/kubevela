@@ -94,6 +94,7 @@ func TestDefinitionInitExtends(t *testing.T) {
 	assert.Contains(t, string(src), `extends: "webservice"`)
 	assert.Contains(t, string(src), "$super:")
 	assert.NotContains(t, string(src), "output:")
+	assert.Contains(t, string(src), "image: parameter.image", "webservice's required image is passed through")
 	for _, d := range analysis.Analyze(out, src).Diagnostics {
 		assert.NotEqual(t, analysis.SeverityError, d.Severity, d.Message)
 	}

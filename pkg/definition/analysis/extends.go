@@ -19,6 +19,7 @@ package analysis
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -26,6 +27,7 @@ import (
 	"cuelang.org/go/cue/build"
 	"cuelang.org/go/cue/cuecontext"
 	cueerrors "cuelang.org/go/cue/errors"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
 )
@@ -103,6 +105,7 @@ func (d *document) checkExtends() []Diagnostic {
 	var diags []Diagnostic
 	if props != nil {
 		diags = append(diags, d.unknownParameters(props, params, parent, nil)...)
+		diags = append(diags, d.superAlignment(props, params, parent)...)
 	}
 	v, ok := d.evaluateIn(ctx)
 	if !ok {
@@ -285,4 +288,111 @@ func CompleteExtends(before string, names []string) []Completion {
 		}
 	}
 	return out
+}
+
+// SuperPassThrough is the template of a definition of defType extending
+// parent: each property parent requires, a parameter of the same type and
+// usage, passed to it through $super. It is false for a parent no source
+// in opts has.
+func SuperPassThrough(parent, defType string, opts Options) (string, bool) {
+	if opts.Applications == nil {
+		opts.Applications = LayeredDefinitions{BuiltinDefinitions()}
+	}
+	def, ok := opts.Applications.Lookup(defType, parent)
+	if !ok {
+		return "", false
+	}
+	info, _ := infoOf(def, opts)
+	params, ok := def.parameterIn(cuecontext.New(), opts)
+	if !ok {
+		return "", false
+	}
+	var props, decls strings.Builder
+	for _, name := range info.required {
+		f := schemaChild(params, cue.Str(name))
+		typ := "_"
+		if b, err := format.Node(f.Syntax(cue.Raw())); err == nil {
+			typ = string(b)
+		}
+		label := name
+		if !ast.IsValidIdent(name) {
+			label = strconv.Quote(name)
+		}
+		fmt.Fprintf(&props, "\t%s: parameter.%s\n", label, label)
+		usage := usageOf(f)
+		// Only the usage: other markers follow it in the same comment.
+		if i := strings.Index(usage, " +"); i >= 0 {
+			usage = usage[:i]
+		}
+		if usage != "" {
+			fmt.Fprintf(&decls, "\t// +usage=%s\n", usage)
+		}
+		fmt.Fprintf(&decls, "\t%s: %s\n", label, typ)
+	}
+	if props.Len() == 0 {
+		return "$super: properties: {}\nparameter: {}\n", true
+	}
+	return "$super: properties: {\n" + props.String() + "}\nparameter: {\n" + decls.String() + "}\n", true
+}
+
+// superAlignment checks what $super passes each property the parent
+// requires: a value, not a type alone, which never renders; and, from a
+// parameter of the child, one the child requires too, as an optional one
+// left out fails the render.
+func (d *document) superAlignment(props *ast.Field, params cue.Value, parent string) []Diagnostic {
+	s, ok := props.Value.(*ast.StructLit)
+	if !ok {
+		return nil
+	}
+	child, hasChild := d.parameterSchema()
+	var diags []Diagnostic
+	for _, elt := range s.Elts {
+		f, ok := elt.(*ast.Field)
+		if !ok {
+			continue
+		}
+		name := labelName(f.Label)
+		if optionalAt(params, []string{name}) || !isRequired(schemaChild(params, cue.Str(name))) {
+			continue
+		}
+		if onlyAType(f.Value) {
+			b, _ := format.Node(f.Value)
+			diags = append(diags, d.at(f.Value.Pos(), fmt.Sprintf("%s requires %s: $super passes the type %s, not a value, so the render cannot complete. Pass parameter.%s, or a value", parent, name, b, name)))
+			continue
+		}
+		labels, ok := parameterPath(f.Value)
+		if !ok || len(labels) == 0 || !hasChild || !optionalAt(child, labels) {
+			continue
+		}
+		ref := parameterLabel + "." + strings.Join(labels, ".")
+		diag := d.at(f.Value.Pos(), fmt.Sprintf("%s requires %s, but %s is optional here: where it is not given, the render fails. Make it required, or give it a default", parent, name, ref))
+		diag.Severity = SeverityWarning
+		if fix, ok := d.requireParameterFix(labels); ok {
+			diag.Fixes = []Fix{fix}
+		}
+		diags = append(diags, diag)
+	}
+	return diags
+}
+
+// requireParameterFix removes the ? of the child's parameter at labels.
+func (d *document) requireParameterFix(labels []string) (Fix, bool) {
+	f, ok := fieldIn(d.template, parameterLabel)
+	for _, l := range labels {
+		if !ok {
+			return Fix{}, false
+		}
+		f, ok = fieldIn(f, l)
+	}
+	if !ok {
+		return Fix{}, false
+	}
+	at := f.Label.End().Offset()
+	if at >= len(d.src) || d.src[at] != '?' {
+		return Fix{}, false
+	}
+	start := f.Label.End()
+	r := span(start, start)
+	r.End.Column++
+	return Fix{Title: "Make " + labels[len(labels)-1] + " required", Edits: []RangeEdit{{Range: r, NewText: ""}}}, true
 }

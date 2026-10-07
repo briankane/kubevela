@@ -135,6 +135,46 @@ func TestExtendsAParentOutsideTheWorkspace(t *testing.T) {
 	assert.Equal(t, []string{"6: cluster-web requires image in $super.properties"}, errorsOf(child("cluster-web", "\t$super: properties: replicas: 2\n"), Options{Applications: cluster}), "a parent on the cluster")
 }
 
+// What a child passes its parent's required properties must be given:
+// a value, and from a parameter the child requires too.
+func TestSuperAlignsWithItsParent(t *testing.T) {
+	opts := Options{Definitions: webLookup}
+	find := func(src, msg string) *Diagnostic {
+		for _, d := range AnalyzeWith("tenant-web.cue", []byte(src), opts).Diagnostics {
+			if strings.Contains(d.Message, msg) {
+				d := d
+				return &d
+			}
+		}
+		return nil
+	}
+	typ := find(child("web", "\t$super: properties: image: string\n"), "passes the type")
+	require.NotNil(t, typ)
+	assert.Equal(t, SeverityError, typ.Severity)
+	assert.Contains(t, typ.Message, "image")
+
+	src := child("web", "\t$super: properties: image: parameter.image\n\tparameter: {\n\t\timage?: string\n\t}\n")
+	opt := find(src, "is optional here")
+	require.NotNil(t, opt)
+	assert.Equal(t, SeverityWarning, opt.Severity)
+	assert.Contains(t, opt.Message, "web requires image")
+	require.NotEmpty(t, opt.Fixes)
+	assert.Contains(t, applyRangeEdits(src, opt.Fixes[0].Edits), "\t\timage: string\n")
+
+	assert.Nil(t, find(child("web", "\t$super: properties: image: parameter.image\n\tparameter: image: string\n"), "is optional here"), "a required parameter")
+	assert.Nil(t, find(child("web", "\t$super: properties: image: parameter.image\n\tparameter: image: *\"nginx\" | string\n"), "is optional here"), "a defaulted one")
+}
+
+// The scaffold of a child passes each property its parent requires through
+// a parameter of the same type and usage, and checks clean.
+func TestSuperPassThrough(t *testing.T) {
+	tmpl, ok := SuperPassThrough("webservice", componentType, Options{})
+	require.True(t, ok)
+	assert.Contains(t, tmpl, "image: parameter.image")
+	assert.Contains(t, tmpl, "// +usage=Which image would you like to use for your service\n")
+	assert.NotContains(t, tmpl, "+short", "only the usage")
+}
+
 func TestCompleteSuperProperties(t *testing.T) {
 	doc := child("web", "\t$super: properties: {\n\t\t\n\t}\n")
 	cs := CompleteSuperProperties(doc, "\t$super: properties: ", Options{Definitions: webLookup})
