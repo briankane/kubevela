@@ -123,6 +123,9 @@ func TestAddToApplication(t *testing.T) {
 		if !assert.NoError(t, err, name) {
 			continue
 		}
+		// VS Code indents each line of a snippet by the text before it on the
+		// line it goes in: an edit starting a line has none.
+		assert.Equal(t, 1, e.Range.Start.Column, "%s: an edit starts its line", name)
 		got := applyEdit(t, c.src, e)
 		assert.Contains(t, got, c.want, "%s:\n%s", name, got)
 	}

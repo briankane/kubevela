@@ -287,28 +287,19 @@ func blockEnd(lines []string, start, indent int) int {
 	return end
 }
 
-// insertAfter is the edit inserting text after the 1-based line.
+// insertAfter is the edit inserting text after the 1-based line, at the
+// start of the line after it: VS Code indents a snippet's lines by the text
+// before it on its line, so an edit starting a line is left as written. A
+// file with no newline at its end gets one first.
 func insertAfter(lines []string, line int, text []string) AppEdit {
-	body := strings.Join(text, "\n")
-	if line >= len(lines) || line == len(lines)-1 && lines[len(lines)-1] == "" {
-		// At the end of the file: after its last line, on lines of their own.
-		last := line
-		if last > len(lines) {
-			last = len(lines)
-		}
-		pos := Position{Line: last, Column: len(lines[last-1]) + 1}
-		prefix := "\n"
-		if lines[last-1] == "" {
-			prefix = ""
-		}
-		suffix := ""
-		if lines[last-1] == "" {
-			suffix = "\n"
-		}
-		return AppEdit{Range: Range{Start: pos, End: pos}, Snippet: prefix + body + suffix}
+	body := strings.Join(text, "\n") + "\n"
+	if line < len(lines) {
+		pos := Position{Line: line + 1, Column: 1}
+		return AppEdit{Range: Range{Start: pos, End: pos}, Snippet: body}
 	}
-	pos := Position{Line: line + 1, Column: 1}
-	return AppEdit{Range: Range{Start: pos, End: pos}, Snippet: body + "\n"}
+	last := len(lines)
+	pos := Position{Line: last, Column: len(lines[last-1]) + 1}
+	return AppEdit{Range: Range{Start: pos, End: pos}, Snippet: "\n" + body}
 }
 
 // addToList is the edit adding item to the list at key under the mapping
@@ -338,15 +329,16 @@ func addToList(lines []string, parent *yaml.Node, key string, item []string) App
 		end := blockEnd(lines, lastItem.Line, dash)
 		return insertAfter(lines, end, indentLines(asList(item), dash))
 	}
-	// [] or nothing: the list goes under its key, in place of what is there.
+	// [] or nothing: the key's line is written again, from its start, with
+	// the list under it in place of what was after the colon.
 	l := lines[keyNode.Line-1]
 	colon := keyNode.Column - 1 + len(key) + strings.Index(l[keyNode.Column-1+len(key):], ":") + 1
-	start := Position{Line: keyNode.Line, Column: colon + 1}
-	end := Position{Line: keyNode.Line, Column: len(l) + 1}
 	text := asList(item)
 	if key == "workflow" {
 		text = item
 	}
-	body := "\n" + strings.Join(indentLines(text, keyIndent+2), "\n")
+	body := l[:colon] + "\n" + strings.Join(indentLines(text, keyIndent+2), "\n")
+	start := Position{Line: keyNode.Line, Column: 1}
+	end := Position{Line: keyNode.Line, Column: len(l) + 1}
 	return AppEdit{Range: Range{Start: start, End: end}, Snippet: body}
 }
