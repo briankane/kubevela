@@ -51,6 +51,9 @@ type AddonSchemaResult struct {
 	UISchema     json.RawMessage `json:"uiSchema"`
 	// SchemaError is why its parameters give no schema, where they do not.
 	SchemaError string `json:"schemaError,omitempty"`
+	// EnableError is why vela addon enable would refuse it: it makes the
+	// parameters' schema first, as Schema is made where it can be.
+	EnableError string `json:"enableError,omitempty"`
 }
 
 // addonMetadata is the part of an addon's metadata.yaml its panel shows.
@@ -85,6 +88,7 @@ func addonSchema(folder string) (AddonSchemaResult, error) {
 			}
 		} else if v := cuecontext.New().CompileBytes(param).LookupPath(cue.ParsePath("parameter")); v.Err() == nil && v.Exists() {
 			// The generator refuses some constraints it could not express: read it field by field.
+			out.EnableError = fmt.Sprintf("vela addon enable refuses this addon: it makes a schema of its parameters, and CUE's generator cannot (%v)", err)
 			if b, err := json.Marshal(fallbackSchema(v)); err == nil {
 				out.Schema = b
 			}

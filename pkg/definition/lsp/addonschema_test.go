@@ -73,4 +73,5 @@ func TestAddonSchemaTheGeneratorRefuses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, r.SchemaError)
 	assert.Contains(t, string(r.Schema), `"replicas"`)
+	assert.Contains(t, r.EnableError, "vela addon enable refuses", "the form is given, but enabling it is not")
 }

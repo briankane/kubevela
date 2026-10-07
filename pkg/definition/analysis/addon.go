@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
@@ -42,6 +43,7 @@ import (
 
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/config"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
+	"github.com/oam-dev/kubevela/pkg/schema"
 )
 
 const cueExt = ".cue"
@@ -1141,7 +1143,27 @@ func (d *document) checkAddonParameter() []Diagnostic {
 		return diags
 	}
 	_, diags := d.build(cuecontext.New(), nil, "")
-	return append(diags, d.requireFields("the addon's parameters, and its form, are read from it", parameterLabel)...)
+	diags = append(diags, d.requireFields("the addon's parameters, and its form, are read from it", parameterLabel)...)
+	if len(diags) == 0 {
+		diags = append(diags, d.checkParameterSchema()...)
+	}
+	return diags
+}
+
+// checkParameterSchema makes the parameter's schema as vela addon enable
+// does before anything else, and reports where CUE's generator cannot: it
+// refuses a number's bound beside its type in a disjunction.
+func (d *document) checkParameterSchema() []Diagnostic {
+	if _, err := schema.ParsePropertiesToSchema(context.Background(), string(d.src)); err != nil {
+		pos := token.NoPos
+		for _, decl := range d.file.Decls {
+			if f, ok := decl.(*ast.Field); ok && labelName(f.Label) == parameterLabel {
+				pos = f.Label.Pos()
+			}
+		}
+		return []Diagnostic{d.at(pos, fmt.Sprintf("vela addon enable refuses this addon: it makes a schema of the parameter, and CUE's generator cannot (%v). A number's bound beside its type in a disjunction is one cause: write *1 | >=1, or int & >=1 without a default", err))}
+	}
+	return nil
 }
 
 // checkNotes checks NOTES.cue as an addon's install renders it: with its
