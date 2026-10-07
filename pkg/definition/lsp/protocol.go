@@ -715,3 +715,14 @@ type DefinitionFile struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
 }
+
+// MethodLocate finds the field at a dotted path in a CUE definition or an
+// Application's YAML, or the deepest part of the path written. It is this
+// server's own request; the result is the field's label, or null.
+const MethodLocate = "vela/locate"
+
+// LocateParams name the file, open or on disk, and the field's path.
+type LocateParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Path         string                 `json:"path"`
+}

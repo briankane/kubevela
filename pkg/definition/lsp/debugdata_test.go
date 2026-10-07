@@ -19,6 +19,8 @@ package lsp
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -73,4 +75,19 @@ func TestDebugDataRequest(t *testing.T) {
 
 	m = c.response(c.send(MethodDebugData, DebugDataParams{Namespace: "default", Name: "nope"}, true))
 	assert.Contains(t, string(m["error"]), "could not read default/nope")
+}
+
+// vela/locate finds a field in a file on disk.
+func TestLocateRequest(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "web.cue")
+	require.NoError(t, os.WriteFile(file, []byte(parentSrc), 0600))
+	c := newClient(t)
+	c.drain()
+	m := c.response(c.send(MethodLocate, LocateParams{TextDocument: TextDocumentIdentifier{URI: "file://" + file}, Path: "template.parameter.image"}, true))
+	var r Range
+	require.NoError(t, json.Unmarshal(m["result"], &r), string(m["error"]))
+	assert.Equal(t, uint32(8), r.Start.Line, "image, in the parameter")
+
+	m = c.response(c.send(MethodLocate, LocateParams{TextDocument: TextDocumentIdentifier{URI: "file://" + file}, Path: "nothing"}, true))
+	assert.Equal(t, "null", string(m["result"]))
 }
