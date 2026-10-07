@@ -66,6 +66,9 @@ type Cluster struct {
 	// Events calls each with every event in a namespace as they change,
 	// until ctx is done.
 	Events func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured))
+	// Logs calls each with the lines the workloads' pods write, until ctx is
+	// done.
+	Logs func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine))
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -125,6 +128,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Events = func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured)) {
 		watchEvents(ctx, cfg, namespace, each)
+	}
+	out.Logs = func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine)) {
+		followLogs(ctx, cfg, namespace, workloads, each)
 	}
 	if !out.KubeVela {
 		return out, nil

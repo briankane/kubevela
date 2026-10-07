@@ -488,7 +488,7 @@ func (s *Server) handle(msg message) error {
 	case "shutdown":
 		s.shutdown = true
 		s.stopWatches()
-	case MethodWatchApplication, MethodUnwatchApplication, MethodWatchEvents, MethodUnwatchEvents:
+	case MethodWatchApplication, MethodUnwatchApplication, MethodWatchEvents, MethodUnwatchEvents, MethodWatchLogs, MethodUnwatchLogs:
 		result, rerr = s.watchRequest(msg)
 	case "textDocument/didOpen":
 		var p DidOpenTextDocumentParams

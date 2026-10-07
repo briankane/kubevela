@@ -168,6 +168,16 @@ func (s *Server) watchRequest(msg message) (interface{}, *ResponseError) {
 			return struct{}{}, nil
 		}
 		return struct{}{}, s.startWatch(p)
+	case MethodWatchLogs, MethodUnwatchLogs:
+		var p WatchLogsParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		if msg.Method == MethodUnwatchLogs {
+			s.stopKey(logsKey(p.Namespace, p.Application))
+			return struct{}{}, nil
+		}
+		return struct{}{}, s.startLogsWatch(p)
 	default:
 		var p WatchEventsParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
