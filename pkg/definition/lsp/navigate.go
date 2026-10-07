@@ -96,6 +96,12 @@ func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 			return nil, nil
 		}
 		return locs, nil
+	case MethodRenderedDefinition:
+		var p RenderedDefinitionParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		return s.renderedDefinition(p), nil
 	case "textDocument/references":
 		var p ReferenceParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
@@ -144,7 +150,28 @@ var (
 // the workspace knows (a definition extended, a package imported, a member of
 // one, the definition a test case names), or a declaration in the CUE.
 func (s *Server) definitionAt(uri string, pos Position) []Location {
-	text := s.docs[uri]
+	return s.definitionIn(uri, s.docs[uri], pos)
+}
+
+// renderedDefinition finds a declaration from a position in a DefKit
+// definition's generated CUE, read as a file beside the Go one. A location in
+// that CUE has no URI, as the CUE is the client's and no file holds it.
+func (s *Server) renderedDefinition(p RenderedDefinitionParams) []Location {
+	path := pathOf(p.TextDocument.URI) + "." + p.Name + ".rendered.cue"
+	locs := s.definitionIn("file://"+path, p.Text, p.Position)
+	out := []Location{}
+	for _, l := range locs {
+		if l.URI == "file://"+path {
+			l.URI = ""
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// definitionIn finds the declaration of what is at pos in text, the content
+// of uri.
+func (s *Server) definitionIn(uri, text string, pos Position) []Location {
 	path := pathOf(uri)
 	lines := strings.Split(text, "\n")
 	if int(pos.Line) >= len(lines) {

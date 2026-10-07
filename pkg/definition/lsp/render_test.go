@@ -19,6 +19,7 @@ package lsp
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -123,4 +124,43 @@ func TestRenderDefKitChecksWithTheWorkspace(t *testing.T) {
 	r := renderResult(t, c.response(renderRequest(c)))
 	require.Len(t, r.Definitions, 1)
 	assert.Contains(t, messages(r.Definitions[0].Diagnostics), "image", "the workspace's web requires image")
+}
+
+const renderedRefs = `"hello": {
+	type: "component"
+	attributes: workload: type: "autodetects.core.oam.dev"
+}
+template: {
+	output: {apiVersion: "v1", kind: "ConfigMap", data: img: parameter.image}
+	parameter: image: string
+}
+`
+
+// Go to definition in a definition's generated CUE: a target in that CUE
+// comes back with no URI, one elsewhere with its own.
+func TestRenderedDefinition(t *testing.T) {
+	c := newClientWith(t, NewServer())
+	c.drain()
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: "file:///defs/web.cue", LanguageID: "cue", Version: 1, Text: parentSrc}}, false)
+	ask := func(text string, line, char uint32) []Location {
+		m := c.response(c.send(MethodRenderedDefinition, RenderedDefinitionParams{
+			TextDocument: TextDocumentIdentifier{URI: goURI}, Name: "hello", Text: text, Position: Position{Line: line, Character: char},
+		}, true))
+		require.Empty(t, string(m["error"]))
+		var locs []Location
+		require.NoError(t, json.Unmarshal(m["result"], &locs))
+		return locs
+	}
+
+	at := strings.Index(strings.Split(renderedRefs, "\n")[5], "image")
+	locs := ask(renderedRefs, 5, uint32(at))
+	require.Len(t, locs, 1)
+	assert.Equal(t, "", locs[0].URI, "parameter.image is declared in the same CUE")
+	assert.Equal(t, uint32(6), locs[0].Range.Start.Line)
+
+	child := strings.Replace(childSrc, "$super: properties: imge", "$super: properties: image", 1)
+	at = strings.Index(strings.Split(child, "\n")[2], "web")
+	locs = ask(child, 2, uint32(at))
+	require.Len(t, locs, 1)
+	assert.Equal(t, "file:///defs/web.cue", locs[0].URI, "the parent it extends, in the workspace")
 }

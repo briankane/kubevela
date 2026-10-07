@@ -235,6 +235,20 @@ type RenderDefKitParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 }
 
+// MethodRenderedDefinition finds the declaration of what is at a position in
+// one definition's generated CUE, as textDocument/definition does in a file.
+const MethodRenderedDefinition = "vela/renderedDefinition"
+
+// RenderedDefinitionParams are a Go file, which of its definitions, that
+// definition's generated CUE, and a position in it. The result is the
+// locations found; one with no URI is in Text.
+type RenderedDefinitionParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Name         string                 `json:"name"`
+	Text         string                 `json:"text"`
+	Position     Position               `json:"position"`
+}
+
 // RenderDefKitResult is what a Go file renders to: an error when the file
 // could not be loaded at all, otherwise one entry per definition in it.
 type RenderDefKitResult struct {

@@ -489,7 +489,7 @@ func (s *Server) handle(msg message) error {
 				result = h
 			}
 		}
-	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint", "textDocument/codeLens", "textDocument/formatting":
+	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint", "textDocument/codeLens", "textDocument/formatting", MethodRenderedDefinition:
 		result, rerr = s.navigationRequest(msg)
 	case "textDocument/completion":
 		var p CompletionParams
