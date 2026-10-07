@@ -211,11 +211,14 @@ func (d *document) checkTemplates(templates cue.Value, importPath, name string, 
 			continue
 		}
 		if got := f.PackageName(); got != "" && got != pkgName {
+			msg := fmt.Sprintf("the package is %s, the last part of spec.path: every template must be package %s", pkgName, pkgName)
+			if !ast.IsValidIdent(pkgName) {
+				msg = fmt.Sprintf("the package is named after the last part of spec.path, and %s is not a CUE name: give each template no package clause, and import it with an alias, as in import %s %q", pkgName, packageAlias(pkgName), importPath)
+			}
 			for _, decl := range f.Decls {
 				if p, ok := decl.(*ast.Package); ok {
 					start := t.at(p.Name.Pos())
-					diags = append(diags, Diagnostic{Range: Range{Start: start, End: tokenEnd(d.src, start)}, Severity: SeverityError,
-						Message: fmt.Sprintf("the package is %s, the last part of spec.path: every template must be package %s", pkgName, pkgName)})
+					diags = append(diags, Diagnostic{Range: Range{Start: start, End: tokenEnd(d.src, start)}, Severity: SeverityError, Message: msg})
 				}
 			}
 			continue
@@ -282,19 +285,25 @@ func (d *document) checkFunctions(v cue.Value, files map[string]templateFile, na
 // protocol is empty, a helper of plain CUE.
 func NewPackage(name, importPath, protocol string) string {
 	pkg := path.Base(importPath)
+	// A package is named after the last part of its path. When that is no
+	// CUE name, its templates declare no package and importers alias it.
+	clause, how := "package "+pkg, fmt.Sprintf("import %q", importPath)
+	if !ast.IsValidIdent(pkg) {
+		clause, how = "// No package clause: "+pkg+" is not a CUE name.", fmt.Sprintf("import %s %q", packageAlias(pkg), importPath)
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `apiVersion: cue.oam.dev/v1alpha1
 kind: Package
 metadata:
   name: %s
 spec:
-  # Definitions import the package by this path: import "%s".
+  # Definitions import the package by this path: %s.
   path: %s
-`, name, importPath, importPath)
+`, name, how, importPath)
 	if protocol == "" {
 		fmt.Fprintf(&b, `  templates:
     %s.cue: |
-      package %s
+      %s
 
       // +usage=Joins a name and a suffix with a hyphen
       #Name: {
@@ -302,7 +311,7 @@ spec:
         suffix: string
         out:    name + "-" + suffix
       }
-`, pkg, pkg)
+`, pkg, clause)
 		return b.String()
 	}
 	fmt.Fprintf(&b, `  # Each call POSTs its $params as JSON to <endpoint>/<#do>, and reads its
@@ -312,7 +321,7 @@ spec:
     endpoint: %s://%s.example.com
   templates:
     %s.cue: |
-      package %s
+      %s
 
       // +usage=Greets a name
       #Greet: {
@@ -327,6 +336,21 @@ spec:
           message: string
         }
       }
-`, protocol, protocol, name, pkg, pkg, name)
+`, protocol, protocol, name, pkg, clause, name)
 	return b.String()
+}
+
+// packageAlias is the name to import a package whose last path part is no
+// CUE name under.
+func packageAlias(last string) string {
+	alias := strings.Map(func(r rune) rune {
+		if r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, last)
+	if !ast.IsValidIdent(alias) {
+		alias = "_" + alias
+	}
+	return alias
 }

@@ -87,6 +87,16 @@ func TestPackageFile(t *testing.T) {
 			edit: func(s string) string { return strings.Replace(s, "endpoint:", "endpont:", 1) },
 			want: []string{"9:", "error", "endpont"},
 		},
+		"a path whose last part is no CUE name, and a package clause": {
+			edit: func(s string) string { return strings.Replace(s, "path: ext/hello", "path: ext/my-hello", 1) },
+			want: []string{"12:", "error", "my-hello is not a CUE name", "no package clause", "alias"},
+		},
+		"a path whose last part is no CUE name, and no package clause": {
+			edit: func(s string) string {
+				s = strings.Replace(s, "path: ext/hello", "path: ext/my-hello", 1)
+				return strings.Replace(s, "      package hello\n", "", 1)
+			},
+		},
 		"a template of another package": {
 			edit: func(s string) string { return strings.Replace(s, "package hello", "package hi", 1) },
 			want: []string{"12:", "error", "hello"},
@@ -148,6 +158,49 @@ func TestPackageFileAmongOtherDocuments(t *testing.T) {
 
 	_, ok := CheckPackageFile("cm.yaml", []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"), nil)
 	assert.False(t, ok, "no Package in it")
+}
+
+func TestNewPackageOfAPathWithAHyphen(t *testing.T) {
+	src := NewPackage("my-package", "ext/my-package", "")
+	diags, ok := CheckPackageFile("my-package-package.yaml", []byte(src), nil)
+	require.True(t, ok)
+	assert.Empty(t, diags, "clean:\n%s", src)
+	assert.NotContains(t, src, "package my-package")
+	assert.Contains(t, src, `import my_package "ext/my-package"`, "says how to import it")
+}
+
+func TestImportOfAPackageWithNoName(t *testing.T) {
+	pkgs, errs := ParsePackages([]byte(NewPackage("my-package", "ext/my-package", "")))
+	require.Empty(t, errs)
+	require.Len(t, pkgs, 1)
+	def := func(imp, ref string) string {
+		return imp + "\n\"s\": {\n\ttype: \"workflow-step\"\n\tdescription: \"d\"\n}\ntemplate: {\n\tn: (" + ref + ".#Name & {name: \"a\", suffix: \"b\"}).out\n\tparameter: {}\n}\n"
+	}
+	opts := Options{Externals: NewExternals(pkgs)}
+	errorsOf := func(src string) []Diagnostic {
+		var out []Diagnostic
+		for _, d := range AnalyzeWith("s.cue", []byte(src), opts).Diagnostics {
+			if d.Severity == SeverityError {
+				out = append(out, d)
+			}
+		}
+		return out
+	}
+	assert.Empty(t, errorsOf(def(`import my_package "ext/my-package"`, "my_package")), "imported with an alias")
+
+	got := errorsOf(def(`import "ext/my-package"`, "my_package"))
+	require.NotEmpty(t, got)
+	assert.Equal(t, 1, got[0].Range.Start.Line)
+	assert.Contains(t, got[0].Message, "alias")
+	require.Len(t, got[0].Fixes, 1)
+	assert.Equal(t, "my_package ", got[0].Fixes[0].Edits[0].NewText)
+	assert.Equal(t, 8, got[0].Fixes[0].Edits[0].Range.Start.Column, "before the path")
+}
+
+func TestCompleteImportOfAHyphenatedPath(t *testing.T) {
+	typed, ok := importPathTyped(`import "ext/my-`)
+	require.True(t, ok)
+	assert.Equal(t, "ext/my-", typed)
 }
 
 func TestNewPackage(t *testing.T) {

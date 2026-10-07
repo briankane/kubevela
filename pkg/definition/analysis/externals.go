@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"sync"
 
@@ -229,6 +230,32 @@ func (d *document) checkCustomProviders() []Diagnostic {
 	return diags
 }
 
+// checkUnnamedImports reports each import of a package whose last path part
+// is no CUE name, written without an alias: nothing can refer to it.
+func (d *document) checkUnnamedImports() []Diagnostic {
+	var diags []Diagnostic
+	for _, decl := range d.imports {
+		for _, spec := range decl.Specs {
+			if !unnamed(spec) {
+				continue
+			}
+			importPath := strings.Trim(spec.Path.Value, `"`)
+			alias := packageAlias(path.Base(importPath))
+			diag := d.at(spec.Path.Pos(), fmt.Sprintf("%s is not a CUE name, so nothing can refer to this package: import it with an alias, as in import %s %q", path.Base(importPath), alias, importPath))
+			at := diag.Range.Start
+			diag.Fixes = []Fix{{Title: "Import as " + alias, Edits: []RangeEdit{{Range: Range{Start: at, End: at}, NewText: alias + " "}}}}
+			diags = append(diags, diag)
+		}
+	}
+	return diags
+}
+
+// unnamed reports whether an import has no name to refer to it by: no alias,
+// and a last path part that is no CUE name.
+func unnamed(spec *ast.ImportSpec) bool {
+	return spec.Name == nil && !ast.IsValidIdent(path.Base(strings.Trim(spec.Path.Value, `"`)))
+}
+
 // checkUnusedImports reports each import the file never refers to. The
 // controller fails to render a component, trait or policy with one; the
 // workflow engine and the other compilers pass it over, so there it warns.
@@ -250,7 +277,7 @@ func (d *document) checkUnusedImports() []Diagnostic {
 	var diags []Diagnostic
 	for _, decl := range d.imports {
 		for _, spec := range decl.Specs {
-			if used[spec] {
+			if used[spec] || unnamed(spec) {
 				continue
 			}
 			msg := "imported and not used: " + spec.Path.Value

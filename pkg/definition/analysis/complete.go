@@ -199,7 +199,7 @@ func typeOf(v cue.Value) string {
 var (
 	memberTyped = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.$#])([A-Za-z_][A-Za-z0-9_]*)\.(#?[A-Za-z0-9_]*)$`)
 	importSpec  = regexp.MustCompile(`(?m)^\s*(?:import\s+)?(?:([A-Za-z_][A-Za-z0-9_]*)\s+)?"([A-Za-z0-9_.\-]+/[^"]+)"`)
-	importTyped = regexp.MustCompile(`^\s*(?:import\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s+)?"([A-Za-z0-9/]*)$`)
+	importTyped = regexp.MustCompile(`^\s*(?:import\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\s+)?"([A-Za-z0-9/._-]*)$`)
 )
 
 // CompletePackageMember completes a member of an imported vela/* package,
