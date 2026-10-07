@@ -49,7 +49,7 @@ func (d *document) checkSelectors(v cue.Value) []Diagnostic {
 			if diag, bad := d.checkParameter(param, chain); bad {
 				diags = append(diags, diag)
 			}
-		case root.Name == "context" && modelled && ctx.Exists():
+		case root.Name == contextLabel && modelled && ctx.Exists():
 			if diag, bad := d.checkContext(ctx, chain); bad {
 				diags = append(diags, diag)
 			}
@@ -98,7 +98,7 @@ func (d *document) checkParameter(param cue.Value, chain []*ast.Ident) (Diagnost
 // catches a read CUE does not evaluate, such as one under an undecided if.
 func (d *document) checkContext(ctx cue.Value, chain []*ast.Ident) (Diagnostic, bool) {
 	cur := ctx
-	walked := []string{"context"}
+	walked := []string{contextLabel}
 	for _, id := range chain {
 		if cur.IncompleteKind() != cue.StructKind {
 			return Diagnostic{}, false

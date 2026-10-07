@@ -100,7 +100,7 @@ func isValueRead(e ast.Expr) bool {
 	default:
 		return false
 	}
-	if root.Name == parameterLabel || root.Name == "context" {
+	if root.Name == parameterLabel || root.Name == contextLabel {
 		return true
 	}
 	// A field declared in the file, not a type such as string, nor a

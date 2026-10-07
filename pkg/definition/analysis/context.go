@@ -42,6 +42,9 @@ const (
 	workloadType     = "workload"
 )
 
+// contextLabel is the field a template reads its context from.
+const contextLabel = "context"
+
 // templateContexts are propexpr's registry entries for what each definition
 // type's template reads: the source of truth for which context fields exist
 // there, their types, and their docs.

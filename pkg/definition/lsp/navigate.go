@@ -124,6 +124,9 @@ func (s *Server) definitionAt(uri string, pos Position) []Location {
 	}
 	line := lines[pos.Line]
 	col := len(prefixUTF16(line, pos.Character))
+	if d, ok := analysis.DeclarationInStatusField(path, text, byteOffset(text, pos)); ok {
+		return []Location{{URI: "file://" + d.Path, Range: protocolRange(text, d.Range)}}
+	}
 	if loc, ok := s.workspaceTarget(path, text, line, col); ok {
 		return []Location{loc}
 	}

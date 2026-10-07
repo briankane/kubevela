@@ -459,7 +459,7 @@ func (d *document) build(ctx *cue.Context, imports []*build.Instance, extra stri
 // evaluate, such as one under an undecided if.
 func (d *document) checkReads(v cue.Value) []Diagnostic {
 	param := v.LookupPath(cue.MakePath(cue.Def("#velaAddonParameter")))
-	ctx := v.LookupPath(cue.ParsePath("context"))
+	ctx := v.LookupPath(cue.ParsePath(contextLabel))
 	var diags []Diagnostic
 	ast.Walk(d.file, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
@@ -474,7 +474,7 @@ func (d *document) checkReads(v cue.Value) []Diagnostic {
 			if diag, bad := d.checkParameter(param, chain); bad {
 				diags = append(diags, diag)
 			}
-		case root.Name == "context" && ctx.Exists():
+		case root.Name == contextLabel && ctx.Exists():
 			if diag, bad := d.checkContext(ctx, chain); bad {
 				diags = append(diags, diag)
 			}

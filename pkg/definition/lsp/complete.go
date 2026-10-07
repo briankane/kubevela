@@ -46,6 +46,9 @@ func completions(uri, text string, pos Position, published []analysis.Published,
 	upToCursor := strings.Join(append(append([]string{}, lines[:pos.Line]...), before), "\n")
 	var candidates []analysis.Completion
 	ext := opts.Externals
+	if status, ok := analysis.CompleteStatusField(pathOf(uri), text, byteOffset(text, pos), opts); ok {
+		return completionList(list, status, before, pos)
+	}
 	if ext := filepath.Ext(pathOf(uri)); ext == ".yaml" || ext == ".yml" {
 		yamlCandidates, _ := analysis.CompleteYAMLFile(pathOf(uri), text, byteOffset(text, pos), opts)
 		return completionList(list, yamlCandidates, before, pos)

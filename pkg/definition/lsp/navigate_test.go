@@ -130,3 +130,26 @@ func TestInlayHintRequest(t *testing.T) {
 	assert.Equal(t, "= 2", hints[0].Label)
 	assert.Equal(t, uint32(5), hints[0].Position.Line)
 }
+
+const statusSrc = "\"web\": {\n\ttype: \"component\"\n\tattributes: {\n\t\tworkload: type: \"autodetects.core.oam.dev\"\n\t\tstatus: healthPolicy: #\"\"\"\n\t\t\tisHealth: context.output.status.readyReplicas == context.output.spec.replicas\n\t\t\t\"\"\"#\n\t}\n}\ntemplate: {\n\toutput: {apiVersion: \"apps/v1\", kind: \"Deployment\", spec: replicas: 1}\n\tparameter: {}\n}\n"
+
+func TestStatusFieldRequests(t *testing.T) {
+	c := newClient(t)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: statusSrc}}, false)
+	c.diagnostics()
+	line := strings.Split(statusSrc, "\n")[5]
+	pos := Position{Line: 5, Character: uint32(strings.Index(line, "readyReplicas") + 2)}
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: pos}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label)
+	}
+	assert.Contains(t, labels, "readyReplicas", "the live Deployment's status, in a string")
+
+	m = c.response(c.send("textDocument/hover", HoverParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: pos}, true))
+	var h Hover
+	require.NoError(t, json.Unmarshal(m["result"], &h))
+	assert.Contains(t, h.Contents.Value, "readyReplicas")
+}

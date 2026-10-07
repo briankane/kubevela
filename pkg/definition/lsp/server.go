@@ -272,6 +272,35 @@ func (s *Server) laterRequest(msg message) *ResponseError {
 	return nil
 }
 
+// hover describes what is at a position: in YAML, a key or an
+// Application's type; in a status field, what it reads; in an addon's CUE or
+// a definition, what is declared there.
+func (s *Server) hover(p HoverParams) (Hover, bool) {
+	text := s.docs[p.TextDocument.URI]
+	path := pathOf(p.TextDocument.URI)
+	offset := byteOffset(text, p.Position)
+	opts := s.options()
+	var h string
+	var ok bool
+	switch ext := filepath.Ext(path); {
+	case ext == ".yaml" || ext == ".yml":
+		h, ok = analysis.HoverYAMLFile(path, text, offset, opts)
+	default:
+		if h, ok = analysis.HoverStatusField(path, text, offset, opts); ok {
+			break
+		}
+		if _, _, isAddon := analysis.AddonFileKind(path); isAddon {
+			h, ok = analysis.HoverAddonFile(path, text, offset, opts)
+		} else {
+			h, ok = analysis.Hover(text, offset, opts)
+		}
+	}
+	if !ok {
+		return Hover{}, false
+	}
+	return Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}, true
+}
+
 // configure acts on changed settings.
 func (s *Server) configure(set Settings) {
 	if set.WorkspaceDiagnostics != nil && *set.WorkspaceDiagnostics != s.workspaceDiags {
@@ -374,20 +403,8 @@ func (s *Server) handle(msg message) error {
 	case "textDocument/hover":
 		var p HoverParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			text := s.docs[p.TextDocument.URI]
-			hover := analysis.Hover
-			path := pathOf(p.TextDocument.URI)
-			if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" {
-				hover = func(doc string, offset int, opts analysis.Options) (string, bool) {
-					return analysis.HoverYAMLFile(path, doc, offset, opts)
-				}
-			} else if _, _, isAddon := analysis.AddonFileKind(path); isAddon {
-				hover = func(doc string, offset int, opts analysis.Options) (string, bool) {
-					return analysis.HoverAddonFile(path, doc, offset, opts)
-				}
-			}
-			if h, ok := hover(text, byteOffset(text, p.Position), s.options()); ok {
-				result = Hover{Contents: MarkupContent{Kind: "markdown", Value: h}}
+			if h, ok := s.hover(p); ok {
+				result = h
 			}
 		}
 	case "textDocument/definition", "textDocument/references", "textDocument/rename", "textDocument/codeAction", "textDocument/documentSymbol", "textDocument/inlayHint":

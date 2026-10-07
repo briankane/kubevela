@@ -102,6 +102,14 @@ type document struct {
 	template *ast.Field
 	name     string
 	typ      string
+	// compiled is the template as compiled, made once.
+	compiled *ast.File
+	// statusCtx, statusParam and statusSchema are what each status field is
+	// compiled with: one evaluation of the template, its closed parameter,
+	// and the runtime context's schema.
+	statusCtx    *cue.Context
+	statusParam  cue.Value
+	statusSchema string
 }
 
 // Options are what Analyze checks beyond the definition itself.
@@ -163,6 +171,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkUnusedImports()...)
 	diags = append(diags, d.checkUpgrades()...)
 	diags = append(diags, d.checkDefaultsThatWin()...)
+	diags = append(diags, d.checkStatusFields()...)
 	diags = append(diags, d.explainContext(d.checkTemplate())...)
 	res.Diagnostics = sortDiagnostics(firstPerPosition(withoutUpgraded(withoutVagueInterpolation(withoutIgnored(diags, ignored)))))
 	return res
@@ -213,9 +222,15 @@ func isConfigTemplate(headers []*ast.Field) bool {
 // and its template, with the context for the definition type injected. The
 // user's nodes are reused, so every error keeps its position in the file.
 func (d *document) compileFile() *ast.File {
-	tmpl := d.template.Value.(*ast.StructLit)
+	// The compiled file is made once: CUE binds a reference to the
+	// declaration it finds first, so a second file of fresh declarations
+	// would leave the template's references bound to the first's.
+	if d.compiled != nil {
+		return d.compiled
+	}
 	// context goes first: CUE reports a missing field on a closed struct as
 	// incomplete, so not at all, when the struct is declared after the read.
+	tmpl := d.template.Value.(*ast.StructLit)
 	tmpl.Elts = append([]ast.Decl{contextField(d.typ)}, tmpl.Elts...)
 	decls := make([]ast.Decl, 0, len(d.imports)+2)
 	for _, imp := range d.imports {
@@ -227,7 +242,8 @@ func (d *document) compileFile() *ast.File {
 		decls = append(decls, closedParameterField())
 	}
 	decls = append(decls, d.templateConstraint()...)
-	return &ast.File{Filename: d.path, Decls: decls}
+	d.compiled = &ast.File{Filename: d.path, Decls: decls}
+	return d.compiled
 }
 
 // maxRecoveries bounds how many times errors are blanked out and the template
