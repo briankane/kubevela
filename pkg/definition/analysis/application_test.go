@@ -17,6 +17,7 @@ limitations under the License.
 package analysis
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -236,4 +237,26 @@ func TestHoverApplication(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, h, "image: string")
 	assert.Contains(t, h, "Which image")
+}
+
+// A new Application names its component's type and leaves a tab stop for
+// each property the type requires; filled in, it checks clean.
+func TestNewApplication(t *testing.T) {
+	opts := builtinOnly()
+	snippet, ok := NewApplication("shop", "webservice", opts)
+	require.True(t, ok)
+	assert.Contains(t, snippet, "name: shop")
+	assert.Contains(t, snippet, "type: webservice")
+	assert.Contains(t, snippet, "image: ${1}")
+	filled := regexp.MustCompile(`\$\{\d+(?::[^}]*)?\}|\$0`).ReplaceAllString(snippet, "nginx")
+	assert.Empty(t, checkApp(t, filled, opts), filled)
+
+	_, ok = NewApplication("shop", "no-such-type", opts)
+	assert.False(t, ok, "a type no source has")
+
+	var names []string
+	for _, d := range ComponentTypes(opts) {
+		names = append(names, d.Name)
+	}
+	assert.Contains(t, names, "webservice")
 }

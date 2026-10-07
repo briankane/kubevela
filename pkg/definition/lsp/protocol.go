@@ -184,7 +184,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 2
+const VelaProtocol = 3
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -402,6 +402,36 @@ type NewTestResult struct {
 // MethodNewPackage scaffolds a Package resource. It is this server's own
 // request.
 const MethodNewPackage = "vela/newPackage"
+
+// MethodComponentTypes lists the component types an Application can name:
+// the workspace's, the cluster's and the built-in ones, each once.
+const MethodComponentTypes = "vela/componentTypes"
+
+// ComponentType is one, with where it comes from.
+type ComponentType struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Source      string `json:"source"`
+}
+
+// ComponentTypesResult is the component types, by name.
+type ComponentTypesResult struct {
+	Types []ComponentType `json:"types"`
+}
+
+// MethodNewApplication scaffolds an Application of one component.
+const MethodNewApplication = "vela/newApplication"
+
+// NewApplicationParams name the Application and its component's type.
+type NewApplicationParams struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// NewApplicationResult is its YAML, as a snippet.
+type NewApplicationResult struct {
+	Snippet string `json:"snippet"`
+}
 
 // MethodSource is the vela/source request: the text of a read-only document
 // of what KubeVela declares, at a vela-source: URI.

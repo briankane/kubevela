@@ -219,6 +219,22 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			result = DefinitionsResult{Names: append([]string{}, s.definitionNames(p.Type)...)}
 		}
+	case MethodComponentTypes:
+		types := []ComponentType{}
+		for _, d := range analysis.ComponentTypes(s.options()) {
+			types = append(types, ComponentType{Name: d.Name, Description: d.Description, Source: d.Source})
+		}
+		result = ComponentTypesResult{Types: types}
+	case MethodNewApplication:
+		var p NewApplicationParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			snippet, ok := analysis.NewApplication(p.Name, p.Type, s.options())
+			if !ok {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: "no component type " + p.Type + " in the workspace, the cluster or KubeVela's own"}
+			} else {
+				result = NewApplicationResult{Snippet: snippet}
+			}
+		}
 	case MethodSource:
 		var p SourceParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -409,7 +425,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

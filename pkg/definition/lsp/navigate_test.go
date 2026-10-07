@@ -196,3 +196,23 @@ func TestCompleteFieldType(t *testing.T) {
 	assert.Contains(t, labels, "string")
 	assert.Contains(t, labels, "*default | type")
 }
+
+func TestNewApplicationRequests(t *testing.T) {
+	c := newClient(t)
+	m := c.response(c.send(MethodComponentTypes, struct{}{}, true))
+	var types ComponentTypesResult
+	require.NoError(t, json.Unmarshal(m["result"], &types))
+	var names []string
+	for _, ty := range types.Types {
+		names = append(names, ty.Name)
+	}
+	assert.Contains(t, names, "webservice")
+
+	m = c.response(c.send(MethodNewApplication, NewApplicationParams{Name: "shop", Type: "webservice"}, true))
+	var app NewApplicationResult
+	require.NoError(t, json.Unmarshal(m["result"], &app))
+	assert.Contains(t, app.Snippet, "type: webservice")
+
+	m = c.response(c.send(MethodNewApplication, NewApplicationParams{Name: "shop", Type: "nope"}, true))
+	assert.Contains(t, string(m["error"]), "no component type nope")
+}

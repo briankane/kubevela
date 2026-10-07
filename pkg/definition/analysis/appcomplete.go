@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 
@@ -237,4 +238,40 @@ func typeCompletions(defType, typed string, keyIndent int, hasProps bool, opts O
 		out = append(out, c)
 	}
 	return out
+}
+
+// ComponentTypes are the component types an Application can name, each from
+// the most preferred source that has it, by name.
+func ComponentTypes(opts Options) []AppDefinition {
+	if opts.Applications == nil {
+		return nil
+	}
+	defs := opts.Applications.List(componentType)
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Name < defs[j].Name })
+	return defs
+}
+
+// NewApplication is an Application named name, of one component of type
+// typeName, as a snippet: a tab stop for each property the type requires.
+// It is false for a type no source has.
+func NewApplication(name, typeName string, opts Options) (string, bool) {
+	if opts.Applications == nil {
+		return "", false
+	}
+	def, ok := opts.Applications.Lookup(componentType, typeName)
+	if !ok {
+		return "", false
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: %s\nspec:\n  components:\n    - name: %s\n      type: %s\n", name, name, def.Name)
+	info, _ := infoOf(def, opts)
+	if len(info.required) == 0 {
+		b.WriteString("      properties:\n        $0\n")
+		return b.String(), true
+	}
+	b.WriteString("      properties:\n")
+	for i, r := range info.required {
+		fmt.Fprintf(&b, "        %s: ${%d}\n", r, i+1)
+	}
+	return b.String(), true
 }
