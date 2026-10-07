@@ -154,7 +154,18 @@ func (s *Server) indexWorkspace() {
 // walkWorkspace reads what each CUE and YAML file under folders
 // contributes to the index, and lists the files, in order.
 func walkWorkspace(folders []string) (map[string]indexed, []string) {
-	found := map[string]indexed{}
+	files := listWorkspace(folders)
+	found := make(map[string]indexed, len(files))
+	for _, path := range files {
+		found[path] = readIndexed(path, nil)
+	}
+	return found, files
+}
+
+// listWorkspace lists the CUE and YAML files under folders, in order, each
+// once, passing over hidden and dependency folders. A folder may be a file.
+func listWorkspace(folders []string) []string {
+	seen := map[string]bool{}
 	var files []string
 	for _, root := range folders {
 		_ = filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
@@ -167,16 +178,16 @@ func walkWorkspace(folders []string) (map[string]indexed, []string) {
 				}
 				return nil
 			}
-			if !strings.HasSuffix(path, ".cue") && !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
+			if seen[path] || !strings.HasSuffix(path, ".cue") && !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") {
 				return nil
 			}
+			seen[path] = true
 			files = append(files, path)
-			found[path] = readIndexed(path, nil)
 			return nil
 		})
 	}
 	sort.Strings(files)
-	return found, files
+	return files
 }
 
 // record keeps what a file contributes to the index, replacing what it did.

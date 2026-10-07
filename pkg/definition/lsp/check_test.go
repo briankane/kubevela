@@ -66,6 +66,48 @@ func TestCheckWorkspace(t *testing.T) {
 	}
 }
 
+// A file or folder checked alone is checked against its workspace's index:
+// the parent and package in other folders are found, and only what was asked
+// for is checked and counted.
+func TestCheckPathsInAWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, text string) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o750))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, rel), []byte(text), 0o600))
+	}
+	write("parents/web.cue", parentSrc)
+	write("defs/tenant-web.cue", childSrc)
+	write("packages/hello-package.yaml", helloPackageYAML)
+	write("defs/greeter.cue", usesHelloSrc)
+	write("other/typo.cue", strings.Replace(deploymentTypo, `"web": {`, `"typo": {`, 1))
+
+	for name, roots := range map[string][]string{
+		"a file":   {filepath.Join(dir, "defs/greeter.cue"), filepath.Join(dir, "defs/tenant-web.cue")},
+		"a folder": {filepath.Join(dir, "defs")},
+	} {
+		findings, files, err := Check(roots, CheckOptions{Kinds: true, Workspace: []string{dir}})
+		require.NoError(t, err, name)
+		assert.Equal(t, 2, files, "%s: only what was asked for is checked", name)
+		var all []string
+		for _, f := range findings {
+			rel, _ := filepath.Rel(dir, f.Path)
+			all = append(all, rel+":"+strconv.Itoa(f.Line)+": "+f.Severity+": "+f.Message)
+		}
+		joined := strings.Join(all, "\n")
+		assert.NotContains(t, joined, "greeter.cue:1: error", "%s: the package is found in the workspace", name)
+		assert.Contains(t, joined, "web takes no parameter imge", "%s: the parent is found in the workspace", name)
+		assert.NotContains(t, joined, "other/", "%s: what was not asked for is not checked", name)
+	}
+
+	findings, _, err := Check([]string{filepath.Join(dir, "defs/greeter.cue")}, CheckOptions{})
+	require.NoError(t, err)
+	var undefined bool
+	for _, f := range findings {
+		undefined = undefined || strings.Contains(f.Message, "undefined")
+	}
+	assert.True(t, undefined, "with no workspace, the file is its own")
+}
+
 // Definition names are unique: two of one name and type replace each other
 // when applied, an error on each; one of another type shares the name, a
 // warning. What extends the name finds the first, by path, every time.

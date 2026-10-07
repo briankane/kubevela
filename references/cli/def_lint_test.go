@@ -92,3 +92,70 @@ func TestDefinitionLint(t *testing.T) {
 	_, err = runLint(t, dir, "--fail-on", "nope")
 	assert.Error(t, err)
 }
+
+func TestLintWorkspace(t *testing.T) {
+	cwd := "/work"
+	cases := map[string]struct {
+		args, want []string
+	}{
+		"nothing given":                     {args: nil, want: []string{"/work"}},
+		"paths under the current directory": {args: []string{"/work/defs/a.cue", "/work/addons"}, want: []string{"/work"}},
+		"a folder elsewhere":                {args: []string{"/elsewhere/defs"}, want: []string{"/elsewhere/defs"}},
+		"a file elsewhere":                  {args: []string{"/elsewhere/defs/a.cue"}, want: []string{"/elsewhere/defs"}},
+		"both":                              {args: []string{"/work/a.cue", "/elsewhere/defs/a.cue"}, want: []string{"/elsewhere/defs", "/work"}},
+		"the current directory's sibling":   {args: []string{"/workshop/a.cue"}, want: []string{"/workshop"}},
+		"the current directory's parent":    {args: []string{"/"}, want: []string{"/"}},
+		"a relative path":                   {args: []string{"defs/a.cue"}, want: []string{"/work"}},
+	}
+	isDir := func(p string) bool { return filepath.Ext(p) == "" }
+	for name, c := range cases {
+		assert.Equal(t, c.want, lintWorkspace(c.args, cwd, isDir), name)
+	}
+}
+
+// A file linted alone finds a package in another folder of the current
+// directory, or of --workspace.
+func TestLintAFileInItsWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "packages"), 0o750))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "defs"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "packages", "greeter-package.yaml"), []byte(lintPackage), 0o600))
+	file := filepath.Join(dir, "defs", "uses.cue")
+	require.NoError(t, os.WriteFile(file, []byte(lintUsesPackage), 0o600))
+
+	out, err := runLint(t, file)
+	require.Error(t, err, "the file's own folder holds no package:\n%s", out)
+	assert.Contains(t, out, "undefined")
+
+	out, err = runLint(t, "--workspace", dir, file)
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "1 files: 0 errors")
+}
+
+const lintPackage = `apiVersion: cue.oam.dev/v1alpha1
+kind: Package
+metadata:
+  name: greeter
+spec:
+  path: ext/greeter
+  templates:
+    greeter.cue: |
+      package greeter
+
+      #Name: {
+        name: string
+        out:  name + "-x"
+      }
+`
+
+const lintUsesPackage = `import "ext/greeter"
+
+"uses": {
+	type:        "workflow-step"
+	description: "Uses greeter"
+}
+template: {
+	n: (greeter.#Name & {name: "a"}).out
+	parameter: {}
+}
+`

@@ -46,30 +46,34 @@ type CheckOptions struct {
 	// Cluster, when set, is read for its Package resources and, with Kinds,
 	// the kinds it serves.
 	Cluster ClusterConnector
+	// Workspace is the folders indexed for what the files checked draw on:
+	// the definitions they extend, Package resources and CRDs. The paths
+	// checked are indexed too; with none, they are all there is.
+	Workspace []string
 }
 
 // Check checks every CUE and YAML file under roots as the language server
-// checks an open one, with the same index of the files around it. It
-// returns what it found, in file order, and how many files it read.
+// checks an open one, with the same index of the files around it: those
+// under opts.Workspace and roots. It returns what it found, in file order,
+// and how many files it checked.
 func Check(roots []string, opts CheckOptions) ([]Finding, int, error) {
-	folders := make([]string, 0, len(roots))
-	for _, r := range roots {
-		abs, err := filepath.Abs(r)
-		if err != nil {
-			return nil, 0, err
-		}
-		if _, err := os.Stat(abs); err != nil {
-			return nil, 0, err
-		}
-		folders = append(folders, abs)
+	checked, err := absolute(roots)
+	if err != nil {
+		return nil, 0, err
 	}
+	workspace, err := absolute(opts.Workspace)
+	if err != nil {
+		return nil, 0, err
+	}
+	folders := append(append([]string{}, workspace...), checked...)
 	s := NewServer(WithCluster(opts.Cluster))
 	s.folders = folders
 	s.validateOutputs = validateOff
 	if opts.Kinds {
 		s.validateOutputs = validateOn
 	}
-	found, files := walkWorkspace(folders)
+	found, _ := walkWorkspace(folders)
+	files := listWorkspace(checked)
 	for path, entry := range found {
 		entry.evaluate()
 		if entry.contributes() {
@@ -98,6 +102,22 @@ func Check(roots []string, opts CheckOptions) ([]Finding, int, error) {
 		}
 	}
 	return findings, len(files), nil
+}
+
+// absolute is paths made absolute, each checked to exist.
+func absolute(paths []string) ([]string, error) {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return nil, err
+		}
+		out = append(out, abs)
+	}
+	return out, nil
 }
 
 func findingSeverity(s DiagnosticSeverity) string {

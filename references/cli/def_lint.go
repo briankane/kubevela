@@ -19,7 +19,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/kubevela/pkg/cue/cuex"
 	"github.com/pkg/errors"
@@ -35,6 +37,7 @@ func NewDefinitionLintCommand() *cobra.Command {
 	var (
 		asJSON, quiet, verbose, kinds, cluster bool
 		failOn                                 string
+		workspace                              []string
 	)
 	cmd := &cobra.Command{
 		Use:   "lint [PATH...]",
@@ -43,12 +46,17 @@ func NewDefinitionLintCommand() *cobra.Command {
 			"the editor does, with the same index of the files around each: definitions, including those\n" +
 			"a definition extends; CUE test files; addons; Package resources. Errors are what KubeVela\n" +
 			"would reject or fail on; warnings are what it would ignore or work around.\n\n" +
+			"The files around each are those of the workspace, as the folder opened in an editor: the\n" +
+			"current directory, or the path's own folder for a path outside it, or --workspace. So a\n" +
+			"file checked alone still finds the definition it extends and the packages it imports.\n\n" +
 			"It prints one line per finding and a summary, and exits non-zero when it finds anything at\n" +
 			"or above --fail-on.",
 		Example: "# Check the definitions in this directory\n" +
 			"> vela def lint\n\n" +
 			"# Check a module and an addon, failing on warnings too\n" +
 			"> vela def lint ./definitions ./addons/my-addon --fail-on warning\n\n" +
+			"# Check one file, against the packages and definitions of the repository it is in\n" +
+			"> vela def lint definitions/my-trait.cue --workspace .\n\n" +
 			"# Also check against the kinds and Package resources of the kubeconfig's cluster\n" +
 			"> vela def lint --cluster",
 		Annotations: map[string]string{
@@ -67,7 +75,14 @@ func NewDefinitionLintCommand() *cobra.Command {
 			// must not load them from the kubeconfig's cluster on its own.
 			cuex.EnableExternalPackageForDefaultCompiler = false
 			cuex.EnableExternalPackageWatchForDefaultCompiler = false
-			opts := lsp.CheckOptions{Kinds: kinds}
+			if len(workspace) == 0 {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				workspace = lintWorkspace(args, cwd, isDir)
+			}
+			opts := lsp.CheckOptions{Kinds: kinds, Workspace: workspace}
 			if cluster {
 				opts.Cluster = lsp.ConnectKubeconfig
 			}
@@ -119,11 +134,47 @@ func NewDefinitionLintCommand() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Print information findings too, such as missing +usage markers.")
 	cmd.Flags().BoolVar(&kinds, "kinds", true, "Check outputs against Kubernetes' own kinds and the CRDs among the files.")
 	cmd.Flags().BoolVar(&cluster, "cluster", false, "Also read the kubeconfig's cluster, read-only: the kinds it serves, when it runs KubeVela, and its Package resources.")
+	cmd.Flags().StringSliceVar(&workspace, "workspace", nil, "The folders the files around those checked come from: definitions they extend, Package resources and CRDs. Defaults to the current directory, or a path's own folder for a path outside it.")
 	cmd.Flags().StringVar(&failOn, "fail-on", lsp.FindingError, "Exit non-zero on findings of this severity or worse: error, warning or info.")
 	return cmd
 }
 
 // relative is path relative to the working directory, when it is under it.
+// lintWorkspace is the workspace of the paths linted, from the current
+// directory cwd: cwd for a path under it, as nothing given is; for a path
+// elsewhere, the folder it is or is in.
+func lintWorkspace(paths []string, cwd string, isDir func(string) bool) []string {
+	if len(paths) == 0 {
+		return []string{cwd}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(cwd, p)
+		}
+		root := cwd
+		if rel, err := filepath.Rel(cwd, p); err != nil || rel == ".." || hasDotDot(rel) {
+			root = p
+			if !isDir(p) {
+				root = filepath.Dir(p)
+			}
+		}
+		if !seen[root] {
+			seen[root] = true
+			out = append(out, root)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isDir reports whether path is a directory.
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func relative(path string) string {
 	if wd, err := filepath.Abs("."); err == nil {
 		if rel, err := filepath.Rel(wd, path); err == nil && !filepath.IsAbs(rel) && rel != ".." && !hasDotDot(rel) {
