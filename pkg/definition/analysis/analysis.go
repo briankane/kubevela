@@ -165,6 +165,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkHeader()...)
 	diags = append(diags, d.checkTemplateFields()...)
 	diags = append(diags, d.checkObjects()...)
+	diags = append(diags, d.checkPlaceholders()...)
 	diags = append(diags, d.checkExtends()...)
 	diags = append(diags, d.checkCalls()...)
 	diags = append(diags, d.checkUnnamedImports()...)

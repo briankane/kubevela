@@ -245,7 +245,8 @@ func (d *document) checkWorkload(v cue.Value) []Diagnostic {
 	}
 	defPath := []string{"attributes", "workload", "definition"}
 	wantAPI, wantKind := d.headerString(append(defPath, "apiVersion")...), d.headerString(append(defPath, "kind")...)
-	if wantAPI == "" || wantKind == "" {
+	// A placeholder is checkPlaceholders' to report.
+	if wantAPI == "" || wantKind == "" || strings.Contains(wantAPI+wantKind, scaffoldPlaceholder) {
 		return nil
 	}
 	settled := func(path string) (string, bool) {
