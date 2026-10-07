@@ -300,3 +300,19 @@ func TestCompleteParameterMembers(t *testing.T) {
 	}
 	assert.Equal(t, []string{"image", "replicas"}, labels)
 }
+
+// A field beside the one being written is offered by name.
+func TestCompleteAFieldInScope(t *testing.T) {
+	src := "\"web\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\tval: parameter.port\n\tval2: va\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\"}\n\tparameter: port: *80 | int\n}\n"
+	c := newClient(t)
+	c.drain()
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: src}}, false)
+	m := c.response(c.send("textDocument/completion", CompletionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Position: Position{Line: 6, Character: uint32(len("\tval2: va"))}}, true))
+	var list CompletionList
+	require.NoError(t, json.Unmarshal(m["result"], &list))
+	var labels []string
+	for _, it := range list.Items {
+		labels = append(labels, it.Label)
+	}
+	assert.Equal(t, []string{"val"}, labels)
+}

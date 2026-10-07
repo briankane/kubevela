@@ -84,7 +84,7 @@ func CompleteValueAt(doc string, cursor int, ext *Externals) []Completion {
 	d.opts = Options{Externals: ext}
 	scope, ok := scopeOf(d.template.Value, m[2], root, nil)
 	if !ok {
-		return nil
+		return completeLoopMember(doc, m[2], cursor, root, chain, typed, ext)
 	}
 	v, ok := d.evaluateForCompletion()
 	if !ok {
@@ -211,4 +211,71 @@ func (d *document) evaluateForCompletion() (cue.Value, bool) {
 			return v, true
 		}
 	}
+}
+
+// completeLoopMember completes a field of a for's value variable, root, at
+// the cursor: of an element of what the for ranges over, a list's or a
+// struct's pattern's, written as a reference the template evaluates.
+func completeLoopMember(doc string, start, cursor int, root string, chain []string, typed string, ext *Externals) []Completion {
+	marked := doc[:start] + cursorPlaceholder + doc[wordEnd(doc, cursor):]
+	f, err := parser.ParseFile("complete.cue", marked)
+	if err != nil {
+		return nil
+	}
+	var source ast.Expr
+	var stack []ast.Node
+	ast.Walk(f, func(n ast.Node) bool {
+		stack = append(stack, n)
+		if id, ok := n.(*ast.Ident); ok && id.Name == cursorPlaceholder {
+			for i := len(stack) - 1; i >= 0 && source == nil; i-- {
+				if c, ok := stack[i].(*ast.Comprehension); ok {
+					for _, cl := range c.Clauses {
+						if fc, ok := cl.(*ast.ForClause); ok && fc.Value.Name == root {
+							source = fc.Source
+						}
+					}
+				}
+			}
+		}
+		return source == nil
+	}, func(ast.Node) { stack = stack[:len(stack)-1] })
+	if source == nil {
+		return nil
+	}
+	sel, ok := source.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	srcRoot, srcChain := flatten(sel)
+	if srcRoot == nil {
+		return nil
+	}
+	patched := rootOf(doc, start, cursor)
+	pf, err := parser.ParseFile("complete.cue", patched, parser.ParseComments)
+	if err != nil {
+		return nil
+	}
+	d, ok := newDocument("complete.cue", []byte(patched), pf)
+	if !ok {
+		return nil
+	}
+	d.opts = Options{Externals: ext}
+	v, ok := d.evaluateForCompletion()
+	if !ok {
+		return nil
+	}
+	cur := v.LookupPath(cue.MakePath(cue.Str(templateLabel), rootSelector(srcRoot.Name)))
+	for _, id := range srcChain {
+		cur = schemaChild(cur, cue.Str(id.Name))
+	}
+	// An element: a list's, or the value of a struct's pattern.
+	if cur.IncompleteKind() == cue.ListKind {
+		cur = cur.LookupPath(cue.MakePath(cue.AnyIndex))
+	} else {
+		cur = cur.LookupPath(cue.MakePath(cue.AnyString))
+	}
+	for _, step := range chain {
+		cur = schemaChild(cur, cue.Str(step))
+	}
+	return fieldsOf(cur, typed)
 }

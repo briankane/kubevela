@@ -19,6 +19,9 @@ package analysis
 import (
 	"regexp"
 	"strings"
+
+	"cuelang.org/go/cue/ast"
+	"cuelang.org/go/cue/parser"
 )
 
 var (
@@ -48,7 +51,7 @@ func CompleteRootName(doc string, cursor int) []Completion {
 	typed := line[m[2]:m[3]]
 	var out []Completion
 	add := func(name, detail, doc string) {
-		if strings.HasPrefix(name, typed) && name != typed {
+		if strings.HasPrefix(name, typed) {
 			for _, c := range out {
 				if c.Label == name {
 					return
@@ -68,6 +71,13 @@ func CompleteRootName(doc string, cursor int) []Completion {
 			add(name, "import", "The "+spec[2]+" package.")
 		}
 	}
+	start := lineStart + m[2]
+	if names, ok := namesInScope(doc[:start] + cursorPlaceholder + doc[cursor:]); ok {
+		for _, n := range names {
+			add(n.name, n.detail, "")
+		}
+		return out
+	}
 	for _, d := range declaredName.FindAllStringSubmatch(doc, -1) {
 		switch {
 		case d[1] != "":
@@ -77,4 +87,87 @@ func CompleteRootName(doc string, cursor int) []Completion {
 		}
 	}
 	return out
+}
+
+// scopeName is a name a reference at the cursor can start with.
+type scopeName struct{ name, detail string }
+
+// namesInScope are the names a reference where the placeholder stands in
+// doc can start with, innermost first: the fields of each struct enclosing
+// it, its lets, and the variables of each for enclosing it; not the field
+// whose value it is in, as a field referring to itself is a cycle. False
+// when doc does not parse.
+func namesInScope(doc string) ([]scopeName, bool) {
+	f, err := parser.ParseFile("scope.cue", doc)
+	if err != nil {
+		return nil, false
+	}
+	var stack, found []ast.Node
+	labels := map[ast.Node]bool{}
+	ast.Walk(f, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if fd, ok := n.(*ast.Field); ok {
+			labels[fd.Label] = true
+		}
+		stack = append(stack, n)
+		if id, ok := n.(*ast.Ident); ok && id.Name == cursorPlaceholder && !labels[id] {
+			found = append([]ast.Node{}, stack...)
+			return false
+		}
+		return true
+	}, func(ast.Node) { stack = stack[:len(stack)-1] })
+	if found == nil {
+		return nil, false
+	}
+	// The field the cursor's value belongs to, at each level.
+	own := map[*ast.Field]bool{}
+	for _, n := range found {
+		if fd, ok := n.(*ast.Field); ok {
+			own[fd] = true
+		}
+	}
+	var out []scopeName
+	seen := map[string]bool{}
+	add := func(name, detail string) {
+		if name != "" && !seen[name] && ast.IsValidIdent(name) && name != cursorPlaceholder {
+			seen[name] = true
+			out = append(out, scopeName{name, detail})
+		}
+	}
+	for i := len(found) - 1; i >= 0; i-- {
+		switch x := found[i].(type) {
+		case *ast.StructLit:
+			for _, e := range x.Elts {
+				switch el := e.(type) {
+				case *ast.Field:
+					if !own[el] {
+						add(labelName(el.Label), "field")
+					}
+				case *ast.LetClause:
+					add(el.Ident.Name, "let")
+				}
+			}
+		case *ast.File:
+			for _, e := range x.Decls {
+				if el, ok := e.(*ast.Field); ok && !own[el] && strings.HasPrefix(labelName(el.Label), "#") {
+					add(labelName(el.Label), "definition")
+				}
+			}
+		case *ast.Comprehension:
+			for _, cl := range x.Clauses {
+				switch c := cl.(type) {
+				case *ast.ForClause:
+					if c.Key != nil {
+						add(c.Key.Name, "for key")
+					}
+					add(c.Value.Name, "for value")
+				case *ast.LetClause:
+					add(c.Ident.Name, "let")
+				}
+			}
+		}
+	}
+	return out, true
 }

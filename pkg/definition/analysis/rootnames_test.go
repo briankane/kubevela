@@ -79,3 +79,44 @@ func TestCompleteRootName(t *testing.T) {
 	}
 	assert.Contains(t, labels, "context")
 }
+
+// Names in scope where the cursor is: the fields of each enclosing struct,
+// lets, and an enclosing for's variables; not the field being written.
+func TestCompleteNamesInScope(t *testing.T) {
+	doc := "\"web\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\tval: parameter.port\n\tsettings: {port: 80}\n\toutput: {\n\t\tapiVersion: \"v1\"\n\t\tkind: \"ConfigMap\"\n\t\tdata: {\n\t\t\tfor k, v in parameter.ports {\n\t\t\t\t\"\\(k)\": CURSOR\n\t\t\t}\n\t\t}\n\t}\n\tval2: VAL2\n\tparameter: {\n\t\tport: int\n\t\tports: [string]: {number: int, name: string}\n\t}\n}\n"
+	at := func(marker, typed string) (string, int) {
+		src := strings.Replace(strings.Replace(doc, marker, typed, 1), "CURSOR", "_", 1)
+		src = strings.Replace(src, "VAL2", "_", 1)
+		var i int
+		if marker == "VAL2" {
+			i = strings.Index(src, "val2: "+typed) + len("val2: ")
+		} else {
+			i = strings.Index(src, "\": "+typed) + len("\": ")
+		}
+		return src, i + len(typed)
+	}
+	names := func(src string, cursor int) []string {
+		var out []string
+		for _, c := range CompleteRootName(src, cursor) {
+			out = append(out, c.Label)
+		}
+		return out
+	}
+	src, c := at("VAL2", "va")
+	assert.Equal(t, []string{"val"}, names(src, c), "a field beside, not the one written")
+	src, c = at("CURSOR", "v")
+	assert.Contains(t, names(src, c), "v", "a for's value")
+	assert.Contains(t, names(src, c), "val", "an outer struct's field")
+	src, c = at("CURSOR", "k")
+	assert.Equal(t, []string{"k", "kind"}, names(src, c), "a for's key, then an outer field")
+	src, c = at("CURSOR", "se")
+	assert.Equal(t, []string{"settings"}, names(src, c))
+
+	// v. offers the fields of an element of what the for ranges over.
+	src, c = at("CURSOR", "v.")
+	var members []string
+	for _, m := range CompleteValueAt(src, c, nil) {
+		members = append(members, m.Label)
+	}
+	assert.Equal(t, []string{"name", "number"}, members)
+}
