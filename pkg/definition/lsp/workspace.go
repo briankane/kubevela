@@ -646,8 +646,11 @@ func (s *Server) clusterDefinition(id json.RawMessage, p ClusterDefinitionParams
 		fail("the cluster was not reached")
 		return
 	}
-	path := pathOf(p.TextDocument.URI)
-	name, typ, ok := analysis.DefinitionHeader(path, []byte(s.docs[p.TextDocument.URI]))
+	name, typ, ok := p.Name, p.Type, p.Name != ""
+	if !ok {
+		path := pathOf(p.TextDocument.URI)
+		name, typ, ok = analysis.DefinitionHeader(path, []byte(s.docs[p.TextDocument.URI]))
+	}
 	kind := definition.DefinitionTypeToKind[typ]
 	if !ok || kind == "" {
 		fail("this file defines no definition")

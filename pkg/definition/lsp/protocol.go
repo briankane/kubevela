@@ -688,9 +688,13 @@ type InlayHint struct {
 // applied to the cluster. It is this server's own request.
 const MethodClusterDefinition = "vela/clusterDefinition"
 
-// ClusterDefinitionParams name the document.
+// ClusterDefinitionParams name the document, or the definition.
 type ClusterDefinitionParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	// Type and Name name a definition no open document defines: its type,
+	// as a definition's header writes it, and its name.
+	Type string `json:"type,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // ClusterDefinitionResult is the applied definition in CUE, where it is.
@@ -725,4 +729,7 @@ const MethodLocate = "vela/locate"
 type LocateParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Path         string                 `json:"path"`
+	// Text is the document's content, when the client holds it and no file
+	// does; its URI's extension still says whether it is CUE or YAML.
+	Text *string `json:"text,omitempty"`
 }

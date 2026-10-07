@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,4 +91,25 @@ func TestLocateRequest(t *testing.T) {
 
 	m = c.response(c.send(MethodLocate, LocateParams{TextDocument: TextDocumentIdentifier{URI: "file://" + file}, Path: "nothing"}, true))
 	assert.Equal(t, "null", string(m["result"]))
+}
+
+// A definition on the cluster is read by its type and name, and a field
+// found in text the client holds.
+func TestClusterDefinitionByName(t *testing.T) {
+	c := newClientWith(t, NewServer(WithCluster(appliedWeb)))
+	c.drain()
+	c.response(c.send("initialize", map[string]interface{}{}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	clusterStatus(t, c)
+
+	m := c.response(c.send(MethodClusterDefinition, ClusterDefinitionParams{Type: "component", Name: "web"}, true))
+	var r ClusterDefinitionResult
+	require.NoError(t, json.Unmarshal(m["result"], &r), string(m["error"]))
+	assert.Contains(t, r.CUE, `kind: "ConfigMap"`)
+
+	text := r.CUE
+	m = c.response(c.send(MethodLocate, LocateParams{TextDocument: TextDocumentIdentifier{URI: "kubevela-cluster:/web.cue"}, Path: "template.output.kind", Text: &text}, true))
+	var at Range
+	require.NoError(t, json.Unmarshal(m["result"], &at), string(m["error"]))
+	assert.Equal(t, "kind", strings.Split(text, "\n")[at.Start.Line][at.Start.Character:at.End.Character])
 }

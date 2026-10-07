@@ -253,10 +253,8 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 	case MethodLocate:
 		var p LocateParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			path := pathOf(p.TextDocument.URI)
-			text := s.textOf(path)
-			if r, ok := analysis.LocateField(path, []byte(text), p.Path); ok {
-				result = protocolRange(text, r)
+			if r, ok := s.locate(p); ok {
+				result = r
 			}
 		}
 	case MethodSource:
@@ -669,6 +667,21 @@ func severity(s analysis.Severity) DiagnosticSeverity {
 
 // pathOf is the file path of a file URI, used only to name the file in
 // positions; anything else is used as is.
+// locate answers MethodLocate: the field's label in the text given, or in
+// the document, open or on disk.
+func (s *Server) locate(p LocateParams) (Range, bool) {
+	path := pathOf(p.TextDocument.URI)
+	text := s.textOf(path)
+	if p.Text != nil {
+		text = *p.Text
+	}
+	r, ok := analysis.LocateField(path, []byte(text), p.Path)
+	if !ok {
+		return Range{}, false
+	}
+	return protocolRange(text, r), true
+}
+
 func pathOf(uri string) string {
 	if u, err := url.Parse(uri); err == nil && u.Scheme == "file" {
 		return u.Path
