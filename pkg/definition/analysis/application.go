@@ -27,6 +27,8 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+
+	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 )
 
 // applicationCUE is the Application KubeVela accepts.
@@ -225,8 +227,9 @@ func (d *document) checkAppItem(ctx *cue.Context, item cue.Value, path, defType 
 	var diags []Diagnostic
 	if props.Exists() {
 		diags = append(diags, d.unknownProperties(props, param, def.Name, path+".properties", nil, fields)...)
+		exprs := expressionLiterals(props)
 		for _, diag := range d.fromErrors(param.Unify(props).Validate(), closedParameterPath) {
-			if !strings.HasSuffix(diag.Message, "field not allowed") {
+			if !strings.HasSuffix(diag.Message, "field not allowed") && !aboutAny(diag.Message, exprs) {
 				diags = append(diags, diag)
 			}
 		}
@@ -374,4 +377,31 @@ func (d *document) scalarRange(pos token.Pos) Range {
 	}
 	text = strings.TrimRight(text, " \t\r")
 	return Range{Start: Position{Line: line, Column: col}, End: Position{Line: line, Column: col + len(text)}}
+}
+
+// expressionLiterals are the property values holding $(...) expressions,
+// quoted as CUE quotes them in an error. Admission substitutes such a value
+// before the parameter sees it, so its type is checkExpressions' to judge.
+func expressionLiterals(props cue.Value) []string {
+	var data interface{}
+	if props.Decode(&data) != nil {
+		return nil
+	}
+	var out []string
+	walkStrings(data, "", func(_, raw string) {
+		if parsed, err := propexpr.Parse(raw); err == nil && parsed.HasExpr() {
+			out = append(out, strconv.Quote(raw))
+		}
+	})
+	return out
+}
+
+// aboutAny reports whether a message names any of the quoted values.
+func aboutAny(msg string, quoted []string) bool {
+	for _, q := range quoted {
+		if strings.Contains(msg, q) {
+			return true
+		}
+	}
+	return false
 }

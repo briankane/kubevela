@@ -24,9 +24,11 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 
+	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/sources"
+	webhookapp "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/application"
 )
 
 // appExprItem is an item of an Application whose properties may hold
@@ -38,6 +40,8 @@ type appExprItem struct {
 	// before; -1 for anything else.
 	index int
 	props cue.Value
+	// kind and typ are the definition its properties feed, typed against.
+	kind, typ string
 }
 
 // checkExpressions checks the $(...) expressions in an Application's
@@ -46,56 +50,7 @@ type appExprItem struct {
 // source, only one declared before it) and an attribute its definition's
 // schema declares, and a component the Application has.
 func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field) []Diagnostic {
-	declared := map[string]int{}
-	sourceTypes := map[string]string{}
-	components := map[string]bool{}
-	var items []appExprItem
-	list := func(path string, each func(i int, v cue.Value)) {
-		it, err := app.LookupPath(cue.ParsePath(path)).List()
-		if err != nil {
-			return
-		}
-		for i := 0; it.Next(); i++ {
-			each(i, it.Value())
-		}
-	}
-	str := func(v cue.Value, path string) string {
-		s, _ := v.LookupPath(cue.ParsePath(path)).String()
-		return s
-	}
-	list("spec.sources", func(i int, v cue.Value) {
-		name := str(v, "name")
-		declared[name] = i
-		sourceTypes[name] = str(v, "type")
-		items = append(items, appExprItem{path: fmt.Sprintf("spec.sources.%d", i), surface: sources.SurfaceSource, index: i, props: v.LookupPath(cue.ParsePath("properties"))})
-	})
-	list("spec.components", func(i int, v cue.Value) {
-		components[str(v, "name")] = true
-		at := fmt.Sprintf("spec.components.%d", i)
-		items = append(items, appExprItem{path: at, surface: sources.SurfaceComponent, index: -1, props: v.LookupPath(cue.ParsePath("properties"))})
-		it, err := v.LookupPath(cue.ParsePath("traits")).List()
-		if err != nil {
-			return
-		}
-		for j := 0; it.Next(); j++ {
-			items = append(items, appExprItem{path: fmt.Sprintf("%s.traits.%d", at, j), surface: sources.SurfaceTrait, index: -1, props: it.Value().LookupPath(cue.ParsePath("properties"))})
-		}
-	})
-	list("spec.policies", func(i int, v cue.Value) {
-		items = append(items, appExprItem{path: fmt.Sprintf("spec.policies.%d", i), surface: d.policySurface(str(v, "type")), index: -1, props: v.LookupPath(cue.ParsePath("properties"))})
-	})
-	list("spec.workflow.steps", func(i int, v cue.Value) {
-		at := fmt.Sprintf("spec.workflow.steps.%d", i)
-		items = append(items, appExprItem{path: at, surface: sources.SurfaceWorkflowStep, index: -1, props: v.LookupPath(cue.ParsePath("properties"))})
-		it, err := v.LookupPath(cue.ParsePath("subSteps")).List()
-		if err != nil {
-			return
-		}
-		for j := 0; it.Next(); j++ {
-			items = append(items, appExprItem{path: fmt.Sprintf("%s.subSteps.%d", at, j), surface: sources.SurfaceWorkflowStep, index: -1, props: it.Value().LookupPath(cue.ParsePath("properties"))})
-		}
-	})
-
+	items, declared, sourceTypes, components := d.expressionItems(app)
 	schemas := map[string]cue.Value{}
 	schemaOf := func(binding string) (cue.Value, bool) {
 		if s, ok := schemas[binding]; ok {
@@ -113,6 +68,17 @@ func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field)
 		return schema, schema.Exists()
 	}
 
+	schemaTexts := map[string]string{}
+	for binding, typ := range sourceTypes {
+		if def, ok := d.opts.Applications.Lookup(sourceType, typ); ok {
+			if tmpl, ok := TemplateSource(def.Name+".cue", []byte(def.CUE)); ok {
+				if text, err := webhookapp.SourceSchemaText(tmpl.Body); err == nil && text != "" {
+					schemaTexts[binding] = text
+				}
+			}
+		}
+	}
+
 	var diags []Diagnostic
 	for _, item := range items {
 		if !item.props.Exists() {
@@ -123,7 +89,8 @@ func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field)
 			continue
 		}
 		roots := sources.RootsFor(item.surface)
-		walkStrings(props, item.path+".properties", func(path, raw string) {
+		params, desc := d.targetParameter(item)
+		walkStringSegs(props, item.path+".properties", nil, func(path string, segs []string, raw string) {
 			if !propexpr.MayContainExpr(raw) {
 				return
 			}
@@ -131,9 +98,20 @@ func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field)
 			if !ok {
 				return
 			}
+			reported := false
 			report := func(msg string) {
+				reported = true
 				diags = append(diags, Diagnostic{Range: r, Severity: SeverityError, Message: msg})
 			}
+			// What a read faults is said once: typing it would say it again.
+			defer func() {
+				if reported || desc == "" {
+					return
+				}
+				if msg := webhookapp.ExpressionTargetError(raw, schemaTexts, surfaceContext(item), params, segs, desc); msg != "" {
+					report(msg)
+				}
+			}()
 			parsed, err := propexpr.Parse(raw)
 			if err != nil {
 				report(err.Error())
@@ -175,6 +153,94 @@ func (d *document) checkExpressions(app cue.Value, fields map[string]*ast.Field)
 		})
 	}
 	return diags
+}
+
+// expressionItems are an Application's items whose properties may hold
+// expressions, with the index of each source binding, its type, and the
+// components' names.
+func (d *document) expressionItems(app cue.Value) ([]appExprItem, map[string]int, map[string]string, map[string]bool) {
+	declared := map[string]int{}
+	sourceTypes := map[string]string{}
+	components := map[string]bool{}
+	var items []appExprItem
+	list := func(path string, each func(i int, v cue.Value)) {
+		it, err := app.LookupPath(cue.ParsePath(path)).List()
+		if err != nil {
+			return
+		}
+		for i := 0; it.Next(); i++ {
+			each(i, it.Value())
+		}
+	}
+	str := func(v cue.Value, path string) string {
+		s, _ := v.LookupPath(cue.ParsePath(path)).String()
+		return s
+	}
+	list("spec.sources", func(i int, v cue.Value) {
+		name := str(v, "name")
+		declared[name] = i
+		sourceTypes[name] = str(v, "type")
+		items = append(items, appExprItem{path: fmt.Sprintf("spec.sources.%d", i), surface: sources.SurfaceSource, index: i, props: v.LookupPath(cue.ParsePath("properties"))})
+	})
+	list("spec.components", func(i int, v cue.Value) {
+		components[str(v, "name")] = true
+		at := fmt.Sprintf("spec.components.%d", i)
+		items = append(items, appExprItem{path: at, surface: sources.SurfaceComponent, index: -1, props: v.LookupPath(cue.ParsePath("properties")), kind: componentType, typ: str(v, "type")})
+		it, err := v.LookupPath(cue.ParsePath("traits")).List()
+		if err != nil {
+			return
+		}
+		for j := 0; it.Next(); j++ {
+			items = append(items, appExprItem{path: fmt.Sprintf("%s.traits.%d", at, j), surface: sources.SurfaceTrait, index: -1, props: it.Value().LookupPath(cue.ParsePath("properties")), kind: traitType, typ: str(it.Value(), "type")})
+		}
+	})
+	list("spec.policies", func(i int, v cue.Value) {
+		items = append(items, appExprItem{path: fmt.Sprintf("spec.policies.%d", i), surface: d.policySurface(str(v, "type")), index: -1, props: v.LookupPath(cue.ParsePath("properties")), kind: policyType, typ: str(v, "type")})
+	})
+	list("spec.workflow.steps", func(i int, v cue.Value) {
+		at := fmt.Sprintf("spec.workflow.steps.%d", i)
+		items = append(items, appExprItem{path: at, surface: sources.SurfaceWorkflowStep, index: -1, props: v.LookupPath(cue.ParsePath("properties")), kind: workflowStepType, typ: str(v, "type")})
+		it, err := v.LookupPath(cue.ParsePath("subSteps")).List()
+		if err != nil {
+			return
+		}
+		for j := 0; it.Next(); j++ {
+			items = append(items, appExprItem{path: fmt.Sprintf("%s.subSteps.%d", at, j), surface: sources.SurfaceWorkflowStep, index: -1, props: it.Value().LookupPath(cue.ParsePath("properties")), kind: workflowStepType, typ: str(it.Value(), "type")})
+		}
+	})
+	return items, declared, sourceTypes, components
+}
+
+// targetParameter is the parameter of the definition an item's properties
+// feed, read as admission reads it, and how admission names it; "" where it
+// is not typed, as a source's properties are not here.
+func (d *document) targetParameter(item appExprItem) (cue.Value, string) {
+	if item.kind == "" {
+		return cue.Value{}, ""
+	}
+	desc := fmt.Sprintf("%s %q parameter", item.kind, item.typ)
+	if item.kind == workflowStepType {
+		desc = fmt.Sprintf("workflow step %q parameter", item.typ)
+	}
+	def, ok := d.opts.Applications.Lookup(item.kind, item.typ)
+	if !ok {
+		return cue.Value{}, desc
+	}
+	tmpl, ok := TemplateSource(def.Name+".cue", []byte(def.CUE))
+	if !ok {
+		return cue.Value{}, desc
+	}
+	params, _ := webhookapp.TargetParameter(tmpl.Body)
+	return params, desc
+}
+
+// surfaceContext is the context an item's expressions are typed against,
+// as admission chooses it.
+func surfaceContext(item appExprItem) propexpr.ContextSchema {
+	if item.kind == policyType {
+		return appfile.PolicyContextSchema(item.typ, item.surface == sources.SurfacePolicyApp)
+	}
+	return surfaceContexts[item.surface]
 }
 
 // policySurface is the surface a policy of a type reads on: a built-in
@@ -238,16 +304,22 @@ func schemaField(v cue.Value, name string) (cue.Value, bool) {
 // walkStrings calls fn with each string in a decoded YAML tree, and its path:
 // keys and list indexes joined by dots, as an Application's fields are.
 func walkStrings(node interface{}, path string, fn func(path, raw string)) {
+	walkStringSegs(node, path, nil, func(path string, _ []string, raw string) { fn(path, raw) })
+}
+
+// walkStringSegs is walkStrings with each string's segments below path too,
+// as admission names a property: a key may hold a dot.
+func walkStringSegs(node interface{}, path string, segs []string, fn func(path string, segs []string, raw string)) {
 	switch x := node.(type) {
 	case string:
-		fn(path, x)
+		fn(path, segs, x)
 	case map[string]interface{}:
 		for k, v := range x {
-			walkStrings(v, path+"."+k, fn)
+			walkStringSegs(v, path+"."+k, append(append([]string{}, segs...), k), fn)
 		}
 	case []interface{}:
 		for i, v := range x {
-			walkStrings(v, fmt.Sprintf("%s.%d", path, i), fn)
+			walkStringSegs(v, fmt.Sprintf("%s.%d", path, i), append(append([]string{}, segs...), strconv.Itoa(i)), fn)
 		}
 	}
 }
