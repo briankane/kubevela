@@ -18,6 +18,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,4 +136,30 @@ func TestDefinitionInitGoInAModule(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(src), "package main\n")
 	assert.Contains(t, string(src), "func main()")
+}
+
+// Each Go scaffold builds against this repository's DefKit, standalone and
+// in a module's package.
+func TestDefinitionInitGoScaffoldsBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds Go")
+	}
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go on PATH")
+	}
+	for _, typ := range []string{"component", "trait", "policy", "workflow-step"} {
+		src, err := generateGoDefinition("demo-"+typ, typ, "A scaffold")
+		require.NoError(t, err, typ)
+		for name, text := range map[string]string{"standalone": src, "in a package": asModuleDefinition(src, "scaffold")} {
+			dir, err := os.MkdirTemp(".", "scaffold-")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "def.go"), []byte(text), 0o600))
+			cmd := exec.Command(goBin, "build", "-o", os.DevNull, "./"+dir)
+			cmd.Env = append(os.Environ(), "GOWORK=off")
+			out, err := cmd.CombinedOutput()
+			_ = os.RemoveAll(dir)
+			assert.NoError(t, err, "%s, %s:\n%s", typ, name, out)
+		}
+	}
 }

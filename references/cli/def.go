@@ -705,15 +705,8 @@ func %sTrait() *defkit.TraitDefinition {
 		AppliesTo("deployments.apps", "statefulsets.apps").
 		Params(replicas).
 		Template(func(tpl *defkit.Template) {
-			// Access the context
-			vela := defkit.VelaCtx()
-
-			// Patch the workload
-			patch := defkit.NewPatch().
-				Set("spec.replicas", replicas)
-
-			tpl.Patch(patch)
-			_ = vela // use vela context as needed
+			// Patch the workload it is attached to
+			tpl.Patch().Set("spec.replicas", replicas)
 		})
 }
 
@@ -759,7 +752,7 @@ func %sPolicy() *defkit.PolicyDefinition {
 	return defkit.NewPolicy("%s").
 		Description(%q).
 		Params(enabled).
-		Template(func(tpl *defkit.Template) {
+		Template(func(tpl *defkit.PolicyTemplate) {
 			// Policy logic here
 			_ = enabled
 		})
@@ -807,7 +800,7 @@ func %sWorkflowStep() *defkit.WorkflowStepDefinition {
 	return defkit.NewWorkflowStep("%s").
 		Description(%q).
 		Params(message).
-		Template(func(tpl *defkit.Template) {
+		Template(func(tpl *defkit.WorkflowStepTemplate) {
 			// Workflow step logic here
 			_ = message
 		})
