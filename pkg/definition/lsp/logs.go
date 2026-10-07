@@ -51,6 +51,9 @@ type LogWorkload struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
 	Name       string `json:"name"`
+	// Namespace is the workload's, where a policy put it in another than
+	// the Application's.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // WatchLogsParams name the Application, and the workloads it applied.
@@ -157,7 +160,7 @@ func followLogs(ctx context.Context, cfg *rest.Config, namespace string, workloa
 	following := map[string]bool{}
 	follow := func(pod corev1.Pod, container, component string) {
 		tail := logTail
-		req := cs.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: container, Follow: true, TailLines: &tail})
+		req := cs.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: container, Follow: true, TailLines: &tail})
 		stream, err := req.Stream(ctx)
 		if err != nil {
 			return
@@ -195,6 +198,9 @@ func followLogs(ctx context.Context, cfg *rest.Config, namespace string, workloa
 
 // podsOf are a workload's pods, and the component its labels name.
 func podsOf(ctx context.Context, cs kubernetes.Interface, dyn dynamic.Interface, mapper *restmapper.DeferredDiscoveryRESTMapper, namespace string, w LogWorkload) ([]corev1.Pod, string) {
+	if w.Namespace != "" {
+		namespace = w.Namespace
+	}
 	gv, err := schema.ParseGroupVersion(w.APIVersion)
 	if err != nil {
 		return nil, ""
