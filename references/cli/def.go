@@ -21,6 +21,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	goparser "go/parser"
+	gotoken "go/token"
 	"io"
 	"os"
 	"os/exec"
@@ -32,6 +34,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/encoding/gocode/gocodec"
@@ -403,6 +406,11 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 				if err != nil {
 					return errors.Wrapf(err, "failed to generate Go definition")
 				}
+				if output != "" {
+					if pkg, ok := modulePackage(filepath.Dir(output)); ok {
+						defStr = asModuleDefinition(defStr, pkg)
+					}
+				}
 			} else {
 				provider, err := cmd.Flags().GetString(FlagProvider)
 				if err != nil {
@@ -509,6 +517,79 @@ func generateGoDefinition(name, definitionType, desc string) (string, error) {
 	default:
 		return "", errors.Errorf("unsupported definition type for Go: %s", definitionType)
 	}
+}
+
+// modulePackage is the package of a folder inside a Go module, below its
+// root: the one its Go files declare, or the folder's name. A definition
+// made there is of that package, as the module's others are.
+func modulePackage(dir string) (string, bool) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", false
+	}
+	root := ""
+	for d := abs; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			root = d
+			break
+		}
+		if filepath.Dir(d) == d {
+			return "", false
+		}
+	}
+	if root == abs {
+		return "", false
+	}
+	files, _ := filepath.Glob(filepath.Join(abs, "*.go"))
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		if parsed, err := goparser.ParseFile(gotoken.NewFileSet(), f, nil, goparser.PackageClauseOnly); err == nil && parsed.Name.Name != "main" {
+			return parsed.Name.Name, true
+		}
+	}
+	name := strings.Map(func(r rune) rune {
+		if r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, filepath.Base(abs))
+	return name, name != "" && !unicode.IsDigit(rune(name[0]))
+}
+
+// goDefinitionFunc is the function a Go scaffold builds its definition with.
+var goDefinitionFunc = regexp.MustCompile(`(?m)^func (\w+)\(\) \*defkit\.`)
+
+// asModuleDefinition makes a standalone Go scaffold one of a module's
+// package: of pkg, registering its definition in init, with no main.
+func asModuleDefinition(src, pkg string) string {
+	src = strings.Replace(src, "\npackage main\n", "\npackage "+pkg+"\n", 1)
+	if i := strings.Index(src, "\nfunc main() {"); i >= 0 {
+		src = src[:i+1]
+	}
+	if m := goDefinitionFunc.FindStringSubmatchIndex(src); m != nil {
+		fn := src[m[2]:m[3]]
+		src = src[:m[0]] + "func init() {\n\tdefkit.Register(" + fn + "())\n}\n\n" + src[m[0]:]
+		// The function's doc comment stays with it.
+		src = moveDocBelowInit(src, fn)
+	}
+	return src
+}
+
+// moveDocBelowInit puts the doc comment that preceded init back above fn.
+func moveDocBelowInit(src, fn string) string {
+	initAt := strings.Index(src, "func init() {")
+	doc := "// " + fn
+	start := strings.LastIndex(src[:initAt], doc)
+	if start < 0 {
+		return src
+	}
+	end := strings.Index(src[start:], "\n") + start + 1
+	comment := src[start:end]
+	src = src[:start] + src[end:]
+	at := strings.Index(src, "func "+fn+"()")
+	return src[:at] + comment + src[at:]
 }
 
 // toPascalCase converts a kebab-case or snake_case string to PascalCase

@@ -104,3 +104,35 @@ func TestDefinitionInitExtends(t *testing.T) {
 	cmd.SetArgs([]string{"x", "-t", "policy", "--extends", "webservice", "-o", filepath.Join(t.TempDir(), "x.cue")})
 	assert.Error(t, cmd.Execute(), "only components and traits extend")
 }
+
+// A Go definition made in a package of a module is of that package and
+// registers itself, as the module's other definitions do; made elsewhere,
+// it is a program of its own.
+func TestDefinitionInitGoInAModule(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/defs\n\ngo 1.23\n"), 0o600))
+	pkg := filepath.Join(dir, "workflowsteps")
+	require.NoError(t, os.MkdirAll(pkg, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(pkg, "doc.go"), []byte("// Package workflowsteps holds steps.\npackage workflowsteps\n"), 0o600))
+
+	out := filepath.Join(pkg, "notify.go")
+	cmd := NewDefinitionInitCommand(initArgs())
+	initCommand(cmd)
+	cmd.SetArgs([]string{"notify", "-t", "workflow-step", "--lang", "go", "-o", out})
+	require.NoError(t, cmd.Execute())
+	src, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(src), "package workflowsteps\n")
+	assert.Contains(t, string(src), "func init() {\n\tdefkit.Register(NotifyWorkflowStep())\n}")
+	assert.NotContains(t, string(src), "func main()")
+
+	alone := filepath.Join(t.TempDir(), "notify.go")
+	cmd = NewDefinitionInitCommand(initArgs())
+	initCommand(cmd)
+	cmd.SetArgs([]string{"notify", "-t", "workflow-step", "--lang", "go", "-o", alone})
+	require.NoError(t, cmd.Execute())
+	src, err = os.ReadFile(alone)
+	require.NoError(t, err)
+	assert.Contains(t, string(src), "package main\n")
+	assert.Contains(t, string(src), "func main()")
+}
