@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -289,7 +290,35 @@ func CheckAddonFile(path string, src []byte, opts Options) ([]Diagnostic, bool) 
 	default:
 		return nil, false
 	}
+	if isYAMLExt(ext) {
+		diags = append(diags, d.checkStrictYAML()...)
+	}
 	return sortDiagnostics(firstPerPosition(diags)), true
+}
+
+// yamlLine is the line a YAML error names.
+var yamlLine = regexp.MustCompile(`line (\d+):`)
+
+// checkStrictYAML reads an addon's YAML file as KubeVela reads it, with
+// sigs.k8s.io/yaml, which refuses some YAML CUE's reader lets by: a plain
+// value holding ": ", for one.
+func (d *document) checkStrictYAML() []Diagnostic {
+	src := string(d.src)
+	first := 0
+	for _, doc := range strings.Split(src, "\n---") {
+		if _, err := yaml.YAMLToJSON([]byte(doc)); err != nil {
+			line := first + 1
+			if m := yamlLine.FindStringSubmatch(err.Error()); m != nil {
+				n, _ := strconv.Atoi(m[1])
+				line = first + n
+			}
+			text := strings.Split(src, "\n")[line-1]
+			msg := strings.TrimPrefix(err.Error(), "error converting YAML to JSON: ")
+			return []Diagnostic{{Range: Range{Start: Position{Line: line, Column: 1}, End: Position{Line: line, Column: 1 + len(text)}}, Severity: SeverityError, Message: "KubeVela cannot read this YAML: " + msg + "; quote a value holding \": \""}}
+		}
+		first += strings.Count(doc, "\n") + 1
+	}
+	return nil
 }
 
 // Addon CUE file kinds, by what they compile with.

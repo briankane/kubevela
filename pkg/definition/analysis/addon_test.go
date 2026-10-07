@@ -466,3 +466,17 @@ func TestAddonVersionsAndDependencies(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, SeverityInfo, d.Severity, "not in the workspace: from a registry")
 }
+
+// An addon's YAML is read as KubeVela reads it, which refuses what CUE's
+// reader lets by, as a plain value holding ": ".
+func TestAddonYAMLAsKubeVelaReadsIt(t *testing.T) {
+	dir := addonDir(t)
+	got := checkAddon(t, dir, "metadata.yaml", "name: my-addon\nversion: 1.0.0\ndescription: Extras for the shop: a cache\n")
+	if assert.Len(t, got, 1) {
+		assert.Contains(t, got[0], "3: ")
+		assert.Contains(t, got[0], "KubeVela cannot read")
+	}
+	assert.Empty(t, checkAddon(t, dir, "metadata.yaml", "name: my-addon\nversion: 1.0.0\ndescription: \"Extras for the shop: a cache\"\n"))
+	got = checkAddon(t, dir, "resources/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\ndata:\n  note: it: breaks\n")
+	assert.Contains(t, strings.Join(got, "\n"), "KubeVela cannot read")
+}
