@@ -156,6 +156,7 @@ func (d *document) checkApplication(ctx *cue.Context, app cue.Value, fields map[
 		return diags
 	}
 	diags = append(diags, d.checkTraits(app, fields)...)
+	diags = append(diags, d.checkExpressions(app, fields)...)
 	for _, list := range appItems {
 		items, err := app.LookupPath(cue.ParsePath(list.path)).List()
 		if err != nil {
