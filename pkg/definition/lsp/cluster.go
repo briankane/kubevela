@@ -71,6 +71,9 @@ type Cluster struct {
 	Logs func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine))
 	// UISchema reads a definition's UI schema, by its ConfigMap's name.
 	UISchema func(name string) (string, error)
+	// Applications calls each with every Application on the cluster as they
+	// change, until ctx is done.
+	Applications func(ctx context.Context, each func([]*unstructured.Unstructured))
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -136,6 +139,9 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.UISchema = func(name string) (string, error) {
 		return readUISchema(cfg, name)
+	}
+	out.Applications = func(ctx context.Context, each func([]*unstructured.Unstructured)) {
+		watchApplications(ctx, cfg, each)
 	}
 	if !out.KubeVela {
 		return out, nil

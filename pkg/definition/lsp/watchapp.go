@@ -158,6 +158,11 @@ func (s *Server) stopWatches() {
 // watchRequest answers the requests that start and end watches.
 func (s *Server) watchRequest(msg message) (interface{}, *ResponseError) {
 	switch msg.Method {
+	case MethodWatchApplications:
+		return struct{}{}, s.startApplicationsWatch()
+	case MethodUnwatchApplications:
+		s.stopKey(applicationsKey)
+		return struct{}{}, nil
 	case MethodWatchApplication, MethodUnwatchApplication:
 		var p WatchApplicationParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
