@@ -92,7 +92,7 @@ func configCluster(t *testing.T) ctrlclient.Client {
 			TemplateRef:    &configv1alpha1.ConfigTemplateReference{Name: "api-token"},
 			PropertiesFrom: &configv1alpha1.PropertiesReference{SecretRef: configv1alpha1.SecretKeySelector{Name: "ci-token-properties"}},
 		},
-		Status: configv1alpha1.ConfigStatus{Phase: "Ready"},
+		Status: configv1alpha1.ConfigStatus{Phase: configv1alpha1.ConfigPhaseAvailable},
 	}))
 	require.NoError(t, cli.Create(ctx, &configv1alpha1.Config{
 		ObjectMeta: metav1.ObjectMeta{Name: "docker-hub", Namespace: types.DefaultKubeVelaNS},
@@ -128,7 +128,7 @@ func TestReadConfigs(t *testing.T) {
 	assert.Equal(t, storedSecret, configs["shop/ghcr"].Stored)
 	assert.Equal(t, "api-token", configs["vela-system/ci-token"].Template)
 	assert.Equal(t, "vela-system", configs["vela-system/ci-token"].TemplateNamespace, "a template reference without a namespace is to vela-system")
-	assert.Equal(t, "Ready", configs["vela-system/ci-token"].Phase)
+	assert.Equal(t, "Available", configs["vela-system/ci-token"].Phase)
 	assert.Equal(t, storedResource, configs["vela-system/ci-token"].Stored)
 }
 
