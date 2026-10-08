@@ -470,6 +470,10 @@ type clusterState struct {
 	revisions    func(namespace, app string) ([]RevisionInfo, error)
 	revisionApp  func(namespace, revision string) (string, error)
 	rollback     func(namespace, app, revision string) error
+	// configs, configTemplate and configProperties read KubeVela's configs.
+	configs          func() (ConfigsResult, error)
+	configTemplate   func(namespace, name string) (ConfigTemplateResult, error)
+	configProperties func(namespace, name string) (ConfigPropertiesResult, error)
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -515,7 +519,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties}
 	s.clusterPackages = pkgs
 	s.clusterDefs = nil
 	if len(c.Definitions) > 0 {

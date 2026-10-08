@@ -31,6 +31,7 @@ import (
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/clientcmd"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
@@ -80,6 +81,12 @@ type Cluster struct {
 	RevisionApplication func(namespace, revision string) (string, error)
 	// Rollback gives an Application the spec one of its revisions recorded.
 	Rollback func(namespace, app, revision string) error
+	// Configs lists its config templates and configs.
+	Configs func() (ConfigsResult, error)
+	// ConfigTemplate reads what a config template's form is made from.
+	ConfigTemplate func(namespace, name string) (ConfigTemplateResult, error)
+	// ConfigProperties reads a config's values.
+	ConfigProperties func(namespace, name string) (ConfigPropertiesResult, error)
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -157,6 +164,19 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Rollback = func(namespace, app, revision string) error {
 		return rollback(cfg, namespace, app, revision)
+	}
+	out.Configs = func() (ConfigsResult, error) {
+		return withConfigClient(cfg, readConfigs)
+	}
+	out.ConfigTemplate = func(namespace, name string) (ConfigTemplateResult, error) {
+		return withConfigClient(cfg, func(ctx context.Context, cli ctrlclient.Client) (ConfigTemplateResult, error) {
+			return readConfigTemplate(ctx, cli, namespace, name)
+		})
+	}
+	out.ConfigProperties = func(namespace, name string) (ConfigPropertiesResult, error) {
+		return withConfigClient(cfg, func(ctx context.Context, cli ctrlclient.Client) (ConfigPropertiesResult, error) {
+			return readConfigProperties(ctx, cli, namespace, name)
+		})
 	}
 	if !out.KubeVela {
 		return out, nil
