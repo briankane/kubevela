@@ -341,6 +341,10 @@ func TestNewConfigRequests(t *testing.T) {
 	require.NoError(t, json.Unmarshal(c.response(c.send(MethodNewConfig, NewConfigParams{Template: "api-token", Name: "ci", Namespace: "vela-system"}, true))["result"], &cfg))
 	assert.Contains(t, cfg.Text, "propertiesFrom:")
 
+	var names []ConfigTemplateName
+	require.NoError(t, json.Unmarshal(c.response(c.send(MethodConfigTemplateNames, struct{}{}, true))["result"], &names))
+	assert.Equal(t, []ConfigTemplateName{{Name: "api-token", Where: "the cluster", Sensitive: true}}, names)
+
 	m := c.response(c.send(MethodNewConfig, NewConfigParams{Template: "nope", Name: "ci", Namespace: "x"}, true))
 	assert.Contains(t, string(m["error"]), "no config template named nope")
 }

@@ -59,6 +59,18 @@ const MethodNewConfigTemplate = "vela/newConfigTemplate"
 // cluster has.
 const MethodNewConfig = "vela/newConfig"
 
+// MethodConfigTemplateNames lists the config templates a Config may name:
+// the workspace's and the cluster's.
+const MethodConfigTemplateNames = "vela/configTemplateNames"
+
+// ConfigTemplateName is a config template a Config may name, and where it is.
+type ConfigTemplateName struct {
+	Name      string `json:"name"`
+	Where     string `json:"where"`
+	Sensitive bool   `json:"sensitive,omitempty"`
+	Path      string `json:"path,omitempty"`
+}
+
 // NewConfigTemplateParams describe the config template to start.
 type NewConfigTemplateParams struct {
 	Name        string `json:"name"`
@@ -407,8 +419,18 @@ func newConfig(t analysis.ConfigTemplate, name, namespace string) (string, error
 	return b.String(), nil
 }
 
-// newConfigRequest answers MethodNewConfigTemplate and MethodNewConfig.
+// newConfigRequest answers MethodNewConfigTemplate, MethodNewConfig and
+// MethodConfigTemplateNames.
 func (s *Server) newConfigRequest(msg message) (interface{}, *ResponseError) {
+	if msg.Method == MethodConfigTemplateNames {
+		set := s.options().ConfigTemplates
+		out := make([]ConfigTemplateName, 0, len(set))
+		for _, t := range set {
+			out = append(out, ConfigTemplateName{Name: t.Name, Where: t.Where, Sensitive: t.Sensitive, Path: t.Path})
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		return out, nil
+	}
 	if msg.Method == MethodNewConfigTemplate {
 		var p NewConfigTemplateParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
