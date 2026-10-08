@@ -479,10 +479,13 @@ func (d *document) build(ctx *cue.Context, imports []*build.Instance, extra stri
 		}
 	}
 	v := ctx.BuildInstance(bi)
+	// An error in one field leaves the others to check: the value's own error
+	// names only the first.
+	diags := d.placed(v.Validate())
 	if v.Err() != nil {
-		return v, d.placed(v.Err())
+		diags = append(d.placed(v.Err()), diags...)
 	}
-	return v, append(d.placed(v.Validate()), d.checkReads(v)...)
+	return v, append(diags, d.checkReads(v)...)
 }
 
 // checkReads checks each parameter and context chain the document reads

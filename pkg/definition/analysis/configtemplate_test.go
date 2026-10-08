@@ -50,6 +50,14 @@ func TestCheckConfigTemplateFile(t *testing.T) {
 			src:  "metadata: name: \"x\"\ntemplate: output: type: \"Opaque\"\n",
 			want: []string{"template.parameter must be set"},
 		},
+		"a context typo in the output's metadata": {
+			src:  strings.Replace(NewConfigTemplate("svc", "", "", "system", false), "context.namespace", "context.namspace", 1),
+			want: []string{"15: ", "namspace"},
+		},
+		"a context typo beside a scope that is not one": {
+			src:  strings.Replace(NewConfigTemplate("svc", "", "", "cluster", false), "context.namespace", "context.namspace", 1),
+			want: []string{"15: ", "namspace", "scope"},
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
