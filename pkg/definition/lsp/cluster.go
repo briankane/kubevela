@@ -74,6 +74,12 @@ type Cluster struct {
 	// Applications calls each with every Application on the cluster as they
 	// change, until ctx is done.
 	Applications func(ctx context.Context, each func([]*unstructured.Unstructured))
+	// Revisions lists an Application's revisions, newest first.
+	Revisions func(namespace, app string) ([]RevisionInfo, error)
+	// RevisionApplication reads the Application a revision recorded, as YAML.
+	RevisionApplication func(namespace, revision string) (string, error)
+	// Rollback gives an Application the spec one of its revisions recorded.
+	Rollback func(namespace, app, revision string) error
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -142,6 +148,15 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Applications = func(ctx context.Context, each func([]*unstructured.Unstructured)) {
 		watchApplications(ctx, cfg, each)
+	}
+	out.Revisions = func(namespace, app string) ([]RevisionInfo, error) {
+		return listRevisions(cfg, namespace, app)
+	}
+	out.RevisionApplication = func(namespace, revision string) (string, error) {
+		return readRevisionApplication(cfg, namespace, revision)
+	}
+	out.Rollback = func(namespace, app, revision string) error {
+		return rollback(cfg, namespace, app, revision)
 	}
 	if !out.KubeVela {
 		return out, nil
