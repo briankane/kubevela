@@ -291,3 +291,56 @@ func TestServerChecksConfigs(t *testing.T) {
 	_, _, diags = openWith(t, cluster, "auto", root, "ci.yaml", config("nope", "    token: x\n"), has("on the cluster"))
 	assert.True(t, has("no config template named nope in the workspace or on the cluster")(diags), "%v", diags)
 }
+
+// A new Config names its template and lists what to fill in; a sensitive
+// template's values are kept in a Secret, never in the file.
+func TestNewConfig(t *testing.T) {
+	registry := analysis.ConfigTemplate{Name: "registry", Where: "the workspace", CUE: strings.Replace(strings.Replace(sensitiveTemplateCUE, `"api-token"`, `"registry"`, 1), "sensitive: true", "sensitive: false", 1)}
+	token := analysis.ConfigTemplate{Name: "api-token", Sensitive: true, Where: "the cluster", CUE: sensitiveTemplateCUE}
+	opts := analysis.Options{ConfigTemplates: map[string]analysis.ConfigTemplate{"registry": registry, "api-token": token}}
+
+	text, err := newConfig(registry, "ci", "shop")
+	require.NoError(t, err)
+	assert.Contains(t, text, "name: ci\n  namespace: shop\n")
+	assert.Contains(t, text, "    name: registry\n")
+	assert.Contains(t, text, "token: null # required string: The token")
+	diags, ok := analysis.CheckConfigFile("ci.yaml", []byte(text), opts)
+	require.True(t, ok)
+	assert.NotEmpty(t, diags, "the placeholder is flagged until filled in")
+	filled := strings.Replace(text, "token: null # required string: The token", "token: abc", 1)
+	diags, _ = analysis.CheckConfigFile("ci.yaml", []byte(filled), opts)
+	assert.Empty(t, diags)
+
+	text, err = newConfig(token, "ci-token", "vela-system")
+	require.NoError(t, err)
+	assert.NotContains(t, text, "properties:\n")
+	assert.Contains(t, text, "propertiesFrom:\n    secretRef:\n      name: ci-token-properties\n")
+	assert.Contains(t, text, `kubectl create secret generic ci-token-properties -n vela-system --from-literal=properties='{"token":"..."}'`)
+	diags, _ = analysis.CheckConfigFile("ci-token.yaml", []byte(text), opts)
+	assert.Empty(t, diags)
+}
+
+// The scaffolds are answered from the workspace's and the cluster's templates.
+func TestNewConfigRequests(t *testing.T) {
+	cluster := func() (Cluster, error) {
+		c, err := velaCluster()
+		c.ConfigTemplateSources = []analysis.ConfigTemplate{{Name: "api-token", Sensitive: true, Where: "the cluster", CUE: sensitiveTemplateCUE}}
+		return c, err
+	}
+	c := newClientWith(t, NewServer(WithCluster(cluster)))
+	c.drain()
+	c.response(c.send("initialize", map[string]interface{}{}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	clusterStatus(t, c)
+
+	var tmpl NewFileResult
+	require.NoError(t, json.Unmarshal(c.response(c.send(MethodNewConfigTemplate, NewConfigTemplateParams{Name: "svc", Scope: "system"}, true))["result"], &tmpl))
+	assert.Contains(t, tmpl.Text, `name:  "svc"`)
+
+	var cfg NewFileResult
+	require.NoError(t, json.Unmarshal(c.response(c.send(MethodNewConfig, NewConfigParams{Template: "api-token", Name: "ci", Namespace: "vela-system"}, true))["result"], &cfg))
+	assert.Contains(t, cfg.Text, "propertiesFrom:")
+
+	m := c.response(c.send(MethodNewConfig, NewConfigParams{Template: "nope", Name: "ci", Namespace: "x"}, true))
+	assert.Contains(t, string(m["error"]), "no config template named nope")
+}

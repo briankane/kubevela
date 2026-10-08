@@ -80,3 +80,18 @@ func TestCheckConfigTemplateFile(t *testing.T) {
 		assert.False(t, ok, name)
 	}
 }
+
+// A new config template is one vela config-template apply takes as it is.
+func TestNewConfigTemplate(t *testing.T) {
+	for _, sensitive := range []bool{false, true} {
+		src := NewConfigTemplate("my-service", "My Service", "How to reach my service", "project", sensitive)
+		diags, ok := CheckConfigTemplateFile("my-service.cue", []byte(src))
+		require.True(t, ok, src)
+		assert.Empty(t, withoutInfo(diags), src)
+		name, gotSensitive, ok := ConfigTemplateHeader("my-service.cue", []byte(src))
+		require.True(t, ok)
+		assert.Equal(t, "my-service", name)
+		assert.Equal(t, sensitive, gotSensitive)
+	}
+	assert.NotContains(t, NewConfigTemplate("x", "", "", "system", false), "alias:", "an empty alias is left out")
+}

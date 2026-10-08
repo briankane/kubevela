@@ -23,6 +23,7 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/literal"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
@@ -267,4 +268,64 @@ func (d *document) checkConfigProperties(ctx *cue.Context, config, props cue.Val
 		diags = append(diags, Diagnostic{Range: refAt, Severity: SeverityError, Message: fmt.Sprintf("%s requires %s in properties", label, strings.Join(missing, ", "))})
 	}
 	return diags
+}
+
+// Parameter is the template's closed parameter.
+func (t ConfigTemplate) Parameter() (cue.Value, bool) {
+	return t.parameterIn(cuecontext.New())
+}
+
+// RequiredParameters are the parameters a value must give: declared, not
+// optional, with no default.
+func RequiredParameters(param cue.Value) []string {
+	return requiredMissing(param, param.Context().CompileString("{}"))
+}
+
+// NewConfigTemplate is a config template to start from: a Secret holding
+// an endpoint and an optional token.
+func NewConfigTemplate(name, alias, description, scope string, sensitive bool) string {
+	var b strings.Builder
+	b.WriteString("metadata: {\n")
+	fmt.Fprintf(&b, "\tname: %q\n", name)
+	if alias != "" {
+		fmt.Fprintf(&b, "\talias: %q\n", alias)
+	}
+	if description != "" {
+		fmt.Fprintf(&b, "\tdescription: %q\n", description)
+	}
+	fmt.Fprintf(&b, "\tscope: %q\n", scope)
+	fmt.Fprintf(&b, "\t// A sensitive config's values are never read back, by the API or a workflow step.\n\tsensitive: %t\n", sensitive)
+	b.WriteString(`}
+
+template: {
+	// A config is kept as this Secret; outputs may add other objects.
+	output: {
+		apiVersion: "v1"
+		kind:       "Secret"
+		metadata: {
+			name:      context.name
+			namespace: context.namespace
+		}
+		type: "Opaque"
+		stringData: {
+			endpoint: parameter.endpoint
+			if parameter.token != _|_ {
+				token: parameter.token
+			}
+		}
+	}
+
+	parameter: {
+		// +usage=Where the service is, such as https://example.com
+		endpoint: string
+		// +usage=The token to reach it with
+		token?: string
+	}
+}
+`)
+	out, err := format.Source([]byte(b.String()))
+	if err != nil {
+		return b.String()
+	}
+	return string(out)
 }

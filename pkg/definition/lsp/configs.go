@@ -37,6 +37,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/config"
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/preview"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
@@ -50,6 +51,34 @@ const MethodConfigTemplate = "vela/configTemplate"
 // MethodConfigProperties reads a config's values, unless its template is
 // sensitive.
 const MethodConfigProperties = "vela/configProperties"
+
+// MethodNewConfigTemplate scaffolds a config template.
+const MethodNewConfigTemplate = "vela/newConfigTemplate"
+
+// MethodNewConfig scaffolds a Config naming a template the workspace or the
+// cluster has.
+const MethodNewConfig = "vela/newConfig"
+
+// NewConfigTemplateParams describe the config template to start.
+type NewConfigTemplateParams struct {
+	Name        string `json:"name"`
+	Alias       string `json:"alias"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
+	Sensitive   bool   `json:"sensitive"`
+}
+
+// NewConfigParams name the Config to start and its template.
+type NewConfigParams struct {
+	Template  string `json:"template"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+// NewFileResult is a file's text to start from.
+type NewFileResult struct {
+	Text string `json:"text"`
+}
 
 // Where a config or config template is stored: a ConfigTemplate or Config
 // resource, or the ConfigMap or Secret KubeVela wrote before those existed.
@@ -346,4 +375,58 @@ func readConfigTemplateSources(ctx context.Context, cli ctrlclient.Client) ([]an
 		out = append(out, analysis.ConfigTemplate{Name: name, Sensitive: cm.Annotations[types.AnnotationConfigSensitive] == "true", Where: "the cluster", CUE: cm.Data[config.SaveTemplateKey]})
 	}
 	return out, nil
+}
+
+// newConfig is a Config to start from, naming its template. Its values are
+// listed to fill in, or, for a sensitive template, kept in a Secret it names.
+func newConfig(t analysis.ConfigTemplate, name, namespace string) (string, error) {
+	param, ok := t.Parameter()
+	if !ok {
+		return "", fmt.Errorf("config template %s has no parameter to fill in", t.Name)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "apiVersion: config.oam.dev/v1alpha1\nkind: Config\nmetadata:\n  name: %s\n  namespace: %s\nspec:\n  templateRef:\n    name: %s\n", name, namespace, t.Name)
+	if !t.Sensitive {
+		values, ok := preview.ValuesYAML(param, "    ")
+		if !ok {
+			return b.String(), nil
+		}
+		b.WriteString("  properties:" + values + "\n")
+		return b.String(), nil
+	}
+	secret := name + "-properties"
+	example := map[string]string{}
+	for _, k := range analysis.RequiredParameters(param) {
+		example[k] = "..."
+	}
+	j, err := json.Marshal(example)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, "  # %s is sensitive, so its values are kept in a Secret, as JSON under the key\n  # properties, never in this file:\n  #   kubectl create secret generic %s -n %s --from-literal=properties='%s'\n  propertiesFrom:\n    secretRef:\n      name: %s\n", t.Name, secret, namespace, j, secret)
+	return b.String(), nil
+}
+
+// newConfigRequest answers MethodNewConfigTemplate and MethodNewConfig.
+func (s *Server) newConfigRequest(msg message) (interface{}, *ResponseError) {
+	if msg.Method == MethodNewConfigTemplate {
+		var p NewConfigTemplateParams
+		if rerr := decode(msg.Params, &p); rerr != nil {
+			return nil, rerr
+		}
+		return NewFileResult{Text: analysis.NewConfigTemplate(p.Name, p.Alias, p.Description, p.Scope, p.Sensitive)}, nil
+	}
+	var p NewConfigParams
+	if rerr := decode(msg.Params, &p); rerr != nil {
+		return nil, rerr
+	}
+	t, ok := s.options().ConfigTemplates[p.Template]
+	if !ok {
+		return nil, &ResponseError{Code: CodeInvalidParams, Message: fmt.Sprintf("no config template named %s in the workspace or on the cluster", p.Template)}
+	}
+	text, err := newConfig(t, p.Name, p.Namespace)
+	if err != nil {
+		return nil, &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	return NewFileResult{Text: text}, nil
 }

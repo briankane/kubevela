@@ -438,6 +438,15 @@ func Skeleton(ctx context.Context, path string, src []byte) (string, error) {
 	return b.String(), nil
 }
 
+// ValuesYAML is the regular fields of v as YAML lines at indent, each
+// starting with a newline: defaults as they are, what must be given as null
+// with a comment naming its kind and usage. It is false when v has none.
+func ValuesYAML(v cue.Value, indent string) (string, bool) {
+	var b strings.Builder
+	ok := writeFields(&b, v, indent)
+	return b.String(), ok
+}
+
 // writeFields writes the regular fields of v as YAML lines at indent, and
 // reports whether it wrote any.
 func writeFields(b *strings.Builder, v cue.Value, indent string) bool {
