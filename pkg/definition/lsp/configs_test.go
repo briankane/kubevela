@@ -94,6 +94,10 @@ func configCluster(t *testing.T) ctrlclient.Client {
 		},
 		Status: configv1alpha1.ConfigStatus{Phase: configv1alpha1.ConfigPhaseAvailable},
 	}))
+	require.NoError(t, cli.Create(ctx, &configv1alpha1.ConfigTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "source-infra-1a2b", Namespace: types.DefaultKubeVelaNS, Labels: map[string]string{types.LabelSourceDefinitionName: "infra"}},
+		Spec:       configv1alpha1.ConfigTemplateSpec{Template: sensitiveTemplateCUE, Scope: configv1alpha1.ConfigTemplateScopeSystem},
+	}))
 	require.NoError(t, cli.Create(ctx, &configv1alpha1.Config{
 		ObjectMeta: metav1.ObjectMeta{Name: "docker-hub", Namespace: types.DefaultKubeVelaNS},
 		Spec: configv1alpha1.ConfigSpec{
@@ -116,6 +120,8 @@ func TestReadConfigs(t *testing.T) {
 	// ParseTemplate leaves metadata.description out of what it writes.
 	assert.Equal(t, ConfigTemplateInfo{Name: "image-registry", Namespace: "vela-system", Alias: "Image Registry", Scope: "project", Stored: storedConfigMap}, byName["image-registry"])
 	assert.Equal(t, ConfigTemplateInfo{Name: "api-token", Namespace: "vela-system", Description: "A token", Scope: "system", Sensitive: true, Stored: storedResource}, byName["api-token"])
+	// A SourceDefinition's template is listed, naming it: its configs are the source's to write.
+	assert.Equal(t, ConfigTemplateInfo{Name: "source-infra-1a2b", Namespace: "vela-system", Scope: "system", Stored: storedResource, Source: "infra"}, byName["source-infra-1a2b"])
 
 	configs := map[string]ConfigInfo{}
 	for _, c := range out.Configs {

@@ -66,6 +66,9 @@ type ConfigTemplateInfo struct {
 	Scope       string `json:"scope,omitempty"`
 	Sensitive   bool   `json:"sensitive,omitempty"`
 	Stored      string `json:"stored"`
+	// Source names the SourceDefinition that made the template, which writes
+	// its configs itself.
+	Source string `json:"source,omitempty"`
 }
 
 // ConfigInfo is what a list shows of a config.
@@ -147,6 +150,10 @@ func readConfigs(ctx context.Context, cli ctrlclient.Client) (ConfigsResult, err
 	resource := map[string]bool{}
 	for _, ct := range crs.Items {
 		resource[ct.Namespace+"/"+ct.Name] = true
+		// The factory leaves out a SourceDefinition's templates.
+		if source, ok := ct.Labels[types.LabelSourceDefinitionName]; ok {
+			out.Templates = append(out.Templates, ConfigTemplateInfo{Name: ct.Name, Namespace: ct.Namespace, Alias: ct.Spec.Alias, Description: ct.Spec.Description, Scope: string(ct.Spec.Scope), Sensitive: ct.Spec.Sensitive, Stored: storedResource, Source: source})
+		}
 	}
 	for _, t := range templates {
 		stored := storedConfigMap
