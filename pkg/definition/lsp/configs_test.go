@@ -256,6 +256,8 @@ func TestReadConfigTemplateSources(t *testing.T) {
 	assert.False(t, byName["image-registry"].Sensitive)
 	assert.True(t, byName["api-token"].Sensitive)
 	assert.Equal(t, "the cluster", byName["api-token"].Where)
+	assert.Equal(t, "infra", byName["source-infra-1a2b"].Source, "a SourceDefinition's template names it")
+	assert.Empty(t, byName["api-token"].Source)
 }
 
 // A Config is checked against the template it names, the workspace's or the cluster's.
@@ -324,7 +326,10 @@ func TestNewConfig(t *testing.T) {
 func TestNewConfigRequests(t *testing.T) {
 	cluster := func() (Cluster, error) {
 		c, err := velaCluster()
-		c.ConfigTemplateSources = []analysis.ConfigTemplate{{Name: "api-token", Sensitive: true, Where: "the cluster", CUE: sensitiveTemplateCUE}}
+		c.ConfigTemplateSources = []analysis.ConfigTemplate{
+			{Name: "api-token", Sensitive: true, Where: "the cluster", CUE: sensitiveTemplateCUE},
+			{Name: "source-infra-1a2b", Where: "the cluster", Source: "infra", CUE: sensitiveTemplateCUE},
+		}
 		return c, err
 	}
 	c := newClientWith(t, NewServer(WithCluster(cluster)))
@@ -343,7 +348,7 @@ func TestNewConfigRequests(t *testing.T) {
 
 	var names []ConfigTemplateName
 	require.NoError(t, json.Unmarshal(c.response(c.send(MethodConfigTemplateNames, struct{}{}, true))["result"], &names))
-	assert.Equal(t, []ConfigTemplateName{{Name: "api-token", Where: "the cluster", Sensitive: true}}, names)
+	assert.Equal(t, []ConfigTemplateName{{Name: "api-token", Where: "the cluster", Sensitive: true}, {Name: "source-infra-1a2b", Where: "the cluster", Source: "infra"}}, names)
 
 	m := c.response(c.send(MethodNewConfig, NewConfigParams{Template: "nope", Name: "ci", Namespace: "x"}, true))
 	assert.Contains(t, string(m["error"]), "no config template named nope")

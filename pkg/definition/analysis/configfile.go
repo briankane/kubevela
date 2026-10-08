@@ -27,6 +27,7 @@ import (
 	"cuelang.org/go/cue/literal"
 	"cuelang.org/go/cue/parser"
 	"cuelang.org/go/cue/token"
+	cueyaml "cuelang.org/go/encoding/yaml"
 )
 
 // ConfigTemplate is a config template a Config may name.
@@ -37,6 +38,9 @@ type ConfigTemplate struct {
 	Where string
 	// Path is its file, for one in the workspace.
 	Path string
+	// Source names the SourceDefinition that made it, which writes its
+	// configs itself.
+	Source string
 	// CUE is the template's source.
 	CUE string
 }
@@ -159,6 +163,12 @@ func CheckConfigFile(path string, src []byte, opts Options) ([]Diagnostic, bool)
 		return nil, false
 	}
 	docs, nodes := yamlDocuments(f, data)
+	// The checked syntax drops null fields, as Kubernetes does; a null is a
+	// placeholder here, read from the raw syntax.
+	var rawNodes []ast.Node
+	if raw, err := cueyaml.Extract(path, src); err == nil {
+		_, rawNodes = yamlDocuments(raw, ctx.BuildFile(raw))
+	}
 	found := false
 	var diags []Diagnostic
 	for i, doc := range docs {
@@ -166,7 +176,15 @@ func CheckConfigFile(path string, src []byte, opts Options) ([]Diagnostic, bool)
 			continue
 		}
 		found = true
-		diags = append(diags, d.checkConfig(ctx, doc, yamlFields(nodes[i]))...)
+		nulls := map[string]*ast.Field{}
+		if i < len(rawNodes) {
+			for p, field := range yamlFields(rawNodes[i]) {
+				if lit, ok := field.Value.(*ast.BasicLit); ok && lit.Kind == token.NULL {
+					nulls[p] = field
+				}
+			}
+		}
+		diags = append(diags, d.checkConfig(ctx, doc, yamlFields(nodes[i]), nulls)...)
 	}
 	return sortDiagnostics(firstPerPosition(diags)), found
 }
@@ -198,7 +216,7 @@ func yamlDocuments(f *ast.File, data cue.Value) ([]cue.Value, []ast.Node) {
 }
 
 // checkConfig checks one Config, its fields' syntax at hand.
-func (d *document) checkConfig(ctx *cue.Context, config cue.Value, fields map[string]*ast.Field) []Diagnostic {
+func (d *document) checkConfig(ctx *cue.Context, config cue.Value, fields, nulls map[string]*ast.Field) []Diagnostic {
 	schema := ctx.CompileString(configCUE).LookupPath(cue.ParsePath("#config"))
 	diags := d.fromErrors(schema.Unify(config).Validate(), "#config")
 	if name, err := config.LookupPath(cue.ParsePath("metadata.name")).String(); err == nil && (len(name) > 63 || !dnsLabel.MatchString(name)) {
@@ -213,12 +231,12 @@ func (d *document) checkConfig(ctx *cue.Context, config cue.Value, fields map[st
 			diags = append(diags, Diagnostic{Range: r, Severity: SeverityError, Message: "a Config takes its values from properties or propertiesFrom, not both"})
 		}
 	}
-	return append(diags, d.checkConfigProperties(ctx, config, props, from.Exists(), fields)...)
+	return append(diags, d.checkConfigProperties(ctx, config, props, from.Exists(), fields, nulls)...)
 }
 
 // checkConfigProperties checks a Config's properties against the parameter
 // of the template it names.
-func (d *document) checkConfigProperties(ctx *cue.Context, config, props cue.Value, fromSecret bool, fields map[string]*ast.Field) []Diagnostic {
+func (d *document) checkConfigProperties(ctx *cue.Context, config, props cue.Value, fromSecret bool, fields, nulls map[string]*ast.Field) []Diagnostic {
 	name, err := config.LookupPath(cue.ParsePath("spec.templateRef.name")).String()
 	ref, written := fields["spec.templateRef.name"]
 	if err != nil || !written {
@@ -256,6 +274,8 @@ func (d *document) checkConfigProperties(ctx *cue.Context, config, props cue.Val
 		return diags
 	}
 	label := "config template " + name
+	placeholders, filling := d.placeholders(param, label, nulls)
+	diags = append(diags, placeholders...)
 	if props.Exists() {
 		diags = append(diags, d.unknownProperties(props, param, label, "spec.properties", nil, fields)...)
 		for _, diag := range d.fromErrors(param.Unify(props).Validate(), closedParameterPath) {
@@ -264,7 +284,7 @@ func (d *document) checkConfigProperties(ctx *cue.Context, config, props cue.Val
 			}
 		}
 	}
-	if missing := requiredMissing(param, props); len(missing) > 0 {
+	if missing := without(requiredMissing(param, props), filling); len(missing) > 0 {
 		diags = append(diags, Diagnostic{Range: refAt, Severity: SeverityError, Message: fmt.Sprintf("%s requires %s in properties", label, strings.Join(missing, ", "))})
 	}
 	return diags
@@ -328,4 +348,42 @@ template: {
 		return b.String()
 	}
 	return string(out)
+}
+
+// propertiesPrefix is where a Config's values are, as yamlFields paths them.
+const propertiesPrefix = "spec.properties."
+
+// placeholders reports each value written as null under the properties, a
+// placeholder the parameter does not take, at its field: what is still to
+// fill in. It also names the top-level ones, which are not missing.
+func (d *document) placeholders(param cue.Value, label string, nulls map[string]*ast.Field) ([]Diagnostic, map[string]bool) {
+	var diags []Diagnostic
+	filling := map[string]bool{}
+	for p, field := range nulls {
+		name, ok := strings.CutPrefix(p, propertiesPrefix)
+		if !ok {
+			continue
+		}
+		want := param
+		for _, seg := range strings.Split(name, ".") {
+			want = schemaChild(want, cue.Str(seg))
+		}
+		if !want.Exists() || want.Unify(want.Context().CompileString("null")).Err() == nil {
+			continue
+		}
+		filling[strings.Split(name, ".")[0]] = true
+		diags = append(diags, Diagnostic{Range: span(field.Label.Pos(), field.Label.End()), Severity: SeverityError, Message: fmt.Sprintf("%s is still to fill in: %s requires a %s", name, label, kindName(want))})
+	}
+	return diags, filling
+}
+
+// without is names less those in leave.
+func without(names []string, leave map[string]bool) []string {
+	var out []string
+	for _, n := range names {
+		if !leave[n] {
+			out = append(out, n)
+		}
+	}
+	return out
 }

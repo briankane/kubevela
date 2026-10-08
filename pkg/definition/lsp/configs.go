@@ -69,6 +69,9 @@ type ConfigTemplateName struct {
 	Where     string `json:"where"`
 	Sensitive bool   `json:"sensitive,omitempty"`
 	Path      string `json:"path,omitempty"`
+	// Source names the SourceDefinition that made it, which writes its
+	// configs itself.
+	Source string `json:"source,omitempty"`
 }
 
 // NewConfigTemplateParams describe the config template to start.
@@ -372,7 +375,7 @@ func readConfigTemplateSources(ctx context.Context, cli ctrlclient.Client) ([]an
 	if err := cli.List(ctx, &crs); err == nil {
 		for _, ct := range crs.Items {
 			seen[ct.Namespace+"/"+ct.Name] = true
-			out = append(out, analysis.ConfigTemplate{Name: ct.Name, Sensitive: ct.Spec.Sensitive, Where: "the cluster", CUE: ct.Spec.Template})
+			out = append(out, analysis.ConfigTemplate{Name: ct.Name, Sensitive: ct.Spec.Sensitive, Where: "the cluster", Source: ct.Labels[types.LabelSourceDefinitionName], CUE: ct.Spec.Template})
 		}
 	}
 	var cms corev1.ConfigMapList
@@ -426,7 +429,7 @@ func (s *Server) newConfigRequest(msg message) (interface{}, *ResponseError) {
 		set := s.options().ConfigTemplates
 		out := make([]ConfigTemplateName, 0, len(set))
 		for _, t := range set {
-			out = append(out, ConfigTemplateName{Name: t.Name, Where: t.Where, Sensitive: t.Sensitive, Path: t.Path})
+			out = append(out, ConfigTemplateName{Name: t.Name, Where: t.Where, Sensitive: t.Sensitive, Path: t.Path, Source: t.Source})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 		return out, nil

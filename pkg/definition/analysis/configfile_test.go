@@ -64,6 +64,10 @@ func TestCheckConfigFile(t *testing.T) {
 			src:  strings.Replace(goodConfig, "    registry: ghcr.io", "    token: x", 1),
 			want: []string{"8: config template registry requires registry in properties"},
 		},
+		"a placeholder still to fill in": {
+			src:  strings.Replace(goodConfig, "registry: ghcr.io", "registry: null # required string", 1),
+			want: []string{"11: registry is still to fill in: config template registry requires a string"},
+		},
 		"a property of the wrong type": {
 			src:  strings.Replace(goodConfig, "registry: ghcr.io", "registry: 5", 1),
 			want: []string{"11: ", "registry"},
