@@ -16,7 +16,11 @@ limitations under the License.
 
 package version
 
-import "github.com/hashicorp/go-version"
+import (
+	"regexp"
+
+	"github.com/hashicorp/go-version"
+)
 
 // GitRevision is the commit of repo
 var GitRevision = "UNKNOWN"
@@ -30,12 +34,17 @@ var VelaVersion = "UNKNOWN"
 // "master"). Bump alongside each release.
 const defaultModuleRequireVersion = "v1.11.0"
 
+// gitDescribeSuffix matches what `git describe` appends after the nearest tag,
+// commits since it and the commit, which name no version the Go proxy serves.
+var gitDescribeSuffix = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$`)
+
 // ModuleRequireVersion returns a semver suitable for a scaffolded go.mod
 // `require github.com/oam-dev/kubevela <ver>` line. It prefers the running
 // binary's build-time VelaVersion and falls back to defaultModuleRequireVersion
-// when VelaVersion is not a valid semver (dev builds without ldflags).
+// when VelaVersion is not a released version: no semver (dev builds without
+// ldflags), or a `git describe` of a commit after a tag.
 func ModuleRequireVersion() string {
-	if IsOfficialKubeVelaVersion(VelaVersion) {
+	if IsOfficialKubeVelaVersion(VelaVersion) && !gitDescribeSuffix.MatchString(VelaVersion) {
 		return VelaVersion
 	}
 	return defaultModuleRequireVersion

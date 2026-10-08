@@ -55,6 +55,9 @@ func TestModuleRequireVersion(t *testing.T) {
 		{"release build", "v1.10.0", "v1.10.0"},
 		{"dev build default", "UNKNOWN", defaultModuleRequireVersion},
 		{"makefile default", "master", defaultModuleRequireVersion},
+		{"pre-release tag", "v1.11.0-beta.1", "v1.11.0-beta.1"},
+		{"git describe after a tag", "v1.11.0-204-g627e19bde", defaultModuleRequireVersion},
+		{"git describe, dirty", "v1.11.0-204-g627e19bde-dirty", defaultModuleRequireVersion},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
