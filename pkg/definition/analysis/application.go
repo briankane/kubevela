@@ -78,24 +78,7 @@ func CheckApplicationFile(path string, src []byte, opts Options) ([]Diagnostic, 
 	if data.Err() != nil {
 		return nil, false
 	}
-	docs := []cue.Value{data}
-	nodes := []ast.Node{f}
-	if it, err := data.List(); err == nil {
-		docs = nil
-		for it.Next() {
-			docs = append(docs, it.Value())
-		}
-		nodes = nil
-		for _, decl := range f.Decls {
-			if e, ok := decl.(*ast.EmbedDecl); ok {
-				if l, ok := e.Expr.(*ast.ListLit); ok {
-					for _, el := range l.Elts {
-						nodes = append(nodes, el)
-					}
-				}
-			}
-		}
-	}
+	docs, nodes := yamlDocuments(f, data)
 	found := false
 	var diags []Diagnostic
 	for i, doc := range docs {
@@ -103,11 +86,7 @@ func CheckApplicationFile(path string, src []byte, opts Options) ([]Diagnostic, 
 			continue
 		}
 		found = true
-		var node ast.Node = f
-		if i < len(nodes) {
-			node = nodes[i]
-		}
-		diags = append(diags, d.checkApplication(ctx, doc, yamlFields(node))...)
+		diags = append(diags, d.checkApplication(ctx, doc, yamlFields(nodes[i]))...)
 	}
 	return sortDiagnostics(firstPerPosition(diags)), found
 }

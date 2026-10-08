@@ -73,6 +73,10 @@ type Server struct {
 	clusterDefs *clusterDefinitions
 	// crds are the CustomResourceDefinitions each workspace file holds.
 	crds map[string][][]byte
+	// configTemplates are the config templates workspace files hold, by
+	// path; clusterConfigTemplates are the cluster's.
+	configTemplates        map[string]analysis.ConfigTemplate
+	clusterConfigTemplates []analysis.ConfigTemplate
 
 	// validateOutputs is the kubevela.validateOutputs setting: auto, on or
 	// off. kinds are the schemas outputs are checked against, nil when off.
@@ -129,6 +133,7 @@ func NewServer(opts ...Option) *Server {
 		connect:         ConnectKubeconfig,
 		definitions:     map[string]definitionEntry{},
 		packages:        map[string][]cuexruntime.Package{},
+		configTemplates: map[string]analysis.ConfigTemplate{},
 		events:          make(chan func(), 16),
 	}
 	for _, o := range opts {
@@ -648,6 +653,9 @@ func diagnoseUnguarded(uri, text string, opts analysis.Options) []Diagnostic {
 		}
 		if appDiags, ok := analysis.CheckApplicationFile(path, []byte(text), opts); ok {
 			found = append(found, appDiags...)
+		}
+		if configDiags, ok := analysis.CheckConfigFile(path, []byte(text), opts); ok {
+			found = append(found, configDiags...)
 		}
 		return toProtocol(text, found)
 	}

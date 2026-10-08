@@ -34,6 +34,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 )
 
@@ -81,6 +82,9 @@ type Cluster struct {
 	RevisionApplication func(namespace, revision string) (string, error)
 	// Rollback gives an Application the spec one of its revisions recorded.
 	Rollback func(namespace, app, revision string) error
+	// ConfigTemplateSources are its config templates' CUE, for checking the
+	// Configs that name them.
+	ConfigTemplateSources []analysis.ConfigTemplate
 	// Configs lists its config templates and configs.
 	Configs func() (ConfigsResult, error)
 	// ConfigTemplate reads what a config template's form is made from.
@@ -182,6 +186,7 @@ func ConnectKubeconfig() (Cluster, error) {
 		return out, nil
 	}
 	out.Definitions = listDefinitions(cfg)
+	out.ConfigTemplateSources = listConfigTemplateSources(cfg)
 	paths, err := dc.OpenAPIV3().Paths()
 	if err != nil {
 		return out, err

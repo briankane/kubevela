@@ -35,6 +35,7 @@ import (
 	configv1alpha1 "github.com/oam-dev/kubevela/apis/config.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/config"
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
@@ -240,4 +241,53 @@ func TestServerChecksConfigTemplates(t *testing.T) {
 	require.Len(t, p.Diagnostics, 1)
 	assert.Contains(t, p.Diagnostics[0].Message, "metadata.name names the template's ConfigMap or ConfigTemplate")
 	assert.EqualValues(t, 2, p.Diagnostics[0].Range.Start.Line)
+}
+
+// Every template's source is read for checking Configs, from both storages.
+func TestReadConfigTemplateSources(t *testing.T) {
+	out, err := readConfigTemplateSources(context.Background(), configCluster(t))
+	require.NoError(t, err)
+	byName := map[string]analysis.ConfigTemplate{}
+	for _, tm := range out {
+		byName[tm.Name] = tm
+	}
+	require.Contains(t, byName, "image-registry")
+	assert.Contains(t, byName["image-registry"].CUE, "parameter")
+	assert.False(t, byName["image-registry"].Sensitive)
+	assert.True(t, byName["api-token"].Sensitive)
+	assert.Equal(t, "the cluster", byName["api-token"].Where)
+}
+
+// A Config is checked against the template it names, the workspace's or the cluster's.
+func TestServerChecksConfigs(t *testing.T) {
+	root := t.TempDir()
+	registry := strings.Replace(strings.Replace(sensitiveTemplateCUE, `"api-token"`, `"registry"`, 1), "sensitive: true", "sensitive: false", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "registry.cue"), []byte(registry), 0o600))
+	cluster := func() (Cluster, error) {
+		c, err := velaCluster()
+		c.ConfigTemplateSources = []analysis.ConfigTemplate{{Name: "api-token", Sensitive: true, Where: "the cluster", CUE: sensitiveTemplateCUE}}
+		return c, err
+	}
+	config := func(template, props string) string {
+		return "apiVersion: config.oam.dev/v1alpha1\nkind: Config\nmetadata:\n  name: ci\nspec:\n  templateRef:\n    name: " + template + "\n  properties:\n" + props
+	}
+	has := func(want string) func([]Diagnostic) bool {
+		return func(ds []Diagnostic) bool {
+			for _, d := range ds {
+				if strings.Contains(d.Message, want) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+
+	_, _, diags := openWith(t, cluster, "auto", root, "ci.yaml", config("registry", "    tokn: x\n"), has("takes no parameter tokn"))
+	assert.True(t, has("config template registry takes no parameter tokn")(diags), "%v", diags)
+
+	_, _, diags = openWith(t, cluster, "auto", root, "ci.yaml", config("api-token", "    token: x\n"), has("sensitive"))
+	assert.True(t, has("api-token is sensitive")(diags), "%v", diags)
+
+	_, _, diags = openWith(t, cluster, "auto", root, "ci.yaml", config("nope", "    token: x\n"), has("on the cluster"))
+	assert.True(t, has("no config template named nope in the workspace or on the cluster")(diags), "%v", diags)
 }

@@ -69,11 +69,13 @@ type indexed struct {
 	name, defType string
 	packages      []cuexruntime.Package
 	crds          [][]byte
+	// configTemplate is the config template the file holds, if any.
+	configTemplate *analysis.ConfigTemplate
 }
 
 // contributes reports whether a file adds anything to the index.
 func (e indexed) contributes() bool {
-	return e.published != nil || e.name != "" || len(e.packages) > 0 || len(e.crds) > 0
+	return e.published != nil || e.name != "" || len(e.packages) > 0 || len(e.crds) > 0 || e.configTemplate != nil
 }
 
 // indexFile reads what a file contributes to the index, from src, or from
@@ -121,6 +123,9 @@ func readIndexed(path string, src []byte) indexed {
 		}
 	case strings.HasSuffix(path, ".cue") && !utils.IsCUETestFile(path):
 		out.name, out.defType, _ = analysis.DefinitionHeader(path, src)
+		if name, sensitive, ok := analysis.ConfigTemplateHeader(path, src); ok {
+			out.configTemplate = &analysis.ConfigTemplate{Name: name, Sensitive: sensitive, Where: "the workspace", Path: path, CUE: string(src)}
+		}
 		out.path, out.src = path, src
 	}
 	return out
@@ -208,6 +213,11 @@ func (s *Server) record(path string, entry indexed) {
 	} else {
 		delete(s.packages, path)
 	}
+	if entry.configTemplate != nil {
+		s.configTemplates[path] = *entry.configTemplate
+	} else {
+		delete(s.configTemplates, path)
+	}
 	_, hadCRDs := s.crds[path]
 	if len(entry.crds) > 0 {
 		s.crds[path] = entry.crds
@@ -246,6 +256,31 @@ func (s *Server) rebuildExternals() {
 	s.externals = analysis.NewExternals(all)
 }
 
+// configTemplateSet is every config template a Config may name, by name:
+// the workspace's, the first by path where two share a name, then the
+// cluster's the workspace does not define.
+func (s *Server) configTemplateSet(withCluster bool) map[string]analysis.ConfigTemplate {
+	paths := make([]string, 0, len(s.configTemplates))
+	for p := range s.configTemplates {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	out := map[string]analysis.ConfigTemplate{}
+	for _, p := range paths {
+		if t := s.configTemplates[p]; out[t.Name].Name == "" {
+			out[t.Name] = t
+		}
+	}
+	if withCluster {
+		for _, t := range s.clusterConfigTemplates {
+			if out[t.Name].Name == "" {
+				out[t.Name] = t
+			}
+		}
+	}
+	return out
+}
+
 // definitionEntry is a definition the workspace holds.
 type definitionEntry struct{ name, defType string }
 
@@ -265,11 +300,14 @@ func (s *Server) options() analysis.Options {
 	for uri, text := range s.docs {
 		open[uri] = text
 	}
+	clusterRead := s.clusterEnabled && s.cluster != nil && s.cluster.err == nil && s.cluster.vela
 	return analysis.Options{
-		Kinds:        s.kinds,
-		Externals:    s.externals,
-		Applications: appDefinitions{s: s},
-		ClusterRead:  s.clusterEnabled && s.cluster != nil && s.cluster.vela && s.clusterDefs != nil,
+		Kinds:                      s.kinds,
+		Externals:                  s.externals,
+		Applications:               appDefinitions{s: s},
+		ClusterRead:                clusterRead && s.clusterDefs != nil,
+		ConfigTemplates:            s.configTemplateSet(clusterRead),
+		ConfigTemplatesFromCluster: clusterRead,
 		Definitions: func(name string) (string, []byte, bool) {
 			path, ok := byName[name]
 			if !ok {
@@ -521,6 +559,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 	}
 	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties}
 	s.clusterPackages = pkgs
+	s.clusterConfigTemplates = c.ConfigTemplateSources
 	s.clusterDefs = nil
 	if len(c.Definitions) > 0 {
 		s.clusterDefs = newClusterDefinitions(c.Definitions)
@@ -532,7 +571,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 	if s.cluster.vela {
 		s.rebuildKinds()
 	}
-	return s.cluster.vela || len(pkgs) > 0 || s.clusterDefs != nil
+	return s.cluster.vela || len(pkgs) > 0 || s.clusterDefs != nil || len(c.ConfigTemplateSources) > 0
 }
 
 // rebuildKinds builds the schemas outputs are checked against: Kubernetes'

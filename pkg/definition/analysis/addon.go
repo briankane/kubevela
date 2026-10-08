@@ -865,21 +865,7 @@ func CheckConfigTemplateFile(path string, src []byte) ([]Diagnostic, bool) {
 	if err != nil {
 		return nil, false
 	}
-	var headers []*ast.Field
-	template := false
-	for _, decl := range f.Decls {
-		if x, ok := decl.(*ast.Field); ok {
-			if _, ok := x.Value.(*ast.StructLit); !ok {
-				continue
-			}
-			if labelName(x.Label) == templateLabel {
-				template = true
-			} else {
-				headers = append(headers, x)
-			}
-		}
-	}
-	if !template || !isConfigTemplate(headers) {
+	if _, ok := configTemplateFields(f); !ok {
 		return nil, false
 	}
 	d := &document{path: path, src: src}

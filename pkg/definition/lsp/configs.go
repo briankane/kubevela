@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +36,7 @@ import (
 	configv1alpha1 "github.com/oam-dev/kubevela/apis/config.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/config"
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
@@ -311,4 +313,37 @@ func (s *Server) configRequest(msg message) *ResponseError {
 		})
 	}()
 	return nil
+}
+
+// listConfigTemplateSources reads the source of every config template on the
+// cluster, ConfigTemplate resources first, compiling none. One that cannot be
+// listed is passed over.
+func listConfigTemplateSources(cfg *rest.Config) []analysis.ConfigTemplate {
+	out, _ := withConfigClient(cfg, readConfigTemplateSources)
+	return out
+}
+
+// readConfigTemplateSources reads the source of every config template.
+func readConfigTemplateSources(ctx context.Context, cli ctrlclient.Client) ([]analysis.ConfigTemplate, error) {
+	var out []analysis.ConfigTemplate
+	seen := map[string]bool{}
+	var crs configv1alpha1.ConfigTemplateList
+	if err := cli.List(ctx, &crs); err == nil {
+		for _, ct := range crs.Items {
+			seen[ct.Namespace+"/"+ct.Name] = true
+			out = append(out, analysis.ConfigTemplate{Name: ct.Name, Sensitive: ct.Spec.Sensitive, Where: "the cluster", CUE: ct.Spec.Template})
+		}
+	}
+	var cms corev1.ConfigMapList
+	if err := cli.List(ctx, &cms, ctrlclient.MatchingLabels{types.LabelConfigCatalog: types.VelaCoreConfig}); err != nil {
+		return out, err
+	}
+	for _, cm := range cms.Items {
+		name := strings.TrimPrefix(cm.Name, config.TemplateConfigMapNamePrefix)
+		if name == cm.Name || seen[cm.Namespace+"/"+name] || cm.Data[config.SaveTemplateKey] == "" {
+			continue
+		}
+		out = append(out, analysis.ConfigTemplate{Name: name, Sensitive: cm.Annotations[types.AnnotationConfigSensitive] == "true", Where: "the cluster", CUE: cm.Data[config.SaveTemplateKey]})
+	}
+	return out, nil
 }

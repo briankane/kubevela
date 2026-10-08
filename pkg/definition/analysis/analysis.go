@@ -132,6 +132,12 @@ type Options struct {
 	// ClusterRead is set when the cluster's definitions are among them, so a
 	// type none has is an error rather than one the cluster may have.
 	ClusterRead bool
+	// ConfigTemplates are the config templates a Config may name, by name:
+	// the workspace's, and the cluster's it does not define.
+	ConfigTemplates map[string]ConfigTemplate
+	// ConfigTemplatesFromCluster is set when the cluster's config templates
+	// are among them.
+	ConfigTemplatesFromCluster bool
 }
 
 // Analyze checks the definition in src, read from path.
