@@ -64,6 +64,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/gen_sdk"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
+	"github.com/oam-dev/kubevela/pkg/definition/lsp"
 	"github.com/oam-dev/kubevela/pkg/definition/nsrestrict"
 	"github.com/oam-dev/kubevela/pkg/utils"
 	addonutil "github.com/oam-dev/kubevela/pkg/utils/addon"
@@ -300,6 +301,9 @@ const FlagVariant = "variant"
 // FlagExtends is the flag naming the definition a new one extends
 const FlagExtends = "extends"
 
+// FlagWorkspace is the folders vela def init finds the definition --extends names in.
+const FlagWorkspace = "workspace"
+
 // NewDefinitionInitCommand create the `vela def init` command to help user initialize a definition locally
 func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 	cmd := &cobra.Command{
@@ -465,12 +469,32 @@ func NewDefinitionInitCommand(_ common.Args) *cobra.Command {
 	cmd.Flags().BoolP(FlagInteractive, "i", false, "Specify whether use interactive process to help generate definitions.")
 	cmd.Flags().StringP(FlagLang, "l", "cue", "Specify the language of the definition. Valid options: cue, go")
 	cmd.Flags().String(FlagExtends, "", "Specify the definition the new one extends, such as webservice: it passes its properties through $super and takes its parent's output. Components and traits only.")
+	cmd.Flags().StringSlice(FlagWorkspace, nil, "The folders the definition --extends names is found in, besides KubeVela's own. Defaults to the current directory.")
 	cmd.Flags().String(FlagVariant, "", "Specify the variant of the definition type to scaffold: patch (default) or outputs for a trait, standard (default) or application for a policy.")
 	cmd.Flags().StringP(FlagProvider, "p", "", "Specify which provider the cloud resource definition belongs to. Only `alibaba`, `aws`, `azure`, `gcp`, `baidu`, `tencent`, `elastic`, `ucloud`, `vsphere` are supported.")
 	cmd.Flags().StringP(FlagGit, "", "", "Specify which git repository the configuration(HCL) is stored in. Valid when --provider/-p is set.")
 	cmd.Flags().StringP(FlagLocal, "", "", "Specify the local path of the configuration(HCL) file. Valid when --provider/-p is set.")
 	cmd.Flags().StringP(FlagPath, "", "", "Specify which path the configuration(HCL) is stored in the Git repository. Valid when --git is set.")
 	return cmd
+}
+
+// initWorkspaceOptions are what the definitions of vela def init's
+// --workspace offer, the current directory when none is named; none where it
+// cannot be read.
+func initWorkspaceOptions(cmd *cobra.Command) analysis.Options {
+	folders, _ := cmd.Flags().GetStringSlice(FlagWorkspace)
+	if len(folders) == 0 {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return analysis.Options{}
+		}
+		folders = []string{cwd}
+	}
+	opts, err := lsp.WorkspaceOptions(folders)
+	if err != nil {
+		return analysis.Options{}
+	}
+	return opts
 }
 
 // defaultSpec is the spec `vela def init` scaffolds a definition of kind
@@ -489,10 +513,10 @@ func defaultSpec(cmd *cobra.Command, kind string) (map[string]interface{}, error
 		if err != nil {
 			return nil, err
 		}
-		// A parent among KubeVela's own has its required properties passed
-		// through, each a parameter of the new definition.
+		// A parent in the workspace, or among KubeVela's own, has its required
+		// properties passed through, each a parameter of the new definition.
 		defType := map[string]string{v1beta1.ComponentDefinitionKind: "component", v1beta1.TraitDefinitionKind: "trait"}[kind]
-		if tmpl, ok := analysis.SuperPassThrough(extends, defType, analysis.Options{}); ok {
+		if tmpl, ok := analysis.SuperPassThrough(extends, defType, initWorkspaceOptions(cmd)); ok {
 			spec["schematic"] = map[string]interface{}{"cue": map[string]interface{}{"template": tmpl}}
 		}
 		return spec, nil

@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/lsp"
 )
 
 // Every definition vela def init scaffolds analyses without an error, so a
@@ -104,6 +105,27 @@ func TestDefinitionInitExtends(t *testing.T) {
 	initCommand(cmd)
 	cmd.SetArgs([]string{"x", "-t", "policy", "--extends", "webservice", "-o", filepath.Join(t.TempDir(), "x.cue")})
 	assert.Error(t, cmd.Execute(), "only components and traits extend")
+}
+
+// A parent in the workspace has its required properties passed through, as
+// a built-in one does: the new definition checks clean against it.
+func TestDefinitionInitExtendsAWorkspaceParent(t *testing.T) {
+	ws := t.TempDir()
+	parent := "\"web\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\toutput: {apiVersion: \"apps/v1\", kind: \"Deployment\"}\n\tparameter: {\n\t\t// +usage=Image to run\n\t\timage: string\n\t\tport: *80 | int\n\t}\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(ws, "web.cue"), []byte(parent), 0o600))
+	out := filepath.Join(ws, "tenant-web.cue")
+	cmd := NewDefinitionInitCommand(initArgs())
+	initCommand(cmd)
+	cmd.SetArgs([]string{"tenant-web", "-t", "component", "--extends", "web", "--workspace", ws, "-o", out})
+	require.NoError(t, cmd.Execute())
+	src, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Contains(t, string(src), "image: parameter.image", "the workspace's web requires image")
+	findings, _, err := lsp.Check([]string{out}, lsp.CheckOptions{Workspace: []string{ws}})
+	require.NoError(t, err)
+	for _, f := range findings {
+		assert.NotEqual(t, lsp.FindingError, f.Severity, f.Message)
+	}
 }
 
 // A Go definition made in a package of a module is of that package and

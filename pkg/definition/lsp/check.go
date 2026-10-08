@@ -19,6 +19,8 @@ package lsp
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 )
 
 // Finding is what a check found in a file, for a command line: its line
@@ -135,4 +137,24 @@ func findingSeverity(s DiagnosticSeverity) string {
 		return FindingInfo
 	}
 	return FindingInfo
+}
+
+// WorkspaceOptions are what the definitions under folders offer the checks,
+// as Check reads them: for a tool that writes a definition against them, as
+// vela def init does one extending another.
+func WorkspaceOptions(folders []string) (analysis.Options, error) {
+	abs, err := absolute(folders)
+	if err != nil {
+		return analysis.Options{}, err
+	}
+	s := NewServer()
+	s.folders = abs
+	found, _ := walkWorkspace(abs)
+	for path, entry := range found {
+		entry.evaluate()
+		if entry.contributes() {
+			s.record(path, entry)
+		}
+	}
+	return s.options(), nil
 }
