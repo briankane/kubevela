@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -226,4 +227,17 @@ func TestConfigRequests(t *testing.T) {
 	off.response(off.send("initialize", map[string]interface{}{}, true))
 	m := off.response(off.send(MethodConfigs, struct{}{}, true))
 	assert.Contains(t, string(m["error"]), "the cluster was not reached")
+}
+
+// A config template anywhere in the workspace is checked as one.
+func TestServerChecksConfigTemplates(t *testing.T) {
+	c := newClient(t)
+	text := strings.Replace(sensitiveTemplateCUE, `"api-token"`, `"API_Token"`, 1)
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{
+		URI: "file:///x/token.cue", LanguageID: "cue", Version: 1, Text: text,
+	}}, false)
+	p := c.diagnostics()
+	require.Len(t, p.Diagnostics, 1)
+	assert.Contains(t, p.Diagnostics[0].Message, "metadata.name names the template's ConfigMap or ConfigTemplate")
+	assert.EqualValues(t, 2, p.Diagnostics[0].Range.Start.Line)
 }

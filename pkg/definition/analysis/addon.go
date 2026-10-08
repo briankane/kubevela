@@ -857,6 +857,38 @@ func secretSchema() string {
 	return secretCUE
 }
 
+// CheckConfigTemplateFile checks a config template outside an addon, as vela
+// config-template apply reads it. It is false for a file that is not one: a
+// metadata and a template struct, and no definition header.
+func CheckConfigTemplateFile(path string, src []byte) ([]Diagnostic, bool) {
+	f, err := parser.ParseFile(path, src, parser.ParseComments)
+	if err != nil {
+		return nil, false
+	}
+	var headers []*ast.Field
+	template := false
+	for _, decl := range f.Decls {
+		if x, ok := decl.(*ast.Field); ok {
+			if _, ok := x.Value.(*ast.StructLit); !ok {
+				continue
+			}
+			if labelName(x.Label) == templateLabel {
+				template = true
+			} else {
+				headers = append(headers, x)
+			}
+		}
+	}
+	if !template || !isConfigTemplate(headers) {
+		return nil, false
+	}
+	d := &document{path: path, src: src}
+	return sortDiagnostics(firstPerPosition(d.checkConfigTemplate())), true
+}
+
+// dnsLabel is what a Kubernetes object name that is also a label value may be.
+var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
 // checkConfigTemplate checks a config template as pkg/config parses it.
 func (d *document) checkConfigTemplate() []Diagnostic {
 	if diags, ok := d.parse(); !ok {
@@ -872,6 +904,9 @@ func (d *document) checkConfigTemplate() []Diagnostic {
 		return diags
 	}
 	diags = append(diags, d.requireFields("a config template is read from metadata and template", "metadata", "template")...)
+	if name, err := v.LookupPath(cue.ParsePath("metadata.name")).String(); err == nil && (len(name) > 63 || !dnsLabel.MatchString(name)) {
+		diags = append(diags, d.at(d.fieldPos([]string{"metadata", "name"}), "metadata.name names the template's ConfigMap or ConfigTemplate: lower case letters, digits and hyphens, at most 63"))
+	}
 	if d.declares([]string{"template"}) {
 		diags = append(diags, d.requireFields("it is the form a config is created from", "template.parameter")...)
 	}

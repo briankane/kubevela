@@ -654,6 +654,9 @@ func diagnoseUnguarded(uri, text string, opts analysis.Options) []Diagnostic {
 	if addonFile {
 		return toProtocol(text, found)
 	}
+	if ct, ok := analysis.CheckConfigTemplateFile(path, []byte(text)); ok {
+		return toProtocol(text, ct)
+	}
 	res := analysis.AnalyzeWith(path, []byte(text), opts)
 	diags := make([]Diagnostic, 0, len(res.Diagnostics))
 	for _, d := range res.Diagnostics {
