@@ -67,10 +67,10 @@ type Cluster struct {
 	Resource func(cluster, apiVersion, kind, namespace, name string) (string, error)
 	// Events calls each with every event in a namespace as they change,
 	// until ctx is done.
-	Events func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured))
+	Events func(ctx context.Context, cluster, namespace string, each func([]*unstructured.Unstructured))
 	// Logs calls each with the lines the workloads' pods write, until ctx is
 	// done.
-	Logs func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine))
+	Logs func(ctx context.Context, cluster, namespace string, workloads []LogWorkload, each func([]LogLine))
 	// UISchema reads a definition's UI schema, by its ConfigMap's name.
 	UISchema func(name string) (string, error)
 	// Applications calls each with every Application on the cluster as they
@@ -156,11 +156,11 @@ func ConnectKubeconfig() (Cluster, error) {
 	out.Resource = func(cluster, apiVersion, kind, namespace, name string) (string, error) {
 		return readResource(clusterConfig(cfg, cluster), apiVersion, kind, namespace, name)
 	}
-	out.Events = func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured)) {
-		watchEvents(ctx, cfg, namespace, each)
+	out.Events = func(ctx context.Context, cluster, namespace string, each func([]*unstructured.Unstructured)) {
+		watchEvents(ctx, clusterConfig(cfg, cluster), namespace, each)
 	}
-	out.Logs = func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine)) {
-		followLogs(ctx, cfg, namespace, workloads, each)
+	out.Logs = func(ctx context.Context, cluster, namespace string, workloads []LogWorkload, each func([]LogLine)) {
+		followLogs(ctx, clusterConfig(cfg, cluster), namespace, workloads, each)
 	}
 	out.UISchema = func(name string) (string, error) {
 		return readUISchema(cfg, name)

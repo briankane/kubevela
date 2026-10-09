@@ -502,8 +502,8 @@ type clusterState struct {
 	revision   func(namespace, app, typ, name string) (*unstructured.Unstructured, string, error)
 	watch      func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
 	resource   func(cluster, apiVersion, kind, namespace, name string) (string, error)
-	events     func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured))
-	logs       func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine))
+	events     func(ctx context.Context, cluster, namespace string, each func([]*unstructured.Unstructured))
+	logs       func(ctx context.Context, cluster, namespace string, workloads []LogWorkload, each func([]LogLine))
 	uiSchema   func(name string) (string, error)
 	// applications watches every Application on the cluster.
 	applications func(ctx context.Context, each func([]*unstructured.Unstructured))

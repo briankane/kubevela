@@ -33,6 +33,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
+
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 )
 
 // MethodWatchLogs starts sending the logs of an Application's pods as they
@@ -54,6 +56,8 @@ type LogWorkload struct {
 	// Namespace is the workload's, where a policy put it in another than
 	// the Application's.
 	Namespace string `json:"namespace,omitempty"`
+	// Cluster is the member cluster it is on; none for the hub.
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // WatchLogsParams name the Application, and the workloads it applied.
@@ -70,6 +74,8 @@ type LogLine struct {
 	Container string `json:"container"`
 	Component string `json:"component,omitempty"`
 	Text      string `json:"text"`
+	// Cluster is the member cluster the pod is on; none for the hub.
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // LogsWritten are lines an Application's pods wrote since the last.
@@ -256,11 +262,26 @@ func (s *Server) startLogsWatch(p WatchLogsParams) *ResponseError {
 	}
 	s.watches[key] = cancel
 	followFn := s.cluster.logs
-	go followFn(ctx, p.Namespace, p.Workloads, func(lines []LogLine) {
-		if ctx.Err() != nil {
-			return
+	byCluster := map[string][]LogWorkload{}
+	for _, w := range p.Workloads {
+		cluster := w.Cluster
+		if cluster == "" {
+			cluster = pkgmulticluster.Local
 		}
-		_ = s.write(message{JSONRPC: "2.0", Method: MethodLogs, Params: mustJSON(LogsWritten{Namespace: p.Namespace, Application: p.Application, Lines: lines})})
-	})
+		byCluster[cluster] = append(byCluster[cluster], w)
+	}
+	for cluster, workloads := range byCluster {
+		go followFn(ctx, cluster, p.Namespace, workloads, func(lines []LogLine) {
+			if ctx.Err() != nil {
+				return
+			}
+			if cluster != pkgmulticluster.Local {
+				for i := range lines {
+					lines[i].Cluster = cluster
+				}
+			}
+			_ = s.write(message{JSONRPC: "2.0", Method: MethodLogs, Params: mustJSON(LogsWritten{Namespace: p.Namespace, Application: p.Application, Lines: lines})})
+		})
+	}
 	return nil
 }

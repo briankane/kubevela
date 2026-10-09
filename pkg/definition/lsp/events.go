@@ -20,6 +20,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,6 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 )
 
 // MethodWatchEvents starts sending an Application's events as they change,
@@ -48,6 +51,9 @@ type WatchEventsParams struct {
 	Namespace   string   `json:"namespace"`
 	Application string   `json:"application"`
 	Names       []string `json:"names,omitempty"`
+	// Clusters are the member clusters it applied resources on, whose events
+	// are watched beside the hub's.
+	Clusters []string `json:"clusters,omitempty"`
 }
 
 // EventsChanged are an Application's events, newest first.
@@ -65,6 +71,8 @@ type EventView struct {
 	Object  string `json:"object"`
 	Count   int64  `json:"count"`
 	Last    string `json:"last"`
+	// Cluster is the member cluster it happened on; none for the hub.
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // maxEvents is the most events sent at once: the newest.
@@ -207,14 +215,46 @@ func (s *Server) startEventsWatch(p WatchEventsParams) *ResponseError {
 	s.watches[key] = cancel
 	names := append([]string{p.Application}, p.Names...)
 	watchFn := s.cluster.events
-	go watchFn(ctx, p.Namespace, func(all []*unstructured.Unstructured) {
-		if ctx.Err() != nil {
-			return
-		}
-		change := EventsChanged{Namespace: p.Namespace, Application: p.Application, Events: eventsOf(all, names)}
-		_ = s.write(message{JSONRPC: "2.0", Method: MethodEventsChanged, Params: mustJSON(change)})
-	})
+	var mu sync.Mutex
+	latest := map[string][]EventView{}
+	for _, cluster := range append([]string{pkgmulticluster.Local}, p.Clusters...) {
+		go watchFn(ctx, cluster, p.Namespace, func(all []*unstructured.Unstructured) {
+			if ctx.Err() != nil {
+				return
+			}
+			views := eventsOf(all, names)
+			if cluster != pkgmulticluster.Local {
+				for i := range views {
+					views[i].Cluster = cluster
+				}
+			}
+			mu.Lock()
+			latest[cluster] = views
+			merged := mergeEvents(latest)
+			mu.Unlock()
+			change := EventsChanged{Namespace: p.Namespace, Application: p.Application, Events: merged}
+			_ = s.write(message{JSONRPC: "2.0", Method: MethodEventsChanged, Params: mustJSON(change)})
+		})
+	}
 	return nil
+}
+
+// mergeEvents are each cluster's events as one list, newest first.
+func mergeEvents(byCluster map[string][]EventView) []EventView {
+	clusters := make([]string, 0, len(byCluster))
+	for c := range byCluster {
+		clusters = append(clusters, c)
+	}
+	sort.Strings(clusters)
+	out := []EventView{}
+	for _, c := range clusters {
+		out = append(out, byCluster[c]...)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Last > out[j].Last })
+	if len(out) > maxEvents {
+		out = out[:maxEvents]
+	}
+	return out
 }
 
 // stopKey ends the watch under key, if there is one.

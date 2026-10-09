@@ -52,12 +52,16 @@ func TestEventMatches(t *testing.T) {
 func TestWatchEvents(t *testing.T) {
 	cluster := func() (Cluster, error) {
 		c, err := velaCluster()
-		c.Events = func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured)) {
-			each([]*unstructured.Unstructured{
-				event("Application", "shop", "Normal", "Parsed", "Parsed successfully", "2026-10-07T18:43:05Z"),
-				event("Pod", "web-1", "Warning", "BackOff", "Back-off restarting", "2026-10-07T18:44:00Z"),
-				event("Pod", "other", "Normal", "Started", "", "2026-10-07T18:45:00Z"),
-			})
+		c.Events = func(ctx context.Context, cluster, namespace string, each func([]*unstructured.Unstructured)) {
+			if cluster == "eu-1" {
+				each([]*unstructured.Unstructured{event("Pod", "web-7", "Warning", "Failed", "ImagePullBackOff", "2026-10-07T18:50:00Z")})
+			} else {
+				each([]*unstructured.Unstructured{
+					event("Application", "shop", "Normal", "Parsed", "Parsed successfully", "2026-10-07T18:43:05Z"),
+					event("Pod", "web-1", "Warning", "BackOff", "Back-off restarting", "2026-10-07T18:44:00Z"),
+					event("Pod", "other", "Normal", "Started", "", "2026-10-07T18:45:00Z"),
+				})
+			}
 			<-ctx.Done()
 		}
 		return c, err
@@ -68,22 +72,24 @@ func TestWatchEvents(t *testing.T) {
 	c.send("initialized", map[string]interface{}{}, false)
 	clusterStatus(t, c)
 
-	m := c.response(c.send(MethodWatchEvents, WatchEventsParams{Namespace: "default", Application: "shop", Names: []string{"shop", "web"}}, true))
+	m := c.response(c.send(MethodWatchEvents, WatchEventsParams{Namespace: "default", Application: "shop", Names: []string{"shop", "web"}, Clusters: []string{"eu-1"}}, true))
 	require.Empty(t, string(m["error"]))
 	var got EventsChanged
-	for {
+	for len(got.Events) < 3 {
 		n, ok := c.tryRead(5 * time.Second)
-		require.True(t, ok, "no events")
+		require.True(t, ok, "no events from both clusters")
 		if string(n["method"]) == `"`+MethodEventsChanged+`"` {
 			require.NoError(t, json.Unmarshal(n["params"], &got))
-			break
 		}
 	}
 	assert.Equal(t, "shop", got.Application)
-	require.Len(t, got.Events, 2, "the other pod's is not the Application's")
-	assert.Equal(t, "BackOff", got.Events[0].Reason, "newest first")
-	assert.Equal(t, "Warning", got.Events[0].Type)
-	assert.Equal(t, "Pod/web-1", got.Events[0].Object)
-	assert.Equal(t, int64(2), got.Events[0].Count)
+	require.Len(t, got.Events, 3, "the other pod's is not the Application's")
+	assert.Equal(t, "Failed", got.Events[0].Reason, "newest first, whichever cluster")
+	assert.Equal(t, "eu-1", got.Events[0].Cluster)
+	assert.Equal(t, "BackOff", got.Events[1].Reason)
+	assert.Equal(t, "", got.Events[1].Cluster, "the hub's is not marked")
+	assert.Equal(t, "Warning", got.Events[1].Type)
+	assert.Equal(t, "Pod/web-1", got.Events[1].Object)
+	assert.Equal(t, int64(2), got.Events[1].Count)
 	c.response(c.send(MethodUnwatchEvents, WatchEventsParams{Namespace: "default", Application: "shop"}, true))
 }

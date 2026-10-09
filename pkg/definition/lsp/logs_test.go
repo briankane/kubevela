@@ -53,9 +53,9 @@ func TestPodSelector(t *testing.T) {
 func TestWatchLogs(t *testing.T) {
 	cluster := func() (Cluster, error) {
 		c, err := velaCluster()
-		c.Logs = func(ctx context.Context, namespace string, workloads []LogWorkload, each func([]LogLine)) {
+		c.Logs = func(ctx context.Context, cluster, namespace string, workloads []LogWorkload, each func([]LogLine)) {
 			if len(workloads) == 1 && workloads[0].Name == "web" {
-				each([]LogLine{{Pod: "web-1", Container: "web", Component: "web", Text: "listening on :8080"}})
+				each([]LogLine{{Pod: "web-1", Container: "web", Component: "web", Text: "listening on :8080 in " + cluster}})
 			}
 			<-ctx.Done()
 		}
@@ -67,19 +67,24 @@ func TestWatchLogs(t *testing.T) {
 	c.send("initialized", map[string]interface{}{}, false)
 	clusterStatus(t, c)
 
-	m := c.response(c.send(MethodWatchLogs, WatchLogsParams{Namespace: "default", Application: "shop", Workloads: []LogWorkload{{APIVersion: "apps/v1", Kind: "Deployment", Name: "web"}}}, true))
+	web := LogWorkload{APIVersion: "apps/v1", Kind: "Deployment", Name: "web"}
+	spoke := web
+	spoke.Cluster = "eu-1"
+	m := c.response(c.send(MethodWatchLogs, WatchLogsParams{Namespace: "default", Application: "shop", Workloads: []LogWorkload{web, spoke}}, true))
 	require.Empty(t, string(m["error"]))
-	for {
+	got := map[string]string{}
+	for len(got) < 2 {
 		n, ok := c.tryRead(5 * time.Second)
-		require.True(t, ok, "no logs")
+		require.True(t, ok, "no logs from both clusters")
 		if string(n["method"]) == `"`+MethodLogs+`"` {
-			var got LogsWritten
-			require.NoError(t, json.Unmarshal(n["params"], &got))
-			assert.Equal(t, "shop", got.Application)
-			require.Len(t, got.Lines, 1)
-			assert.Equal(t, "listening on :8080", got.Lines[0].Text)
-			break
+			var w LogsWritten
+			require.NoError(t, json.Unmarshal(n["params"], &w))
+			assert.Equal(t, "shop", w.Application)
+			for _, l := range w.Lines {
+				got[l.Cluster] = l.Text
+			}
 		}
 	}
+	assert.Equal(t, map[string]string{"": "listening on :8080 in local", "eu-1": "listening on :8080 in eu-1"}, got, "each cluster's workloads followed there, a member's lines marked")
 	c.response(c.send(MethodUnwatchLogs, WatchLogsParams{Namespace: "default", Application: "shop"}, true))
 }
