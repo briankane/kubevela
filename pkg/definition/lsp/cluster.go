@@ -272,7 +272,7 @@ func getDefinition(cfg *rest.Config, kind, name string) (*unstructured.Unstructu
 }
 
 // appDefinitionKinds are the kinds of definition an Application names.
-var appDefinitionKinds = []string{"ComponentDefinition", "TraitDefinition", "PolicyDefinition", "WorkflowStepDefinition"}
+var appDefinitionKinds = []string{"ComponentDefinition", "TraitDefinition", "PolicyDefinition", "WorkflowStepDefinition", "SourceDefinition"}
 
 // listDefinitions are the cluster's definitions of the kinds an Application
 // names, in every namespace; a kind it cannot list is passed over.
@@ -281,6 +281,11 @@ func listDefinitions(cfg *rest.Config) []unstructured.Unstructured {
 	if err != nil {
 		return nil
 	}
+	return listDefinitionsWith(client)
+}
+
+// listDefinitionsWith is listDefinitions through client.
+func listDefinitionsWith(client dynamic.Interface) []unstructured.Unstructured {
 	var out []unstructured.Unstructured
 	for _, kind := range appDefinitionKinds {
 		ctx, cancel := context.WithTimeout(context.Background(), clusterTimeout)
