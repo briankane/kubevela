@@ -272,6 +272,8 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 		}
 	case MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames:
 		result, rerr = s.newConfigRequest(msg)
+	case MethodFeatureGates:
+		result = FeatureGatesResult{Gates: featureGateDocs}
 	case MethodNewPackage:
 		var p NewPackageParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -517,7 +519,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames:
+	case MethodPreviewOutput, MethodPreviewValues, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

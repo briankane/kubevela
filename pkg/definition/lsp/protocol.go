@@ -188,7 +188,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 6
+const VelaProtocol = 7
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
