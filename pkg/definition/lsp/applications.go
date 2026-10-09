@@ -28,6 +28,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 
+	wfTypes "github.com/kubevela/workflow/pkg/types"
+
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
 
@@ -63,7 +65,8 @@ type AppSummary struct {
 	Finished   bool `json:"finished,omitempty"`
 	Deleting   bool `json:"deleting,omitempty"`
 	// Step is the step that failed, else the one waiting, else the one
-	// running, and StepPhase its phase.
+	// running, and StepPhase its phase. A step stopped by terminating the
+	// workflow is not one that failed.
 	Step      string `json:"step,omitempty"`
 	StepPhase string `json:"stepPhase,omitempty"`
 	Message   string `json:"message,omitempty"`
@@ -99,7 +102,7 @@ func summarize(app *unstructured.Unstructured) AppSummary {
 	for _, phase := range []string{"failed", "suspending", "running"} {
 		for _, s := range steps {
 			m, _ := s.(map[string]interface{})
-			if m["phase"] == phase {
+			if m["phase"] == phase && m["reason"] != wfTypes.StatusReasonTerminate {
 				out.Step, _ = m["name"].(string)
 				out.StepPhase = phase
 				return out

@@ -57,6 +57,16 @@ func TestSummarize(t *testing.T) {
 				"workflow":{"message":"boom","steps":[{"name":"a","phase":"failed"},{"name":"b","phase":"pending"}]}}}`,
 			want: AppSummary{Namespace: "x", Name: "f", Phase: "runningWorkflow", Step: "a", StepPhase: "failed", Message: "boom"},
 		},
+		"a step failed after its retries, which terminated the workflow": {
+			app: `{"metadata":{"name":"f","namespace":"x"},"status":{"status":"workflowTerminated",
+				"workflow":{"terminated":true,"message":"boom","steps":[{"name":"a","phase":"failed","reason":"FailedAfterRetries"}]}}}`,
+			want: AppSummary{Namespace: "x", Name: "f", Phase: "workflowTerminated", Terminated: true, Step: "a", StepPhase: "failed", Message: "boom"},
+		},
+		"terminated by hand, its running step stopped": {
+			app: `{"metadata":{"name":"t","namespace":"x"},"status":{"status":"workflowTerminated",
+				"workflow":{"terminated":true,"steps":[{"name":"a","phase":"succeeded"},{"name":"b","phase":"failed","reason":"Terminate"}]}}}`,
+			want: AppSummary{Namespace: "x", Name: "t", Phase: "workflowTerminated", Terminated: true},
+		},
 		"healthy and done, an addon's": {
 			app: `{"metadata":{"name":"addon-x","namespace":"vela-system","labels":{"addons.oam.dev/name":"x"}},"status":{"status":"running",
 				"services":[{"name":"c","healthy":true}],"workflow":{"finished":true,"steps":[{"name":"c","phase":"succeeded"}]}}}`,
