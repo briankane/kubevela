@@ -258,6 +258,20 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 				result = e
 			}
 		}
+	case MethodMoveToTrait:
+		var p MoveToTraitParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			edits, trait, err := analysis.MoveToTrait(pathOf(p.TextDocument.URI), p.Text, p.Parameter, p.Trait)
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				changes := make([]TextEdit, 0, len(edits))
+				for _, e := range edits {
+					changes = append(changes, TextEdit{Range: protocolRange(p.Text, e.Range), NewText: e.NewText})
+				}
+				result = MoveToTraitResult{Edits: changes, Trait: trait}
+			}
+		}
 	case MethodCRDFields:
 		var p CRDParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -592,7 +606,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
+	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodMoveToTrait, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

@@ -94,6 +94,10 @@ func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 			}
 			actions = append(actions, CodeAction{Title: f.Title, Kind: "refactor.extract", Edit: &WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}}})
 		}
+		if name, ok := analysis.MoveToTraitAt(pathOf(p.TextDocument.URI), text, byteOffset(text, p.Range.Start)); ok {
+			title := "Move " + name + " to a trait"
+			actions = append(actions, CodeAction{Title: title, Kind: "refactor.move", Command: &Command{Title: title, Command: analysis.MoveToTraitCommand, Arguments: []interface{}{p.TextDocument.URI, name}}})
+		}
 		return actions, nil
 	case "textDocument/definition":
 		var p TextDocumentPositionParams

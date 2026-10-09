@@ -215,3 +215,26 @@ func TestMakeParameterAction(t *testing.T) {
 	assert.Equal(t, "parameter.size", edits[0].NewText)
 	assert.Contains(t, edits[1].NewText, `size: *"10Gi" | string`)
 }
+
+// On an optional parameter of a component, the actions offer to move it to a trait.
+func TestMoveToTraitAction(t *testing.T) {
+	c := newClient(t)
+	text := "\"c\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"deployments.apps\"\n}\ntemplate: {\n\toutput: {apiVersion: \"apps/v1\", kind: \"Deployment\", spec: {\n\t\treplicas: parameter.replicas\n\t}}\n\tparameter: replicas?: int\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	at := Position{Line: 8, Character: uint32(strings.Index(strings.Split(text, "\n")[8], "replicas"))}
+	m := c.response(c.send("textDocument/codeAction", CodeActionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Range: Range{Start: at, End: at}}, true))
+	var actions []CodeAction
+	require.NoError(t, json.Unmarshal(m["result"], &actions))
+	require.Len(t, actions, 1)
+	assert.Equal(t, "Move replicas to a trait", actions[0].Title)
+	require.NotNil(t, actions[0].Command)
+	assert.Equal(t, "kubevela.moveToTrait", actions[0].Command.Command)
+
+	m = c.response(c.send(MethodMoveToTrait, MoveToTraitParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: text, Parameter: "replicas", Trait: "c-replicas"}, true))
+	require.Empty(t, string(m["error"]))
+	var r MoveToTraitResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	assert.Len(t, r.Edits, 2)
+	assert.Contains(t, r.Trait, "patch: spec: replicas: parameter.replicas")
+}

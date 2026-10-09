@@ -363,6 +363,24 @@ type ComponentFromCRDResult struct {
 	Files []crdgen.File `json:"files"`
 }
 
+// MethodMoveToTrait moves a component's parameter to a new trait. It is this
+// server's own request.
+const MethodMoveToTrait = "vela/moveToTrait"
+
+// MoveToTraitParams name the component, its text, the parameter and the trait.
+type MoveToTraitParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+	Parameter    string                 `json:"parameter"`
+	Trait        string                 `json:"trait"`
+}
+
+// MoveToTraitResult are the edits to the component and the trait's file.
+type MoveToTraitResult struct {
+	Edits []TextEdit `json:"edits"`
+	Trait string     `json:"trait"`
+}
+
 // MethodPreviewValues writes a values file for a definition: its defaults
 // filled in and each required parameter named.
 const MethodPreviewValues = "vela/previewValues"
