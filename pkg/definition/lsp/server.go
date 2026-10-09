@@ -38,6 +38,7 @@ import (
 	cuexruntime "github.com/kubevela/pkg/cue/cuex/runtime"
 
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/crdgen"
 	"github.com/oam-dev/kubevela/pkg/definition/goloader"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
@@ -255,6 +256,26 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
 			} else {
 				result = e
+			}
+		}
+	case MethodCRDFields:
+		var p CRDParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			info, err := crdgen.Read([]byte(p.Text))
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = info
+			}
+		}
+	case MethodComponentFromCRD:
+		var p ComponentFromCRDParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			files, err := crdgen.GenerateWith([]byte(p.Text), p.Name, p.Choices, p.Options)
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = ComponentFromCRDResult{Files: files}
 			}
 		}
 	case MethodPreviewValues:
@@ -571,7 +592,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
+	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

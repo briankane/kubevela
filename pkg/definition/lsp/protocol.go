@@ -19,6 +19,8 @@ package lsp
 import (
 	"encoding/json"
 
+	"github.com/oam-dev/kubevela/pkg/definition/crdgen"
+
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
 )
 
@@ -332,6 +334,34 @@ type PreviewTestResult struct {
 // that each change one parameter from it. It is this server's own request;
 // the params are PreviewOutputParams and the answer a preview.Exploration.
 const MethodExplore = "vela/explore"
+
+// MethodCRDFields reads a CustomResourceDefinition: its kind, storage
+// version and spec fields, to choose what goes to a component and what to
+// traits. It is this server's own request; the answer is a crdgen.Info.
+const MethodCRDFields = "vela/crdFields"
+
+// CRDParams are a CRD's YAML or JSON.
+type CRDParams struct {
+	Text string `json:"text"`
+}
+
+// MethodComponentFromCRD makes the definitions for a CRD from the choices
+// made of its fields. It is this server's own request.
+const MethodComponentFromCRD = "vela/componentFromCRD"
+
+// ComponentFromCRDParams are the CRD, the component's name, where each field
+// goes, and the other choices.
+type ComponentFromCRDParams struct {
+	Text    string          `json:"text"`
+	Name    string          `json:"name"`
+	Choices []crdgen.Choice `json:"choices"`
+	Options crdgen.Options  `json:"options"`
+}
+
+// ComponentFromCRDResult are the files: the component first, then each trait.
+type ComponentFromCRDResult struct {
+	Files []crdgen.File `json:"files"`
+}
 
 // MethodPreviewValues writes a values file for a definition: its defaults
 // filled in and each required parameter named.

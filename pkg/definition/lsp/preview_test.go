@@ -18,12 +18,14 @@ package lsp
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/oam-dev/kubevela/pkg/definition/crdgen"
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
 )
 
@@ -110,6 +112,27 @@ func TestExplore(t *testing.T) {
 	assert.Empty(t, e.Base.Error)
 	assert.NotEmpty(t, e.Base.Objects)
 	assert.Empty(t, e.Variants, "a required string has nothing to vary")
+}
+
+func TestComponentFromCRD(t *testing.T) {
+	src, err := os.ReadFile("../crdgen/testdata/caches.yaml")
+	require.NoError(t, err)
+	c := newClient(t)
+	m := c.response(c.send(MethodCRDFields, CRDParams{Text: string(src)}, true))
+	require.Empty(t, string(m["error"]))
+	var info crdgen.Info
+	require.NoError(t, json.Unmarshal(m["result"], &info))
+	assert.Equal(t, "Cache", info.Kind)
+
+	m = c.response(c.send(MethodComponentFromCRD, ComponentFromCRDParams{Text: string(src), Name: "cache", Choices: []crdgen.Choice{{Path: []string{"resources"}, To: "trait:cache-resources"}}}, true))
+	require.Empty(t, string(m["error"]))
+	var r ComponentFromCRDResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	require.Len(t, r.Files, 2)
+	assert.Equal(t, "cache-resources.cue", r.Files[1].Name)
+
+	m = c.response(c.send(MethodCRDFields, CRDParams{Text: "kind: ConfigMap\n"}, true))
+	assert.Contains(t, string(m["error"]), "not a CustomResourceDefinition")
 }
 
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {
