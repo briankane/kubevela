@@ -91,6 +91,16 @@ func TestEvaluate(t *testing.T) {
 	assert.Equal(t, preview.Evaluation{Value: `"nginx:1.25"`, Concrete: true}, e)
 }
 
+func TestPreviewTest(t *testing.T) {
+	c := newClient(t)
+	m := c.response(c.send(MethodPreviewTest, PreviewTestParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: previewDef, Values: "parameter: {image: nginx:1.25}\n", Name: "renders nginx"}, true))
+	require.Empty(t, string(m["error"]))
+	var r PreviewTestResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	assert.Contains(t, r.Cases, `"renders nginx": test.#ComponentRender & {`)
+	assert.Contains(t, r.Cases, `image: "nginx:1.25"`)
+}
+
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {
 	c := newClient(t)
 	m := c.response(c.send(MethodPreviewOutput, PreviewOutputParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: previewDef}, true))

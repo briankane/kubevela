@@ -310,6 +310,24 @@ type EvaluateParams struct {
 	Range        Range                  `json:"range"`
 }
 
+// MethodPreviewTest is test cases that expect what a definition renders with
+// a values file, to add to its _test.cue. It is this server's own request.
+const MethodPreviewTest = "vela/previewTest"
+
+// PreviewTestParams are a definition's current text, its values file, and
+// the name the cases are given.
+type PreviewTestParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+	Values       string                 `json:"values"`
+	Name         string                 `json:"name"`
+}
+
+// PreviewTestResult is the cases, CUE.
+type PreviewTestResult struct {
+	Cases string `json:"cases"`
+}
+
 // MethodPreviewValues writes a values file for a definition: its defaults
 // filled in and each required parameter named.
 const MethodPreviewValues = "vela/previewValues"

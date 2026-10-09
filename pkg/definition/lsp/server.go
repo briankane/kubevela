@@ -237,6 +237,16 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 				result = e
 			}
 		}
+	case MethodPreviewTest:
+		var p PreviewTestParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			cases, err := preview.TestCases(context.Background(), preview.Request{Path: pathOf(p.TextDocument.URI), Source: []byte(p.Text), Values: []byte(p.Values)}, p.Name)
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = PreviewTestResult{Cases: cases}
+			}
+		}
 	case MethodPreviewValues:
 		var p PreviewValuesParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -551,7 +561,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
+	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
