@@ -316,3 +316,34 @@ func TestCompleteAFieldInScope(t *testing.T) {
 	}
 	assert.Equal(t, []string{"val"}, labels)
 }
+
+// Renaming a parameter renames the property in the workspace's Applications too.
+func TestRenameParameterAcrossApplications(t *testing.T) {
+	dir := t.TempDir()
+	def := "web: {\n\ttype: \"component\"\n\tattributes: workload: definition: {apiVersion: \"apps/v1\", kind: \"Deployment\"}\n}\ntemplate: {\n\toutput: spec: template: spec: containers: [{image: parameter.image}]\n\tparameter: image: string\n}\n"
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: shop\nspec:\n  components:\n    - name: web\n      type: web\n      properties:\n        image: nginx\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "web.cue"), []byte(def), 0o600))
+	appPath := filepath.Join(dir, "shop.yaml")
+	require.NoError(t, os.WriteFile(appPath, []byte(app), 0o600))
+	testPath := filepath.Join(dir, "web_test.cue")
+	require.NoError(t, os.WriteFile(testPath, []byte("import \"vela/test\"\n\n\"renders\": test.#ComponentRender & {\n\tdefinition: \"web\"\n\tparameter: image: \"nginx\"\n}\n"), 0o600))
+	c := newClient(t)
+	c.drain()
+	c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+	u := "file://" + filepath.Join(dir, "web.cue")
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: u, LanguageID: "cue", Version: 1, Text: def}}, false)
+	var edit WorkspaceEdit
+	for i := 0; i < 50 && len(edit.Changes) < 3; i++ {
+		m := c.response(c.send("textDocument/rename", RenameParams{TextDocument: TextDocumentIdentifier{URI: u}, Position: posOf(def, "parameter: image", len("parameter: im")), NewName: "picture"}, true))
+		require.Empty(t, string(m["error"]))
+		require.NoError(t, json.Unmarshal(m["result"], &edit))
+	}
+	require.Len(t, edit.Changes[u], 2, "the declaration and the reference")
+	appEdits := edit.Changes["file://"+appPath]
+	require.Len(t, appEdits, 1, "once the workspace is indexed")
+	assert.Equal(t, TextEdit{Range: Range{Start: Position{Line: 9, Character: 8}, End: Position{Line: 9, Character: 13}}, NewText: "picture"}, appEdits[0])
+	testEdits := edit.Changes["file://"+testPath]
+	require.Len(t, testEdits, 1, "the test case's parameter")
+	assert.Equal(t, uint32(4), testEdits[0].Range.Start.Line)
+}

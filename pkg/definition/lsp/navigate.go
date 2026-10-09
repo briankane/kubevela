@@ -137,7 +137,11 @@ func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 		for _, e := range edits {
 			changes = append(changes, TextEdit{Range: protocolRange(text, e.Range), NewText: e.NewText})
 		}
-		return WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}}, nil
+		all := map[string][]TextEdit{p.TextDocument.URI: changes}
+		for uri, edits := range s.propertyRenames(p.TextDocument.URI, text, byteOffset(text, p.Position), p.NewName) {
+			all[uri] = edits
+		}
+		return WorkspaceEdit{Changes: all}, nil
 	}
 	return nil, nil
 }
@@ -354,4 +358,51 @@ func formatEdits(text, path string) []TextEdit {
 	lines := strings.Split(text, "\n")
 	end := toProtocolPosition(text, len(lines), len(lines[len(lines)-1])+1)
 	return append(edits, TextEdit{Range: Range{End: end}, NewText: string(out)})
+}
+
+// propertyRenames are the edits that rename a definition's parameter in the
+// workspace's Applications, the property each use of the definition sets, and
+// in its test cases, the parameter each case gives it.
+func (s *Server) propertyRenames(uri, text string, offset int, to string) map[string][]TextEdit {
+	path := pathOf(uri)
+	param, ok := analysis.ParameterAt(path, text, offset)
+	if !ok {
+		return nil
+	}
+	name, defType, ok := analysis.DefinitionHeader(path, []byte(text))
+	if !ok {
+		return nil
+	}
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	out := map[string][]TextEdit{}
+	for file := range s.workspaceFiles {
+		isTest := strings.HasSuffix(file, "_test.cue")
+		if !isTest && !strings.HasSuffix(file, ".yaml") && !strings.HasSuffix(file, ".yml") {
+			continue
+		}
+		fileURI := "file://" + file
+		src, open := s.docs[fileURI]
+		if !open {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			src = string(b)
+		}
+		var edits []analysis.RangeEdit
+		if isTest {
+			edits = analysis.TestParameterRenameEdits(file, src, []string{name, stem}, param, to)
+		} else {
+			edits = analysis.PropertyRenameEdits(src, defType, name, param, to)
+		}
+		if len(edits) == 0 {
+			continue
+		}
+		changes := make([]TextEdit, 0, len(edits))
+		for _, e := range edits {
+			changes = append(changes, TextEdit{Range: protocolRange(src, e.Range), NewText: e.NewText})
+		}
+		out[fileURI] = changes
+	}
+	return out
 }
