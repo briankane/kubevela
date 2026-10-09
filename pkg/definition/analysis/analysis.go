@@ -138,6 +138,9 @@ type Options struct {
 	// ConfigTemplatesFromCluster is set when the cluster's config templates
 	// are among them.
 	ConfigTemplatesFromCluster bool
+	// Gates, when set, are the feature gates of the cluster's controller, so
+	// a file using a feature it has off is warned of.
+	Gates *ControllerGates
 }
 
 // Analyze checks the definition in src, read from path.
@@ -176,6 +179,7 @@ func AnalyzeWith(path string, src []byte, opts Options) Result {
 	diags = append(diags, d.checkObjects()...)
 	diags = append(diags, d.checkPlaceholders()...)
 	diags = append(diags, d.checkExtends()...)
+	diags = append(diags, d.checkDefinitionGates()...)
 	diags = append(diags, d.checkCalls()...)
 	diags = append(diags, d.checkUnnamedImports()...)
 	diags = append(diags, d.checkCustomProviders()...)

@@ -580,11 +580,13 @@ type CodeActionContext struct {
 
 // CodeAction is an action the client may take, as an edit.
 type CodeAction struct {
-	Title       string        `json:"title"`
-	Kind        string        `json:"kind"`
-	Diagnostics []Diagnostic  `json:"diagnostics,omitempty"`
-	IsPreferred bool          `json:"isPreferred,omitempty"`
-	Edit        WorkspaceEdit `json:"edit"`
+	Title       string         `json:"title"`
+	Kind        string         `json:"kind"`
+	Diagnostics []Diagnostic   `json:"diagnostics,omitempty"`
+	IsPreferred bool           `json:"isPreferred,omitempty"`
+	Edit        *WorkspaceEdit `json:"edit,omitempty"`
+	// Command is run when the action is chosen, after any edit.
+	Command *Command `json:"command,omitempty"`
 }
 
 // WorkspaceEdit is a set of edits, by document.
@@ -665,8 +667,9 @@ type DocumentSymbolParams struct {
 
 // diagnosticFix is a fix as a diagnostic's data carries it.
 type diagnosticFix struct {
-	Title string     `json:"title"`
-	Edits []TextEdit `json:"edits"`
+	Title   string     `json:"title"`
+	Edits   []TextEdit `json:"edits"`
+	Command *Command   `json:"command,omitempty"`
 }
 
 // InlayHintParams ask for the hints in a range of a document.

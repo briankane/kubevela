@@ -185,13 +185,11 @@ func upgradeActions(p CodeActionParams, text string) []CodeAction {
 			continue
 		}
 		for i, f := range fixes {
-			actions = append(actions, CodeAction{
-				Title:       f.Title,
-				Kind:        "quickfix",
-				Diagnostics: []Diagnostic{d},
-				IsPreferred: i == 0,
-				Edit:        WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: f.Edits}},
-			})
+			action := CodeAction{Title: f.Title, Kind: "quickfix", Diagnostics: []Diagnostic{d}, IsPreferred: i == 0, Command: f.Command}
+			if len(f.Edits) > 0 {
+				action.Edit = &WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: f.Edits}}
+			}
+			actions = append(actions, action)
 		}
 	}
 	if len(upgrades) == 0 {
@@ -213,6 +211,6 @@ func upgradeActions(p CodeActionParams, text string) []CodeAction {
 		Kind:        "quickfix",
 		Diagnostics: upgrades,
 		IsPreferred: true,
-		Edit:        WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}},
+		Edit:        &WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}},
 	})
 }

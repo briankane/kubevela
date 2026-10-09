@@ -197,7 +197,11 @@ func fixesData(text string, fixes []analysis.Fix) json.RawMessage {
 		for _, e := range f.Edits {
 			edits = append(edits, TextEdit{Range: protocolRange(text, e.Range), NewText: e.NewText})
 		}
-		out = append(out, diagnosticFix{Title: f.Title, Edits: edits})
+		fix := diagnosticFix{Title: f.Title, Edits: edits}
+		if f.Command != nil {
+			fix.Command = &Command{Title: f.Title, Command: f.Command.Name, Arguments: f.Command.Arguments}
+		}
+		out = append(out, fix)
 	}
 	return mustJSON(out)
 }

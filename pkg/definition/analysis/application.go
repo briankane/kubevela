@@ -133,6 +133,7 @@ func (d *document) checkApplication(ctx *cue.Context, app cue.Value, fields map[
 	schema := ctx.CompileString(addonApplicationCUE + applicationCUE).LookupPath(cue.ParsePath("#app"))
 	diags := d.fromErrors(schema.Unify(app).Validate(), "#app")
 	diags = append(diags, d.checkTyped(app.LookupPath(cue.ParsePath("spec")))...)
+	diags = append(diags, d.checkApplicationGates(app, fields)...)
 	if d.opts.Applications == nil {
 		return diags
 	}

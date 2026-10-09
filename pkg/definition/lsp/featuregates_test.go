@@ -18,6 +18,7 @@ package lsp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -33,6 +34,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
 var updateFeatureGates = flag.Bool("update-feature-gates", false, "rewrite featuregates_generated.go from the gates' source files")
@@ -167,4 +175,82 @@ func TestFeatureGatesRequest(t *testing.T) {
 	assert.Equal(t, "workflow", by["EnableSuspendOnFailure"].Source)
 	assert.Equal(t, "multicluster", by["SecretCache"].Source)
 	assert.NotEmpty(t, by["ApplyResourceByReplace"].Description)
+}
+
+// The controller is read from its Deployment: its image and the gates its
+// args set.
+func TestReadController(t *testing.T) {
+	replicas := int32(1)
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "kubevela-vela-core", Namespace: "vela-system", Labels: map[string]string{"controller.oam.dev/name": "vela-core"}},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name:  "kubevela",
+			Image: "oamdev/vela-core:v1.11.0",
+			Args:  []string{"--webhook-port=9443", "--feature-gates=EnableGlobalPolicies=false", "--feature-gates=A=true,B=false", "--feature-gates=MultiStageComponentApply= true"},
+		}}}}},
+	}
+	cli := fake.NewClientBuilder().WithScheme(common.Scheme).WithObjects(deploy).Build()
+	got, err := readController(context.Background(), cli)
+	require.NoError(t, err)
+	assert.Equal(t, &ControllerInfo{Image: "oamdev/vela-core:v1.11.0", Version: "v1.11.0", Replicas: 1, Set: map[string]bool{"EnableGlobalPolicies": false, "A": true, "B": false, "MultiStageComponentApply": true}}, got)
+
+	none, err := readController(context.Background(), fake.NewClientBuilder().WithScheme(common.Scheme).Build())
+	require.NoError(t, err)
+	assert.Nil(t, none)
+}
+
+// The gates checked against are the args' values, else the defaults the
+// controller's --help gave, once the client has sent them; a gate --help
+// does not list is one the controller lacks.
+func TestControllerGates(t *testing.T) {
+	ctl := &ControllerInfo{Image: "oamdev/vela-core:v1.11.0", Version: "v1.11.0", Replicas: 1, Set: map[string]bool{"EnableGlobalPolicies": false}}
+	g := controllerGates("k3d-vela", ctl, nil)
+	assert.Equal(t, &analysis.ControllerGates{Context: "k3d-vela", Version: "v1.11.0", On: map[string]bool{"EnableGlobalPolicies": false}, Missing: map[string]bool{}}, g)
+
+	help := map[string]bool{"EnableGlobalPolicies": false, "EnableApplicationScopedPolicies": false, "MultiStageComponentApply": true}
+	g = controllerGates("k3d-vela", ctl, help)
+	assert.Equal(t, false, g.On["EnableApplicationScopedPolicies"], "its default")
+	assert.True(t, g.Missing["EnableCelExpressions"], "a KubeVela gate --help does not list")
+	assert.False(t, g.Missing["SomeLibraryGate"], "only the gates this server knows are judged missing")
+
+	assert.Nil(t, controllerGates("k3d-vela", &ControllerInfo{Replicas: 0, Set: map[string]bool{}}, nil), "a controller scaled to 0 runs elsewhere, with other args")
+	assert.Nil(t, controllerGates("k3d-vela", nil, nil))
+}
+
+// A fix that runs a command is offered as a code action with it.
+func TestCommandFixAction(t *testing.T) {
+	data := fixesData("", []analysis.Fix{{Title: "Turn on X", Command: &analysis.FixCommand{Name: "kubevela.controller.open", Arguments: []interface{}{map[string]interface{}{"gate": "X", "value": true}}}}})
+	actions := upgradeActions(CodeActionParams{TextDocument: TextDocumentIdentifier{URI: "file:///a.cue"}, Context: CodeActionContext{Diagnostics: []Diagnostic{{Message: "X is off", Data: data}}}}, "")
+	require.Len(t, actions, 1)
+	assert.Equal(t, "Turn on X", actions[0].Title)
+	assert.Equal(t, &Command{Title: "Turn on X", Command: "kubevela.controller.open", Arguments: []interface{}{map[string]interface{}{"gate": "X", "value": true}}}, actions[0].Command)
+}
+
+// A file using a feature the cluster's controller has off is warned of,
+// with a fix that opens the controller's gates.
+func TestGateDiagnostics(t *testing.T) {
+	cluster := func() (Cluster, error) {
+		c, err := velaCluster()
+		c.Controller = &ControllerInfo{Image: "oamdev/vela-core:v1.12.0", Version: "v1.12.0", Replicas: 1, Set: map[string]bool{"EnableCelExpressions": false}}
+		return c, err
+	}
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  components:\n    - name: web\n      type: webservice\n      properties:\n        image: $(context.namespace)\n"
+	warned := func(ds []Diagnostic) bool {
+		for _, d := range ds {
+			if strings.Contains(d.Message, "EnableCelExpressions is off on k3d-test") {
+				return true
+			}
+		}
+		return false
+	}
+	_, _, diags := openWith(t, cluster, "auto", t.TempDir(), "app.yaml", app, warned)
+	var found *Diagnostic
+	for i := range diags {
+		if strings.Contains(diags[i].Message, "EnableCelExpressions") {
+			found = &diags[i]
+		}
+	}
+	require.NotNil(t, found)
+	assert.Equal(t, uint32(9), found.Range.Start.Line)
+	assert.Contains(t, string(found.Data), `"command":"kubevela.controller.open"`)
 }

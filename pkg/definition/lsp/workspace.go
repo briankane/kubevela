@@ -308,6 +308,7 @@ func (s *Server) options() analysis.Options {
 		ClusterRead:                clusterRead && s.clusterDefs != nil,
 		ConfigTemplates:            s.configTemplateSet(clusterRead),
 		ConfigTemplatesFromCluster: clusterRead,
+		Gates:                      s.gates(clusterRead),
 		Definitions: func(name string) (string, []byte, bool) {
 			path, ok := byName[name]
 			if !ok {
@@ -514,6 +515,9 @@ type clusterState struct {
 	configProperties func(namespace, name string) (ConfigPropertiesResult, error)
 	// clusters lists the clusters joined to it.
 	clusters func() ([]ManagedCluster, error)
+	// controller is its KubeVela controller; readController reads it again.
+	controller     *ControllerInfo
+	readController func() (*ControllerInfo, error)
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -559,7 +563,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties, clusters: c.Clusters}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties, clusters: c.Clusters, controller: c.Controller, readController: c.ReadController}
 	s.clusterPackages = pkgs
 	s.clusterConfigTemplates = c.ConfigTemplateSources
 	s.clusterDefs = nil

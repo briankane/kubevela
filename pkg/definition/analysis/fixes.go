@@ -28,6 +28,8 @@ import (
 type Fix struct {
 	Title string
 	Edits []RangeEdit
+	// Command, when set, is run instead: a fix made outside the file.
+	Command *FixCommand
 }
 
 // closest is the candidate a misspelt name most likely meant, or "": one at

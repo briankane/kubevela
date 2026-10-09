@@ -77,6 +77,9 @@ type Server struct {
 	// path; clusterConfigTemplates are the cluster's.
 	configTemplates        map[string]analysis.ConfigTemplate
 	clusterConfigTemplates []analysis.ConfigTemplate
+	// controllerHelp are the gates each controller image accepts, with their
+	// defaults, as the client read them from its --help.
+	controllerHelp map[string]map[string]bool
 
 	// validateOutputs is the kubevela.validateOutputs setting: auto, on or
 	// off. kinds are the schemas outputs are checked against, nil when off.
@@ -493,6 +496,11 @@ func (s *Server) handle(msg message) error {
 		var p DidChangeConfigurationParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
 			s.configure(p.Settings.KubeVela)
+		}
+	case MethodControllerGates:
+		var p ControllerGatesParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			s.controllerGatesRead(p)
 		}
 	case "workspace/didChangeWatchedFiles":
 		var p DidChangeWatchedFilesParams
