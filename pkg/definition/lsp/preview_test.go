@@ -101,6 +101,17 @@ func TestPreviewTest(t *testing.T) {
 	assert.Contains(t, r.Cases, `image: "nginx:1.25"`)
 }
 
+func TestExplore(t *testing.T) {
+	c := newClient(t)
+	m := c.response(c.send(MethodExplore, PreviewOutputParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: previewDef, Values: "parameter: {image: nginx:1.25}\n"}, true))
+	require.Empty(t, string(m["error"]))
+	var e preview.Exploration
+	require.NoError(t, json.Unmarshal(m["result"], &e))
+	assert.Empty(t, e.Base.Error)
+	assert.NotEmpty(t, e.Base.Objects)
+	assert.Empty(t, e.Variants, "a required string has nothing to vary")
+}
+
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {
 	c := newClient(t)
 	m := c.response(c.send(MethodPreviewOutput, PreviewOutputParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: previewDef}, true))

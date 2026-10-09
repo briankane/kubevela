@@ -328,6 +328,11 @@ type PreviewTestResult struct {
 	Cases string `json:"cases"`
 }
 
+// MethodExplore renders a definition with its values file and with inputs
+// that each change one parameter from it. It is this server's own request;
+// the params are PreviewOutputParams and the answer a preview.Exploration.
+const MethodExplore = "vela/explore"
+
 // MethodPreviewValues writes a values file for a definition: its defaults
 // filled in and each required parameter named.
 const MethodPreviewValues = "vela/previewValues"
