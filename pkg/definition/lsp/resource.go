@@ -19,7 +19,6 @@ package lsp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,6 +30,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"sigs.k8s.io/yaml"
+
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 )
 
 // MethodResource reads a resource an Application applied, as YAML. It is this
@@ -95,15 +96,12 @@ func readResource(cfg *rest.Config, apiVersion, kind, namespace, name string) (s
 }
 
 // resource answers MethodResource off the message loop. A member cluster's
-// resource goes through cluster-gateway, which this server does not.
+// resource is read through cluster-gateway.
 func (s *Server) resource(id json.RawMessage, p ResourceParams) {
 	fail := func(msg string) {
 		_ = s.reply(id, nil, &ResponseError{Code: CodeInvalidParams, Message: msg})
 	}
 	switch {
-	case p.Cluster != "" && p.Cluster != "local":
-		fail(fmt.Sprintf("%s %s is on cluster %s, which is read through cluster-gateway: vela status --tree", p.Kind, p.Name, p.Cluster))
-		return
 	case !s.clusterEnabled:
 		fail("reading the cluster is off (kubevela.readCluster)")
 		return
@@ -113,7 +111,7 @@ func (s *Server) resource(id json.RawMessage, p ResourceParams) {
 	}
 	read, kubeContext := s.cluster.resource, s.cluster.context
 	go func() {
-		out, err := read(p.APIVersion, p.Kind, p.Namespace, p.Name)
+		out, err := read(p.Cluster, p.APIVersion, p.Kind, p.Namespace, p.Name)
 		s.post(func() {
 			if err != nil {
 				fail(err.Error())
@@ -122,4 +120,15 @@ func (s *Server) resource(id json.RawMessage, p ResourceParams) {
 			_ = s.reply(id, ResourceResult{YAML: out, Context: kubeContext}, nil)
 		})
 	}()
+}
+
+// clusterConfig reaches cluster: a member cluster through cluster-gateway's
+// proxy on the hub cfg reaches, the hub (local, or none named) as it is.
+func clusterConfig(cfg *rest.Config, cluster string) *rest.Config {
+	if cluster == "" || cluster == pkgmulticluster.Local {
+		return cfg
+	}
+	out := rest.CopyConfig(cfg)
+	out.Wrap(pkgmulticluster.NewTransportWrapper(pkgmulticluster.ForCluster(cluster)))
+	return out
 }

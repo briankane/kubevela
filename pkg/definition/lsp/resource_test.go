@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/rest"
 )
 
 // An applied resource is read as YAML, without its managed fields.
@@ -44,9 +45,12 @@ func TestResourceAsYAML(t *testing.T) {
 func TestResourceRequest(t *testing.T) {
 	cluster := func() (Cluster, error) {
 		c, err := velaCluster()
-		c.Resource = func(apiVersion, kind, namespace, name string) (string, error) {
+		c.Resource = func(cluster, apiVersion, kind, namespace, name string) (string, error) {
 			if kind != "ConfigMap" || name != "web" {
 				return "", errors.New("not found")
+			}
+			if cluster != "" && cluster != "local" {
+				return "kind: ConfigMap\n# on " + cluster + "\n", nil
 			}
 			return "kind: ConfigMap\n", nil
 		}
@@ -67,5 +71,17 @@ func TestResourceRequest(t *testing.T) {
 	m = c.response(c.send(MethodResource, ResourceParams{APIVersion: "v1", Kind: "ConfigMap", Namespace: "default", Name: "nope"}, true))
 	assert.Contains(t, string(m["error"]), "not found")
 	m = c.response(c.send(MethodResource, ResourceParams{APIVersion: "v1", Kind: "ConfigMap", Namespace: "default", Name: "web", Cluster: "eu-west"}, true))
-	assert.Contains(t, string(m["error"]), "eu-west", "a member cluster's resource is not read")
+	require.NoError(t, json.Unmarshal(m["result"], &r), string(m["error"]))
+	assert.Equal(t, "kind: ConfigMap\n# on eu-west\n", r.YAML, "a member cluster's resource is read through cluster-gateway")
+}
+
+// A member cluster is reached through cluster-gateway; the hub, local, as it is.
+func TestClusterConfig(t *testing.T) {
+	cfg := &rest.Config{Host: "https://hub:6443"}
+	assert.Same(t, cfg, clusterConfig(cfg, ""))
+	assert.Same(t, cfg, clusterConfig(cfg, "local"))
+	spoke := clusterConfig(cfg, "eu-1")
+	assert.NotSame(t, cfg, spoke)
+	assert.NotNil(t, spoke.WrapTransport, "requests are sent through cluster-gateway's proxy")
+	assert.Nil(t, cfg.WrapTransport, "the hub's config is left as it is")
 }

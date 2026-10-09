@@ -64,7 +64,7 @@ type Cluster struct {
 	// deleted, until ctx is done.
 	Watch func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured))
 	// Resource reads a resource as YAML.
-	Resource func(apiVersion, kind, namespace, name string) (string, error)
+	Resource func(cluster, apiVersion, kind, namespace, name string) (string, error)
 	// Events calls each with every event in a namespace as they change,
 	// until ctx is done.
 	Events func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured))
@@ -153,8 +153,8 @@ func ConnectKubeconfig() (Cluster, error) {
 	out.Watch = func(ctx context.Context, namespace, name string, each func(*unstructured.Unstructured)) {
 		watchApplication(ctx, cfg, namespace, name, each)
 	}
-	out.Resource = func(apiVersion, kind, namespace, name string) (string, error) {
-		return readResource(cfg, apiVersion, kind, namespace, name)
+	out.Resource = func(cluster, apiVersion, kind, namespace, name string) (string, error) {
+		return readResource(clusterConfig(cfg, cluster), apiVersion, kind, namespace, name)
 	}
 	out.Events = func(ctx context.Context, namespace string, each func([]*unstructured.Unstructured)) {
 		watchEvents(ctx, cfg, namespace, each)
