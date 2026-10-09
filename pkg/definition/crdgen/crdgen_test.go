@@ -54,6 +54,7 @@ func TestRead(t *testing.T) {
 	assert.Equal(t, "Replicas of the cache", names["replicas"].Description)
 	assert.Equal(t, []string{"enabled", "size"}, fieldNames(names["persistence"].Children))
 	assert.Equal(t, []string{"persistence", "size"}, names["persistence"].Children[1].Path)
+	assert.Equal(t, "[...{…}]", names["tolerations"].Type, "a list of structs")
 	assert.NotEmpty(t, names["resources"].Hint, "often a trait")
 	assert.NotEmpty(t, names["tolerations"].Hint)
 	assert.Empty(t, names["engine"].Hint)

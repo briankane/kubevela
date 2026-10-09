@@ -207,6 +207,9 @@ func fieldsOf(s *schema, path []string, depth int) []Field {
 			f.Type = ps.cueType(depth+1, &usesStrings)
 			if strings.Contains(f.Type, "\n") {
 				f.Type = "{…}"
+				if ps.Type == "array" {
+					f.Type = "[...{…}]"
+				}
 			}
 		}
 		out = append(out, f)
