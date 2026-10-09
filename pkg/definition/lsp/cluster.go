@@ -91,6 +91,8 @@ type Cluster struct {
 	ConfigTemplate func(namespace, name string) (ConfigTemplateResult, error)
 	// ConfigProperties reads a config's values.
 	ConfigProperties func(namespace, name string) (ConfigPropertiesResult, error)
+	// Clusters lists the clusters joined to it.
+	Clusters func() ([]ManagedCluster, error)
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -181,6 +183,9 @@ func ConnectKubeconfig() (Cluster, error) {
 		return withConfigClient(cfg, func(ctx context.Context, cli ctrlclient.Client) (ConfigPropertiesResult, error) {
 			return readConfigProperties(ctx, cli, namespace, name)
 		})
+	}
+	out.Clusters = func() ([]ManagedCluster, error) {
+		return withConfigClient(cfg, readClusters)
 	}
 	if !out.KubeVela {
 		return out, nil
