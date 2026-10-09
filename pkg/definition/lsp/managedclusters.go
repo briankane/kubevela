@@ -18,9 +18,11 @@ package lsp
 
 import (
 	"context"
+	"reflect"
 
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 )
 
@@ -88,7 +90,24 @@ func (s *Server) clustersRequest(msg message) *ResponseError {
 				return
 			}
 			_ = s.reply(id, ClustersResult{Context: cluster.context, Clusters: list}, nil)
+			if s.cluster == cluster && !reflect.DeepEqual(cluster.joined, list) {
+				cluster.joined = list
+				s.republish()
+			}
 		})
 	}()
 	return nil
+}
+
+// joinedClusters are the clusters topology policies are checked against,
+// when the cluster is read and the list was.
+func (s *Server) joinedClusters(clusterRead bool) *analysis.JoinedClusters {
+	if !clusterRead || s.cluster.joined == nil {
+		return nil
+	}
+	out := &analysis.JoinedClusters{Context: s.cluster.context}
+	for _, c := range s.cluster.joined {
+		out.Clusters = append(out.Clusters, analysis.JoinedCluster{Name: c.Name, Labels: c.Labels})
+	}
+	return out
 }

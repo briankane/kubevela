@@ -309,6 +309,7 @@ func (s *Server) options() analysis.Options {
 		ConfigTemplates:            s.configTemplateSet(clusterRead),
 		ConfigTemplatesFromCluster: clusterRead,
 		Gates:                      s.gates(clusterRead),
+		Clusters:                   s.joinedClusters(clusterRead),
 		Definitions: func(name string) (string, []byte, bool) {
 			path, ok := byName[name]
 			if !ok {
@@ -513,8 +514,9 @@ type clusterState struct {
 	configs          func() (ConfigsResult, error)
 	configTemplate   func(namespace, name string) (ConfigTemplateResult, error)
 	configProperties func(namespace, name string) (ConfigPropertiesResult, error)
-	// clusters lists the clusters joined to it.
+	// clusters lists the clusters joined to it; joined is the list last read.
 	clusters func() ([]ManagedCluster, error)
+	joined   []ManagedCluster
 	// controller is its KubeVela controller; readController reads it again.
 	controller     *ControllerInfo
 	readController func() (*ControllerInfo, error)
@@ -563,7 +565,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties, clusters: c.Clusters, controller: c.Controller, readController: c.ReadController}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties, clusters: c.Clusters, joined: c.Joined, controller: c.Controller, readController: c.ReadController}
 	s.clusterPackages = pkgs
 	s.clusterConfigTemplates = c.ConfigTemplateSources
 	s.clusterDefs = nil

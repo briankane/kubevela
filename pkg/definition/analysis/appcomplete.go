@@ -156,6 +156,9 @@ func infoOf(def AppDefinition, opts Options) (paramInfo, bool) {
 // a type may name, and a definition's parameters under properties. It is
 // false where the Application's own schema completes instead.
 func completeApplication(doc, above []string, last string, opts Options) ([]Completion, bool) {
+	if cs, ok := completeTopology(doc, above, last, opts); ok {
+		return cs, true
+	}
 	if m := yamlValueTyped.FindStringSubmatch(last); m != nil {
 		keyIndent := len(m[1])
 		if m[2] != "" {

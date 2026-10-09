@@ -19,6 +19,7 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,4 +69,34 @@ func TestClustersRequest(t *testing.T) {
 	var got ClustersResult
 	require.NoError(t, json.Unmarshal(c.response(c.send(MethodClusters, struct{}{}, true))["result"], &got))
 	assert.Equal(t, ClustersResult{Context: "k3d-test", Clusters: []ManagedCluster{{Name: "local", Type: "Internal", Accepted: true}}}, got)
+}
+
+// A topology policy is checked against the clusters joined when the server
+// connected, and against the list again whenever vela/clusters reads it.
+func TestTopologyAgainstJoined(t *testing.T) {
+	joined := []ManagedCluster{{Name: "local", Type: "Internal", Accepted: true}}
+	cluster := func() (Cluster, error) {
+		c, err := velaCluster()
+		c.Joined = joined
+		c.Clusters = func() ([]ManagedCluster, error) {
+			return append(joined, ManagedCluster{Name: "eu-1", Type: "ServiceAccountToken", Accepted: true}), nil
+		}
+		return c, err
+	}
+	app := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  components: []\n  policies:\n    - name: where\n      type: topology\n      properties:\n        clusters: [eu-1]\n"
+	warned := func(want bool) func([]Diagnostic) bool {
+		return func(ds []Diagnostic) bool {
+			for _, d := range ds {
+				if strings.Contains(d.Message, "no cluster named eu-1") {
+					return want
+				}
+			}
+			return !want
+		}
+	}
+	c, uri, diags := openWith(t, cluster, "auto", t.TempDir(), "app.yaml", app, warned(true))
+	require.True(t, warned(true)(diags), "eu-1 is not joined when the server connects")
+
+	c.response(c.send(MethodClusters, struct{}{}, true))
+	require.True(t, warned(false)(settledUntil(c, uri, warned(false))), "once listed again, eu-1 is joined")
 }

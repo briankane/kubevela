@@ -141,6 +141,9 @@ type Options struct {
 	// Gates, when set, are the feature gates of the cluster's controller, so
 	// a file using a feature it has off is warned of.
 	Gates *ControllerGates
+	// Clusters, when set, are the clusters joined to the cluster read, which
+	// a topology policy is checked and completed against.
+	Clusters *JoinedClusters
 }
 
 // Analyze checks the definition in src, read from path.

@@ -91,8 +91,10 @@ type Cluster struct {
 	ConfigTemplate func(namespace, name string) (ConfigTemplateResult, error)
 	// ConfigProperties reads a config's values.
 	ConfigProperties func(namespace, name string) (ConfigPropertiesResult, error)
-	// Clusters lists the clusters joined to it.
+	// Clusters lists the clusters joined to it; Joined is that list as it
+	// was when it was reached.
 	Clusters func() ([]ManagedCluster, error)
+	Joined   []ManagedCluster
 	// Controller is its KubeVela controller as its Deployment runs it, none
 	// when there is none; ReadController reads it again.
 	Controller     *ControllerInfo
@@ -200,6 +202,7 @@ func ConnectKubeconfig() (Cluster, error) {
 		return withConfigClient(cfg, readController)
 	}
 	out.Controller, _ = out.ReadController()
+	out.Joined, _ = out.Clusters()
 	paths, err := dc.OpenAPIV3().Paths()
 	if err != nil {
 		return out, err

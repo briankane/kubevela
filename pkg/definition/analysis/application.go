@@ -134,6 +134,7 @@ func (d *document) checkApplication(ctx *cue.Context, app cue.Value, fields map[
 	diags := d.fromErrors(schema.Unify(app).Validate(), "#app")
 	diags = append(diags, d.checkTyped(app.LookupPath(cue.ParsePath("spec")))...)
 	diags = append(diags, d.checkApplicationGates(app, fields)...)
+	diags = append(diags, d.checkTopology(app, fields)...)
 	if d.opts.Applications == nil {
 		return diags
 	}
