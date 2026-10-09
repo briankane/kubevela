@@ -508,3 +508,13 @@ func TestAddonTemplateUsesItsOwnDefinition(t *testing.T) {
 	}
 	assert.Empty(t, checkAddon(t, dir, "template.cue", goodAddonTemplate), "a built-in type is there already")
 }
+
+// An addon's CUE is enabled without the list upgrade definitions get, so
+// list addition fails there however recent the CUE, and is reported.
+func TestAddonListAddition(t *testing.T) {
+	dir := addonDir(t)
+	src := strings.Replace(goodAddonTemplate, `outputs: ns:`, "_base: [\"a\"]\n_more: _base + [\"b\"]\noutputs: ns:", 1)
+	got := checkAddon(t, dir, "template.cue", src)
+	require.NotEmpty(t, got)
+	assert.Contains(t, strings.Join(got, "\n"), "13: _more: Addition of lists is superseded by list.Concat")
+}
