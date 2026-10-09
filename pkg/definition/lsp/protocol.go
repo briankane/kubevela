@@ -192,7 +192,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 12
+const VelaProtocol = 13
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -294,6 +294,20 @@ type ProvenanceParams struct {
 	Text         string                 `json:"text"`
 	Values       string                 `json:"values"`
 	Location     preview.Location       `json:"location"`
+}
+
+// MethodEvaluate is the value of an expression selected in a definition's
+// template, with the values it is previewed with. It is this server's own
+// request; the answer is a preview.Evaluation.
+const MethodEvaluate = "vela/evaluate"
+
+// EvaluateParams are a definition's current text, the values to evaluate
+// with, and the selection.
+type EvaluateParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+	Values       string                 `json:"values"`
+	Range        Range                  `json:"range"`
 }
 
 // MethodPreviewValues writes a values file for a definition: its defaults

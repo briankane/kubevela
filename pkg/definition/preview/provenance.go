@@ -74,33 +74,10 @@ func Provenance(_ context.Context, req Request, at Location) (Origin, error) {
 	if !ok {
 		return Origin{}, fmt.Errorf("%s is not a definition, or does not parse", req.Path)
 	}
-	v, err := inputValues(req.Values, at.Input)
+	root, v, err := buildTemplate(f, tmpl, req.Values, at.Input)
 	if err != nil {
 		return Origin{}, err
 	}
-	// The controller supplies context; the template only reads it.
-	f.Decls = append(f.Decls, &ast.Field{Label: ast.NewIdent("context"), Value: &ast.StructLit{Elts: []ast.Decl{&ast.Ellipsis{}}}})
-	root := cuecontext.New().BuildFile(f)
-	if root.Err() != nil {
-		return Origin{}, root.Err()
-	}
-	if v.Parameter != nil {
-		root = root.FillPath(cue.ParsePath("parameter"), v.Parameter)
-	}
-	ctxFields := map[string]interface{}{
-		"name":      v.Context.name(tmpl.Name),
-		"appName":   orDefault(v.Context.AppName, defaultAppName),
-		"namespace": orDefault(v.Context.Namespace, defaultNamespace),
-		"cluster":   orDefault(v.Context.Cluster, defaultCluster),
-	}
-	if tmpl.Type == "trait" {
-		workload := v.Workload
-		if workload == nil {
-			workload = sampleWorkload(v.Context.name(tmpl.Name))
-		}
-		ctxFields["output"] = workload
-	}
-	root = root.FillPath(cue.ParsePath("context"), ctxFields)
 
 	base := at.Object
 	if base == "workload" {
@@ -140,6 +117,38 @@ func Provenance(_ context.Context, req Request, at Location) (Origin, error) {
 		}
 	}
 	return o, nil
+}
+
+// buildTemplate builds a template file, positioned in the definition's source,
+// with the parameter and the context of the values input it is rendered with.
+func buildTemplate(f *ast.File, tmpl analysis.Template, src []byte, input string) (cue.Value, values, error) {
+	v, err := inputValues(src, input)
+	if err != nil {
+		return cue.Value{}, v, err
+	}
+	// The controller supplies context; the template only reads it.
+	f.Decls = append(f.Decls, &ast.Field{Label: ast.NewIdent("context"), Value: &ast.StructLit{Elts: []ast.Decl{&ast.Ellipsis{}}}})
+	root := cuecontext.New().BuildFile(f)
+	if root.Err() != nil {
+		return cue.Value{}, v, root.Err()
+	}
+	if v.Parameter != nil {
+		root = root.FillPath(cue.ParsePath("parameter"), v.Parameter)
+	}
+	ctxFields := map[string]interface{}{
+		"name":      v.Context.name(tmpl.Name),
+		"appName":   orDefault(v.Context.AppName, defaultAppName),
+		"namespace": orDefault(v.Context.Namespace, defaultNamespace),
+		"cluster":   orDefault(v.Context.Cluster, defaultCluster),
+	}
+	if tmpl.Type == "trait" {
+		workload := v.Workload
+		if workload == nil {
+			workload = sampleWorkload(v.Context.name(tmpl.Name))
+		}
+		ctxFields["output"] = workload
+	}
+	return root.FillPath(cue.ParsePath("context"), ctxFields), v, nil
 }
 
 // inputValues is the values document named input, or the only one.

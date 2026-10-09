@@ -18,6 +18,7 @@ package lsp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,23 @@ func TestProvenance(t *testing.T) {
 	var o preview.Origin
 	require.NoError(t, json.Unmarshal(m["result"], &o))
 	assert.Equal(t, preview.Origin{Kind: "parameter", Ref: "parameter.image", Set: true, Line: 9, Column: 58, RefLine: 11}, o)
+}
+
+// A selection is evaluated where it is written, with the values sent.
+func TestEvaluate(t *testing.T) {
+	c := newClient(t)
+	line := uint32(9)
+	at := strings.Index(strings.Split(previewDef, "\n")[line], "parameter.image")
+	m := c.response(c.send(MethodEvaluate, EvaluateParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+		Text:         previewDef,
+		Values:       "parameter: {image: nginx:1.25}\n",
+		Range:        Range{Start: Position{Line: line, Character: uint32(at)}, End: Position{Line: line, Character: uint32(at + len("parameter.image"))}},
+	}, true))
+	require.Empty(t, string(m["error"]))
+	var e preview.Evaluation
+	require.NoError(t, json.Unmarshal(m["result"], &e))
+	assert.Equal(t, preview.Evaluation{Value: `"nginx:1.25"`, Concrete: true}, e)
 }
 
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {
