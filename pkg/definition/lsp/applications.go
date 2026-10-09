@@ -72,6 +72,10 @@ type AppSummary struct {
 	Message   string `json:"message,omitempty"`
 	// Addon is the addon that installed it, if one did.
 	Addon string `json:"addon,omitempty"`
+	// Clusters is how many clusters it runs on, when more than one, and
+	// HealthyClusters how many of them have every component healthy.
+	Clusters        int `json:"clusters,omitempty"`
+	HealthyClusters int `json:"healthyClusters,omitempty"`
 }
 
 // ApplicationsChanged is every Application on the cluster, summarised and
@@ -88,9 +92,27 @@ func summarize(app *unstructured.Unstructured) AppSummary {
 	services, _, _ := unstructured.NestedSlice(app.Object, "status", "services")
 	out.Components = len(services)
 	out.Healthy = len(services) > 0
+	clusterHealthy := map[string]bool{}
 	for _, s := range services {
-		if m, ok := s.(map[string]interface{}); !ok || m["healthy"] != true {
+		m, ok := s.(map[string]interface{})
+		healthy := ok && m["healthy"] == true
+		if !healthy {
 			out.Healthy = false
+		}
+		cluster, _ := m["cluster"].(string)
+		if cluster == "" {
+			cluster = "local"
+		}
+		if was, seen := clusterHealthy[cluster]; !seen || was {
+			clusterHealthy[cluster] = healthy
+		}
+	}
+	if len(clusterHealthy) > 1 {
+		out.Clusters = len(clusterHealthy)
+		for _, h := range clusterHealthy {
+			if h {
+				out.HealthyClusters++
+			}
 		}
 	}
 	wf, _, _ := unstructured.NestedMap(app.Object, "status", "workflow")

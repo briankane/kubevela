@@ -72,6 +72,12 @@ func TestSummarize(t *testing.T) {
 				"services":[{"name":"c","healthy":true}],"workflow":{"finished":true,"steps":[{"name":"c","phase":"succeeded"}]}}}`,
 			want: AppSummary{Namespace: "vela-system", Name: "addon-x", Phase: "running", Components: 1, Healthy: true, Finished: true, Addon: "x"},
 		},
+		"on three clusters, one unhealthy": {
+			app: `{"metadata":{"name":"fleet","namespace":"fleet"},"status":{"status":"running",
+				"services":[{"name":"web","cluster":"local","healthy":true},{"name":"web","cluster":"eu-1","healthy":true},{"name":"web","cluster":"eu-2","healthy":false},{"name":"db","cluster":"eu-2","healthy":true}],
+				"workflow":{"finished":true}}}`,
+			want: AppSummary{Namespace: "fleet", Name: "fleet", Phase: "running", Components: 4, Finished: true, Clusters: 3, HealthyClusters: 2},
+		},
 		"being deleted": {
 			app:  `{"metadata":{"name":"d","namespace":"x","deletionTimestamp":"2026-10-08T12:00:00Z"},"status":{"status":"deleting"}}`,
 			want: AppSummary{Namespace: "x", Name: "d", Phase: "deleting", Deleting: true},
