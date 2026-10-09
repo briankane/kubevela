@@ -51,12 +51,15 @@ type Field struct {
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
 	// Hint says why the field is often set by a trait, if it is.
-	Hint     string  `json:"hint,omitempty"`
+	Hint string `json:"hint,omitempty"`
+	// Merge says how a trait's patch merges it, when the CRD says.
+	Merge    string  `json:"merge,omitempty"`
 	Children []Field `json:"children,omitempty"`
 }
 
 // Choice says where a spec field, and the fields under it unless they have a
-// choice of their own, goes: "component", "trait:<name>" or "omit".
+// choice of their own, goes: "component", "trait:<name>", "both:<name>" (the
+// component sets it and the trait overrides it) or "omit".
 type Choice struct {
 	Path []string `json:"path"`
 	To   string   `json:"to"`
@@ -199,6 +202,7 @@ func fieldsOf(s *schema, path []string, depth int) []Field {
 		if ps.HasDefault {
 			f.Default = literal(ps.Default)
 		}
+		f.Merge = ps.merge()
 		var usesStrings bool
 		if ps.isStruct() && depth < maxDepth {
 			f.Type = "{…}"
@@ -243,8 +247,8 @@ func GenerateWith(src []byte, name string, choices []Choice, opts Options) ([]Fi
 	traits := map[string]bool{}
 	for _, c := range choices {
 		to[strings.Join(c.Path, ".")] = c.To
-		if strings.HasPrefix(c.To, "trait:") {
-			traits[strings.TrimPrefix(c.To, "trait:")] = true
+		if t, ok := traitOf(c.To); ok {
+			traits[t] = true
 		}
 	}
 	if err := checkRequired(p.spec, nil, "component", to); err != nil {
@@ -252,7 +256,7 @@ func GenerateWith(src []byte, name string, choices []Choice, opts Options) ([]Fi
 	}
 	apiVersion := p.info.Group + "/" + p.info.Version
 	var usesStrings bool
-	body := p.spec.structOf(0, subset(p.spec, nil, "component", "component", to), false, &usesStrings)
+	body := p.spec.structOf(0, subset(p.spec, nil, "component", inComponent, to), false, &usesStrings)
 	component := fmt.Sprintf(`%s: {
 	type:        "component"
 	description: %s
@@ -291,7 +295,12 @@ template: {
 	for _, t := range names {
 		var usesStrings bool
 		// A trait sets only what it is given, so its top-level fields are optional.
-		params := p.spec.structOf(0, subset(p.spec, nil, "component", "trait:"+t, to), true, &usesStrings)
+		cut := subsetOf(p.spec, nil, "component", inTrait(t), to)
+		params := cut.structOf(0, nil, true, &usesStrings)
+		patch := "patch: spec: parameter"
+		if body, explicit := patchOf(cut, nil, "component", t, to); explicit {
+			patch = "patch: spec: {\n" + body + "}"
+		}
 		trait := fmt.Sprintf(`%s: {
 	type:        "trait"
 	description: %s
@@ -301,10 +310,10 @@ template: {
 	}
 }
 template: {
-	patch: spec: parameter
+	%s
 	parameter: %s
 }
-`, strconv.Quote(t), strconv.Quote(fmt.Sprintf("Sets part of a %s's spec.", p.info.Kind)), strconv.Quote(p.info.Plural+"."+p.info.Group), params)
+`, strconv.Quote(t), strconv.Quote(fmt.Sprintf("Sets part of a %s's spec.", p.info.Kind)), strconv.Quote(p.info.Plural+"."+p.info.Group), patch, params)
 		if usesStrings {
 			trait = "import \"strings\"\n\n" + trait
 		}
@@ -330,8 +339,9 @@ func checkRequired(s *schema, path []string, parent string, to map[string]string
 	for _, pr := range s.Props {
 		p := append(append([]string{}, path...), pr.Name)
 		d := destination(p, parent, to)
-		if s.required(pr.Name) && d != parent {
-			return fmt.Errorf("%s is required, so it goes where its parent goes (%s)", strings.Join(p, "."), parent)
+		overridden := strings.HasPrefix(d, "both:") && inComponent(parent)
+		if s.required(pr.Name) && d != parent && !overridden {
+			return fmt.Errorf("%s is required, so it goes where its parent goes (%s), or stays and is overridden", strings.Join(p, "."), parent)
 		}
 		if err := checkRequired(pr.Schema, p, d, to); err != nil {
 			return err
@@ -340,41 +350,117 @@ func checkRequired(s *schema, path []string, parent string, to map[string]string
 	return nil
 }
 
-// subset says which properties of an object go to want, and their schema
-// cut to what goes there: a struct is kept when any field under it does.
-func subset(s *schema, path []string, parent, want string, to map[string]string) func(string) (*schema, bool) {
-	return func(name string) (*schema, bool) {
-		var ps *schema
-		for _, pr := range s.Props {
-			if pr.Name == name {
-				ps = pr.Schema
-			}
+// traitOf is the trait a destination names, if it names one.
+func traitOf(d string) (string, bool) {
+	for _, prefix := range []string{"trait:", "both:"} {
+		if strings.HasPrefix(d, prefix) {
+			return strings.TrimPrefix(d, prefix), true
 		}
-		if ps == nil {
-			return nil, false
-		}
-		p := append(append([]string{}, path...), name)
-		d := destination(p, parent, to)
-		if !ps.isStruct() {
-			return ps, d == want
-		}
-		cut := *ps
-		cut.Props = nil
-		keep := subset(ps, p, d, want, to)
-		for _, pr := range ps.Props {
-			if k, ok := keep(pr.Name); ok {
-				cut.Props = append(cut.Props, prop{Name: pr.Name, Schema: k})
-			}
-		}
-		if len(cut.Props) == 0 {
-			return nil, false
-		}
-		if d != want {
-			// Only part of it goes here: what it requires is set elsewhere.
-			cut.Required, cut.HasDefault = nil, false
-		}
-		return &cut, true
 	}
+	return "", false
+}
+
+// inComponent is whether a destination puts a field in the component.
+func inComponent(d string) bool {
+	return d == "component" || strings.HasPrefix(d, "both:")
+}
+
+// inTrait is whether a destination puts a field in trait t.
+func inTrait(t string) func(string) bool {
+	return func(d string) bool { return d == "trait:"+t || d == "both:"+t }
+}
+
+// subset says which properties of an object go where want says, and their
+// schema cut to what goes there.
+func subset(s *schema, path []string, parent string, want func(string) bool, to map[string]string) func(string) (*schema, bool) {
+	cut := subsetOf(s, path, parent, want, to)
+	return func(name string) (*schema, bool) {
+		for _, pr := range cut.Props {
+			if pr.Name == name {
+				return pr.Schema, true
+			}
+		}
+		return nil, false
+	}
+}
+
+// subsetOf is an object's schema cut to the properties that go where want
+// says: a struct is kept when any field under it is. A struct only part of
+// which goes there requires nothing, since the rest is set elsewhere, and a
+// field another destination also sets has no default there, so it overrides
+// only when given.
+func subsetOf(s *schema, path []string, parent string, want func(string) bool, to map[string]string) *schema {
+	cut := *s
+	cut.Props = nil
+	for _, pr := range s.Props {
+		p := append(append([]string{}, path...), pr.Name)
+		d := destination(p, parent, to)
+		ps := pr.Schema
+		if ps.isStruct() {
+			sub := subsetOf(ps, p, d, want, to)
+			if len(sub.Props) == 0 {
+				continue
+			}
+			if !want(d) {
+				sub.Required, sub.HasDefault = nil, false
+			}
+			cut.Props = append(cut.Props, prop{Name: pr.Name, Schema: sub})
+			continue
+		}
+		if !want(d) {
+			continue
+		}
+		if strings.HasPrefix(d, "both:") && !want("component") {
+			trimmed := *ps
+			trimmed.HasDefault, trimmed.Default = false, nil
+			ps = &trimmed
+		}
+		cut.Props = append(cut.Props, prop{Name: pr.Name, Schema: ps})
+	}
+	return &cut
+}
+
+// patchOf is a trait's patch of the spec, written out a field at a time when
+// any field of it needs a marker: one that overrides the component's value
+// (+patchStrategy=retainKeys, or replace for a list), or one whose CRD says
+// how it merges. Each field is guarded, so one not given patches nothing.
+// explicit is false when the plain spec: parameter patches as well.
+func patchOf(cut *schema, path []string, parent, trait string, to map[string]string) (body string, explicit bool) {
+	var b strings.Builder
+	for _, pr := range cut.Props {
+		p := append(append([]string{}, path...), pr.Name)
+		d := destination(p, parent, to)
+		ps := pr.Schema
+		marker := ps.marker()
+		if d == "both:"+trait && d != parent {
+			marker = "+patchStrategy=retainKeys"
+			if ps.Type == "array" {
+				marker = "+patchStrategy=replace"
+			}
+		}
+		ref := "parameter"
+		for _, seg := range p {
+			ref += "." + label(seg)
+		}
+		fmt.Fprintf(&b, "if %s != _|_ {\n", ref)
+		switch {
+		case marker != "":
+			explicit = true
+			fmt.Fprintf(&b, "// %s\n%s: %s\n", marker, label(pr.Name), ref)
+		case ps.isStruct():
+			inner, sub := patchOf(ps, p, d, trait, to)
+			if sub {
+				explicit = true
+				fmt.Fprintf(&b, "%s: {\n%s}\n", label(pr.Name), inner)
+			} else {
+				fmt.Fprintf(&b, "%s: %s\n", label(pr.Name), ref)
+			}
+		default:
+			fmt.Fprintf(&b, "%s: %s\n", label(pr.Name), ref)
+		}
+		b.WriteString("}\n")
+	}
+	return b.String(), explicit
 }
 
 // healthPolicy reads a status condition, Ready unless another is named, for

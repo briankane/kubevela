@@ -47,7 +47,7 @@ func TestRead(t *testing.T) {
 	for _, f := range info.Fields {
 		names[f.Name] = f
 	}
-	assert.Equal(t, []string{"version", "engine", "replicas", "persistence", "resources", "tolerations", "config", "name"}, fieldNames(info.Fields), "in the schema's order")
+	assert.Equal(t, []string{"version", "engine", "replicas", "persistence", "resources", "tolerations", "podLabels", "args", "config", "name"}, fieldNames(info.Fields), "in the schema's order")
 	assert.True(t, names["version"].Required)
 	assert.Equal(t, `"redis" | "valkey"`, names["engine"].Type)
 	assert.Equal(t, `"redis"`, names["engine"].Default)
@@ -125,12 +125,13 @@ func TestGenerateTraits(t *testing.T) {
 	for _, want := range []string{
 		`type:        "trait"`,
 		`appliesToWorkloads: ["caches.shop.example.com"]`,
-		"patch: spec: parameter",
+		"// +patchKey=key\n\t\t\ttolerations: parameter.tolerations",
 		"limits?: [string]: int | string",
 		`operator?: "Exists" | "Equal"`,
 	} {
 		assert.Contains(t, scheduling.Text, want)
 	}
+	assert.Contains(t, persistence.Text, "patch: spec: parameter", "nothing in it needs a marker")
 	assert.Contains(t, persistence.Text, `size?: string & =~"^[0-9]+Gi$"`)
 	assert.NotContains(t, persistence.Text, "enabled", "left out")
 	assert.True(t, strings.Contains(persistence.Text, "persistence?: {"), "nested as in spec")

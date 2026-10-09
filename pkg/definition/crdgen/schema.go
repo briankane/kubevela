@@ -46,6 +46,10 @@ type schema struct {
 	MinLength       *int64
 	MaxLength       *int64
 	Pattern         string
+	// ListType, ListMapKeys and MapType say how a list or map is merged.
+	ListType    string
+	ListMapKeys []string
+	MapType     string
 }
 
 // prop is a property of an object schema.
@@ -113,6 +117,12 @@ func (s *schema) UnmarshalYAML(n *yaml.Node) error {
 			s.MaxLength, err = integer(v)
 		case "pattern":
 			s.Pattern = v.Value
+		case "x-kubernetes-list-type":
+			s.ListType = v.Value
+		case "x-kubernetes-list-map-keys":
+			err = v.Decode(&s.ListMapKeys)
+		case "x-kubernetes-map-type":
+			s.MapType = v.Value
 		}
 		if err != nil {
 			return err
@@ -129,6 +139,32 @@ func number(n *yaml.Node) (*float64, error) {
 func integer(n *yaml.Node) (*int64, error) {
 	i, err := strconv.ParseInt(n.Value, 10, 64)
 	return &i, err
+}
+
+// marker is the patch marker that merges the value as its CRD says: by its
+// list's keys, or replaced whole; "" for the default merge. KubeVela's
+// patcher replaces a list with replace and anything else with retainKeys.
+func (s *schema) marker() string {
+	switch {
+	case s.ListType == "map" && len(s.ListMapKeys) > 0:
+		return "+patchKey=" + strings.Join(s.ListMapKeys, ",")
+	case s.ListType == "atomic":
+		return "+patchStrategy=replace"
+	case s.MapType == "atomic":
+		return "+patchStrategy=retainKeys"
+	}
+	return ""
+}
+
+// merge says how a patch merges the value, for the screen.
+func (s *schema) merge() string {
+	switch {
+	case s.ListType == "map" && len(s.ListMapKeys) > 0:
+		return "merges by key"
+	case s.ListType == "atomic" || s.MapType == "atomic":
+		return "replaced whole"
+	}
+	return ""
 }
 
 // isStruct is whether the schema is an object with fields of its own.
