@@ -98,3 +98,17 @@ func TestExploreCapsVariants(t *testing.T) {
 	assert.LessOrEqual(t, len(e.Variants), maxVariants)
 	assert.False(t, e.Truncated)
 }
+
+// Unsetting a parameter the values set to its default would change nothing, so it is not tried.
+func TestExploreSkipsUnsettingADefault(t *testing.T) {
+	e, err := Explore(context.Background(), Request{Path: "worker.cue", Source: []byte(exploreDef), Values: []byte("parameter:\n  image: nginx\n  tier: web\n  replicas: 3\n")})
+	require.NoError(t, err)
+	for _, v := range e.Variants {
+		assert.NotEqual(t, "tier unset (its default)", v.Name)
+	}
+	var names []string
+	for _, v := range e.Variants {
+		names = append(names, v.Name)
+	}
+	assert.Contains(t, names, "replicas unset (its default)", "3 is not the default")
+}

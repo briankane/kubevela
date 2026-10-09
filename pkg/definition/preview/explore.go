@@ -135,7 +135,11 @@ func collectChanges(v cue.Value, path []string, base map[string]interface{}, dep
 			}
 			continue
 		}
-		if set && (it.IsOptional() || hasDefault) {
+		var defValue interface{}
+		if hasDefault {
+			_ = def.Decode(&defValue)
+		}
+		if set && (it.IsOptional() || hasDefault) && !(hasDefault && equal(cur, defValue)) {
 			what := "its default"
 			if !hasDefault {
 				what = "it is optional"
@@ -144,7 +148,7 @@ func collectChanges(v cue.Value, path []string, base map[string]interface{}, dep
 		}
 		current := cur
 		if !set && hasDefault {
-			_ = def.Decode(&current)
+			current = defValue
 		}
 		if !set && !hasDefault && it.IsOptional() {
 			if sample, ok := sampleOf(f); ok {
