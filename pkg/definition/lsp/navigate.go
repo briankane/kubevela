@@ -85,7 +85,16 @@ func (s *Server) navigationRequest(msg message) (interface{}, *ResponseError) {
 		if rerr := decode(msg.Params, &p); rerr != nil {
 			return nil, rerr
 		}
-		return upgradeActions(p, s.docs[p.TextDocument.URI]), nil
+		text := s.docs[p.TextDocument.URI]
+		actions := upgradeActions(p, text)
+		for _, f := range analysis.ParameterActions(pathOf(p.TextDocument.URI), text, byteOffset(text, p.Range.Start)) {
+			changes := make([]TextEdit, 0, len(f.Edits))
+			for _, e := range f.Edits {
+				changes = append(changes, TextEdit{Range: protocolRange(text, e.Range), NewText: e.NewText})
+			}
+			actions = append(actions, CodeAction{Title: f.Title, Kind: "refactor.extract", Edit: &WorkspaceEdit{Changes: map[string][]TextEdit{p.TextDocument.URI: changes}}})
+		}
+		return actions, nil
 	case "textDocument/definition":
 		var p TextDocumentPositionParams
 		if rerr := decode(msg.Params, &p); rerr != nil {

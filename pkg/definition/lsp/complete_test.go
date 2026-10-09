@@ -196,3 +196,22 @@ func TestQuickFixesFromDiagnostics(t *testing.T) {
 	assert.Equal(t, "+usage", edits[0].NewText)
 	assert.Equal(t, uint32(5), edits[0].Range.Start.Line)
 }
+
+// On a literal in what a template renders, the actions offer to make it a parameter.
+func TestMakeParameterAction(t *testing.T) {
+	c := newClient(t)
+	text := "\"c\": {\n\ttype: \"component\"\n\tattributes: workload: type: \"autodetects.core.oam.dev\"\n}\ntemplate: {\n\toutput: {apiVersion: \"v1\", kind: \"ConfigMap\", data: size: \"10Gi\"}\n\tparameter: {}\n}\n"
+	c.send("textDocument/didOpen", DidOpenTextDocumentParams{TextDocument: TextDocumentItem{URI: uri, LanguageID: "cue", Version: 1, Text: text}}, false)
+	c.diagnostics()
+	at := Position{Line: 5, Character: uint32(strings.Index(strings.Split(text, "\n")[5], "10Gi"))}
+	m := c.response(c.send("textDocument/codeAction", CodeActionParams{TextDocument: TextDocumentIdentifier{URI: uri}, Range: Range{Start: at, End: at}}, true))
+	var actions []CodeAction
+	require.NoError(t, json.Unmarshal(m["result"], &actions))
+	require.Len(t, actions, 1)
+	assert.Equal(t, "Make size a parameter", actions[0].Title)
+	assert.Equal(t, "refactor.extract", actions[0].Kind)
+	edits := actions[0].Edit.Changes[uri]
+	require.Len(t, edits, 2)
+	assert.Equal(t, "parameter.size", edits[0].NewText)
+	assert.Contains(t, edits[1].NewText, `size: *"10Gi" | string`)
+}
