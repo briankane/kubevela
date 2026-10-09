@@ -148,3 +148,14 @@ func TestRevisionRequests(t *testing.T) {
 	require.Empty(t, string(m["error"]))
 	assert.Equal(t, []string{"shop/shop@shop-v1"}, rolled)
 }
+
+// A revision whose workflow was terminated without succeeding says so,
+// though its phase was left at what it was doing when it stopped.
+func TestTerminatedRevision(t *testing.T) {
+	at := metav1.Now()
+	rev := revisionObject("shop-v1", at, false, "")
+	rev.Status.Workflow = &common.WorkflowStatus{Phase: "executing", Terminated: true, Finished: true}
+	got := revisionInfos([]v1beta1.ApplicationRevision{rev}, "")
+	require.Len(t, got, 1)
+	assert.Equal(t, "terminated", got[0].Phase)
+}

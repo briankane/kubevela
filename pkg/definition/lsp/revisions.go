@@ -104,6 +104,10 @@ func revisionInfos(revs []v1beta1.ApplicationRevision, current string) []Revisio
 		}
 		if r.Status.Workflow != nil {
 			info.Phase = string(r.Status.Workflow.Phase)
+			// A terminated workflow keeps the phase it had when it stopped.
+			if r.Status.Workflow.Terminated && !r.Status.Succeeded {
+				info.Phase = "terminated"
+			}
 		}
 		out = append(out, info)
 	}
