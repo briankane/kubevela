@@ -232,6 +232,12 @@ func (d *document) unknownProperties(props, param cue.Value, name, path string, 
 	if err != nil || param.IncompleteKind() != cue.StructKind {
 		return nil
 	}
+	// A struct declaring no fields below the parameter, as k8s-objects'
+	// objects: [...{}], takes whatever it is given; the parameter itself
+	// declared empty takes nothing, as admission refuses any property.
+	if declared, err := param.Fields(cue.Optional(true)); err == nil && len(under) > 0 && !declared.Next() {
+		return nil
+	}
 	var diags []Diagnostic
 	for it.Next() {
 		key := it.Selector().Unquoted()

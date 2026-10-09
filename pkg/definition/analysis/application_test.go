@@ -276,3 +276,11 @@ func TestApplicationSources(t *testing.T) {
 	require.Len(t, got, 1, "%v", got)
 	assert.Contains(t, got[0], "no-such-source")
 }
+
+// A parameter declared as an empty struct, as k8s-objects' objects: [...{}],
+// takes whatever it is given.
+func TestEmptyStructParameterTakesAnything(t *testing.T) {
+	src := "apiVersion: core.oam.dev/v1beta1\nkind: Application\nmetadata:\n  name: a\nspec:\n  components:\n    - name: cfg\n      type: k8s-objects\n      properties:\n        objects:\n          - apiVersion: v1\n            kind: ConfigMap\n            metadata:\n              name: x\n            data:\n              a: b\n"
+	assert.Empty(t, checkApp(t, src, builtinOnly()))
+	assert.NotEmpty(t, checkApp(t, strings.Replace(src, "        objects:", "        objectz:", 1), builtinOnly()), "a parameter it does not declare is still refused")
+}
