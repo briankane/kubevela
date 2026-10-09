@@ -348,6 +348,8 @@ func (s *Server) laterRequest(msg message) *ResponseError {
 		return s.configRequest(msg)
 	case MethodClusters:
 		return s.clustersRequest(msg)
+	case MethodDefinitionsOverview:
+		return s.definitionsOverviewRequest(msg)
 	case MethodClusterDefinition:
 		var p ClusterDefinitionParams
 		if rerr := decode(msg.Params, &p); rerr != nil {
@@ -525,7 +527,7 @@ func (s *Server) handle(msg message) error {
 			text := p.ContentChanges[len(p.ContentChanges)-1].Text
 			return s.update(p.TextDocument.URI, text, &p.TextDocument.Version)
 		}
-	case MethodClusterDefinition, MethodRenderDefKit, MethodDebugData, MethodResource, MethodDefinitionSchema, MethodConfigs, MethodConfigTemplate, MethodConfigProperties, MethodClusters:
+	case MethodClusterDefinition, MethodRenderDefKit, MethodDebugData, MethodResource, MethodDefinitionSchema, MethodConfigs, MethodConfigTemplate, MethodConfigProperties, MethodClusters, MethodDefinitionsOverview:
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}

@@ -520,6 +520,8 @@ type clusterState struct {
 	// controller is its KubeVela controller; readController reads it again.
 	controller     *ControllerInfo
 	readController func() (*ControllerInfo, error)
+	// listDefinitions reads its definitions again.
+	listDefinitions func() []unstructured.Unstructured
 }
 
 // connectCluster reaches the kubeconfig's cluster once, on a goroutine, and
@@ -565,7 +567,7 @@ func (s *Server) useCluster(c Cluster, err error) bool {
 			pkgs = append(pkgs, p)
 		}
 	}
-	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties, clusters: c.Clusters, joined: c.Joined, controller: c.Controller, readController: c.ReadController}
+	s.cluster = &clusterState{fetch: c.Fetch, vela: c.KubeVela && err == nil, context: c.Context, err: err, definition: c.Definition, debugData: c.DebugData, revision: c.RevisionDefinition, watch: c.Watch, resource: c.Resource, events: c.Events, logs: c.Logs, uiSchema: c.UISchema, applications: c.Applications, revisions: c.Revisions, revisionApp: c.RevisionApplication, rollback: c.Rollback, configs: c.Configs, configTemplate: c.ConfigTemplate, configProperties: c.ConfigProperties, clusters: c.Clusters, joined: c.Joined, controller: c.Controller, readController: c.ReadController, listDefinitions: c.ListDefinitions}
 	s.clusterPackages = pkgs
 	s.clusterConfigTemplates = c.ConfigTemplateSources
 	s.clusterDefs = nil

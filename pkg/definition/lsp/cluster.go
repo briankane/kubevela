@@ -99,6 +99,8 @@ type Cluster struct {
 	// when there is none; ReadController reads it again.
 	Controller     *ControllerInfo
 	ReadController func() (*ControllerInfo, error)
+	// ListDefinitions reads its definitions again.
+	ListDefinitions func() []unstructured.Unstructured
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -197,6 +199,9 @@ func ConnectKubeconfig() (Cluster, error) {
 		return out, nil
 	}
 	out.Definitions = listDefinitions(cfg)
+	out.ListDefinitions = func() []unstructured.Unstructured {
+		return listDefinitions(cfg)
+	}
 	out.ConfigTemplateSources = listConfigTemplateSources(cfg)
 	out.ReadController = func() (*ControllerInfo, error) {
 		return withConfigClient(cfg, readController)
