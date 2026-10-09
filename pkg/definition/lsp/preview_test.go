@@ -58,6 +58,21 @@ func TestPreviewOutput(t *testing.T) {
 	assert.Contains(t, r.Objects[0].YAML, "name: my-worker")
 }
 
+// A field of the preview is traced to what it reads, as JSON numbers index lists.
+func TestProvenance(t *testing.T) {
+	c := newClient(t)
+	m := c.response(c.send(MethodProvenance, ProvenanceParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+		Text:         previewDef,
+		Values:       "parameter: {image: nginx:1.25}\n",
+		Location:     preview.Location{Object: "output", Path: []interface{}{"spec", "template", "spec", "containers", float64(0), "image"}},
+	}, true))
+	require.Empty(t, string(m["error"]))
+	var o preview.Origin
+	require.NoError(t, json.Unmarshal(m["result"], &o))
+	assert.Equal(t, preview.Origin{Kind: "parameter", Ref: "parameter.image", Set: true, Line: 9, Column: 58, RefLine: 11}, o)
+}
+
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {
 	c := newClient(t)
 	m := c.response(c.send(MethodPreviewOutput, PreviewOutputParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: previewDef}, true))

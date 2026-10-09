@@ -509,22 +509,34 @@ type Template struct {
 // TemplateSource reads the template of the definition in src. It is false for
 // a file that is not a definition or does not parse.
 func TemplateSource(path string, src []byte) (Template, bool) {
-	f, err := parser.ParseFile(path, src, parser.ParseComments)
+	f, t, ok := TemplateFile(path, src)
+	if !ok {
+		return Template{}, false
+	}
+	body, err := format.Node(f)
 	if err != nil {
 		return Template{}, false
 	}
+	t.Body = string(body)
+	return t, true
+}
+
+// TemplateFile is the template of the definition in src as a file of the
+// file's imports and the template's fields, positioned in src. Its Template
+// has no Body.
+func TemplateFile(path string, src []byte) (*ast.File, Template, bool) {
+	f, err := parser.ParseFile(path, src, parser.ParseComments)
+	if err != nil {
+		return nil, Template{}, false
+	}
 	d, ok := newDocument(path, src, f)
 	if !ok {
-		return Template{}, false
+		return nil, Template{}, false
 	}
 	decls := make([]ast.Decl, 0, len(d.imports)+len(d.template.Value.(*ast.StructLit).Elts))
 	for _, imp := range d.imports {
 		decls = append(decls, imp)
 	}
 	decls = append(decls, d.template.Value.(*ast.StructLit).Elts...)
-	body, err := format.Node(&ast.File{Decls: decls})
-	if err != nil {
-		return Template{}, false
-	}
-	return Template{Name: d.name, Type: d.typ, Body: string(body)}, true
+	return &ast.File{Filename: path, Decls: decls}, Template{Name: d.name, Type: d.typ}, true
 }

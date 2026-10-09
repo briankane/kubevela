@@ -16,7 +16,11 @@ limitations under the License.
 
 package lsp
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/oam-dev/kubevela/pkg/definition/preview"
+)
 
 // The subset of the Language Server Protocol 3.17 this server speaks. Field
 // names and values follow the specification.
@@ -188,7 +192,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 11
+const VelaProtocol = 12
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -276,6 +280,20 @@ type PreviewOutputParams struct {
 	TextDocument TextDocumentIdentifier `json:"textDocument"`
 	Text         string                 `json:"text"`
 	Values       string                 `json:"values"`
+}
+
+// MethodProvenance says where a field of a definition's preview output gets
+// its value: a parameter, the context, or a literal or expression in the
+// template. It is this server's own request; the answer is a preview.Origin.
+const MethodProvenance = "vela/provenance"
+
+// ProvenanceParams are a definition's current text, the values it was
+// previewed with, and the rendered field.
+type ProvenanceParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+	Values       string                 `json:"values"`
+	Location     preview.Location       `json:"location"`
 }
 
 // MethodPreviewValues writes a values file for a definition: its defaults
