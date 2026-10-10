@@ -50,8 +50,6 @@ type Field struct {
 	Required    bool     `json:"required"`
 	Default     string   `json:"default,omitempty"`
 	Description string   `json:"description,omitempty"`
-	// Hint says why the field is often set by a trait, if it is.
-	Hint string `json:"hint,omitempty"`
 	// Merge says how a trait's patch merges it, when the CRD says.
 	Merge    string  `json:"merge,omitempty"`
 	Children []Field `json:"children,omitempty"`
@@ -69,25 +67,6 @@ type Choice struct {
 type File struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
-}
-
-// operational are spec fields usually set apart from what a resource is.
-var operational = map[string]string{
-	"resources":                 "resource requests and limits are often a trait",
-	"affinity":                  "scheduling is often a trait",
-	"tolerations":               "scheduling is often a trait",
-	"nodeSelector":              "scheduling is often a trait",
-	"topologySpreadConstraints": "scheduling is often a trait",
-	"priorityClassName":         "scheduling is often a trait",
-	"securityContext":           "security settings are often a trait",
-	"podSecurityContext":        "security settings are often a trait",
-	"imagePullSecrets":          "registry access is often a trait",
-	"podTemplate":               "pod settings are often a trait",
-	"monitoring":                "monitoring is often a trait",
-	"metrics":                   "monitoring is often a trait",
-	"serviceMonitor":            "monitoring is often a trait",
-	"podMonitor":                "monitoring is often a trait",
-	"sidecars":                  "sidecars are often a trait",
 }
 
 // crd is the part of a CustomResourceDefinition read.
@@ -195,9 +174,6 @@ func fieldsOf(s *schema, path []string, depth int) []Field {
 			Path:        append(append([]string{}, path...), pr.Name),
 			Required:    s.required(pr.Name),
 			Description: usage(ps.Description),
-		}
-		if depth == 0 {
-			f.Hint = operational[pr.Name]
 		}
 		if ps.HasDefault {
 			f.Default = literal(ps.Default)
