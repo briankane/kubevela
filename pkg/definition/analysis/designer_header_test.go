@@ -165,3 +165,32 @@ func TestEditHeader(t *testing.T) {
 	_, err = EditHeader("t.cue", []byte(out), []string{"attributes", "status", "healthPolicy"}, "x")
 	assert.ErrorContains(t, err, "not a header field")
 }
+
+func TestAddonMetadataFields(t *testing.T) {
+	fs := AddonMetadataFields()
+	for path, kind := range map[string]string{
+		"name":                    "string",
+		"tags":                    "strings",
+		"deployTo.runtimeCluster": "bool",
+		"system.vela":             "string",
+		"dependencies":            "list",
+		"annotations":             "map",
+		"invisible":               "bool",
+	} {
+		f, ok := fieldAt(fs, path)
+		if assert.True(t, ok, path) {
+			assert.Equal(t, kind, f.Kind, path)
+		}
+	}
+	name, _ := fieldAt(fs, "name")
+	assert.True(t, name.Required)
+	assert.Equal(t, "The addon's name: what it is enabled and upgraded by.", name.Doc)
+	deps, _ := fieldAt(fs, "dependencies")
+	_, ok := fieldAt(deps.Items, "version")
+	assert.True(t, ok)
+	_, ok = fieldAt(fs, "deployTo.runtime_cluster")
+	assert.False(t, ok, "the legacy spelling")
+	sys, _ := fieldAt(fs, "system.kubernetes")
+	assert.Equal(t, "Requires", sys.Section)
+	assert.Equal(t, "System: kubernetes", sys.Label)
+}

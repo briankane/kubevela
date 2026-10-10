@@ -43,6 +43,10 @@ type HeaderField struct {
 	Section string   `json:"section"`
 	// Suggest names the values offered for it: workloads, traits or definitions.
 	Suggest string `json:"suggest,omitempty"`
+	// Required is whether the file must set it.
+	Required bool `json:"required,omitempty"`
+	// Items are, for a list of structs, the fields of each, by name.
+	Items []HeaderField `json:"items,omitempty"`
 }
 
 // Header sections, in the order the designer shows them.
@@ -141,8 +145,12 @@ func walkAttributes(schema cue.Value, path []string, out *[]HeaderField) {
 			continue
 		}
 		f := HeaderField{Path: p, Kind: kindOfSchema(v), Label: humanise(name), Doc: firstSentences(v), Section: section}
-		if section == SectionStatus {
+		switch {
+		case section == SectionStatus:
 			f.Kind = "cue"
+		case f.Kind == "list":
+			// The header's lists of structs are written in the CUE.
+			f.Kind = "other"
 		}
 		if x, ok := headerExtras[key]; ok {
 			if x.Kind != "" {
@@ -169,8 +177,13 @@ func kindOfSchema(v cue.Value) string {
 	case cue.IntKind, cue.NumberKind:
 		return "int"
 	case cue.ListKind:
-		if e := v.LookupPath(cue.MakePath(cue.AnyIndex)); e.Exists() && e.IncompleteKind() == cue.StringKind {
-			return "strings"
+		if e := v.LookupPath(cue.MakePath(cue.AnyIndex)); e.Exists() {
+			switch e.IncompleteKind() {
+			case cue.StringKind:
+				return "strings"
+			case cue.StructKind:
+				return "list"
+			}
 		}
 	case cue.StructKind:
 		if e := v.LookupPath(cue.MakePath(cue.AnyString)); e.Exists() && e.IncompleteKind() == cue.StringKind {

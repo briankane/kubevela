@@ -442,6 +442,11 @@ type EditDefinitionHeaderParams struct {
 	Value        interface{}            `json:"value"`
 }
 
+// MethodAddonMetadataFields lists the fields of an addon's metadata.yaml, as
+// pkg/addon's Meta type has them, for the addon panel's form. It is this
+// server's own request; it takes no params and answers []analysis.HeaderField.
+const MethodAddonMetadataFields = "vela/addonMetadataFields"
+
 // MethodPreviewValues writes a values file for a definition: its defaults
 // filled in and each required parameter named.
 const MethodPreviewValues = "vela/previewValues"

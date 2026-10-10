@@ -64,3 +64,13 @@ func TestDefinitionHeader(t *testing.T) {
 	require.Len(t, edits, 1)
 	assert.Contains(t, edits[0].NewText, `description: "Scales it."`)
 }
+
+func TestAddonMetadataFields(t *testing.T) {
+	c := newClient(t)
+	m := c.response(c.send(MethodAddonMetadataFields, struct{}{}, true))
+	require.Empty(t, string(m["error"]))
+	var fs []HeaderValue
+	require.NoError(t, json.Unmarshal(m["result"], &fs))
+	require.NotEmpty(t, fs)
+	assert.Equal(t, []string{"name"}, fs[0].Path)
+}
