@@ -23,6 +23,7 @@ import (
 
 	"github.com/oam-dev/kubevela/pkg/definition"
 	"github.com/oam-dev/kubevela/pkg/definition/analysis"
+	"github.com/oam-dev/kubevela/pkg/definition/crdgen"
 )
 
 // clusterDefinitions are the cluster's definitions, each turned into CUE
@@ -137,6 +138,16 @@ func (a appDefinitions) List(defType string) []analysis.AppDefinition {
 		if d, ok := a.Lookup(defType, n); ok {
 			out = append(out, d)
 		}
+	}
+	return out
+}
+
+// traitDefinitions are the traits an Application may name, as crdgen reads
+// them: a workspace one with its file.
+func (s *Server) traitDefinitions() []crdgen.Definition {
+	var out []crdgen.Definition
+	for _, d := range analysis.DefinitionsOfType("trait", s.options()) {
+		out = append(out, crdgen.Definition{Name: d.Name, Source: d.Source, CUE: d.CUE, Path: d.Path})
 	}
 	return out
 }

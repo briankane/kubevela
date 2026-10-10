@@ -19,8 +19,10 @@ package lsp
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,6 +160,53 @@ func TestDefinitionsFromCRDs(t *testing.T) {
 	require.NoError(t, json.Unmarshal(m["result"], &r))
 	require.Len(t, r.Files, 2)
 	assert.Equal(t, "cache-backup.cue", r.Files[1].Name)
+}
+
+// workspaceScaling is a workspace trait patching the replicas a Cache has.
+const workspaceScaling = `scaling: {
+	type: "trait"
+	attributes: appliesToWorkloads: ["deployments.apps"]
+}
+template: {
+	patch: spec: replicas: parameter.replicas
+	parameter: replicas: *1 | int
+}
+`
+
+func TestDefinitionsFromCRDsUseExistingTraits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scaling.cue")
+	require.NoError(t, os.WriteFile(path, []byte(workspaceScaling), 0o600))
+	cache, err := os.ReadFile("../crdgen/testdata/caches.yaml")
+	require.NoError(t, err)
+	c := newClient(t)
+	c.response(c.send("initialize", map[string]interface{}{"rootUri": "file://" + dir}, true))
+	c.send("initialized", map[string]interface{}{}, false)
+
+	existing := func() map[string]crdgen.Existing {
+		m := c.response(c.send(MethodCRDSet, CRDParams{Text: string(cache)}, true))
+		require.Empty(t, string(m["error"]))
+		var members []crdgen.Member
+		require.NoError(t, json.Unmarshal(m["result"], &members))
+		out := map[string]crdgen.Existing{}
+		for _, e := range members[0].Existing {
+			out[e.Name] = e
+		}
+		return out
+	}
+	require.Eventually(t, func() bool { _, ok := existing()["scaling"]; return ok }, 10*time.Second, 50*time.Millisecond, "the workspace's trait is offered")
+	assert.True(t, existing()["scaling"].Editable)
+	assert.Contains(t, existing(), "scaler", "a built-in one too")
+
+	m := c.response(c.send(MethodDefinitionsFromCRDs, DefinitionsFromCRDsParams{Text: string(cache), Plans: []crdgen.Plan{
+		{Kind: "Cache", Role: "component", Name: "cache", Choices: []crdgen.Choice{{Path: []string{"replicas"}, To: "existing:scaling"}}},
+	}}, true))
+	require.Empty(t, string(m["error"]))
+	var r ComponentFromCRDResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	require.Len(t, r.Files, 2)
+	assert.Equal(t, path, r.Files[1].Path)
+	assert.Contains(t, r.Files[1].Text, `"deployments.apps", "caches.shop.example.com"`)
 }
 
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {

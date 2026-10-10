@@ -295,7 +295,7 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 	case MethodCRDSet:
 		var p CRDParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			members, err := crdgen.ReadSet([]byte(p.Text))
+			members, err := crdgen.ReadSetWith([]byte(p.Text), s.traitDefinitions())
 			if err != nil {
 				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
 			} else {
@@ -305,7 +305,7 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 	case MethodDefinitionsFromCRDs:
 		var p DefinitionsFromCRDsParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
-			files, err := crdgen.GenerateSet([]byte(p.Text), p.Plans)
+			files, err := crdgen.GenerateSetWith([]byte(p.Text), p.Plans, s.traitDefinitions())
 			if err != nil {
 				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
 			} else {

@@ -57,7 +57,8 @@ type Field struct {
 
 // Choice says where a spec field, and the fields under it unless they have a
 // choice of their own, goes: "component", "trait:<name>", "both:<name>" (the
-// component sets it and the trait overrides it) or "omit".
+// component sets it and the trait overrides it), "existing:<name>" (a trait
+// already made sets it) or "omit".
 type Choice struct {
 	Path []string `json:"path"`
 	To   string   `json:"to"`
@@ -67,6 +68,8 @@ type Choice struct {
 type File struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
+	// Path is the file it changes, for one that exists.
+	Path string `json:"path,omitempty"`
 }
 
 // crd is the part of a CustomResourceDefinition read.
@@ -214,11 +217,37 @@ func Generate(src []byte, name string, choices []Choice) ([]File, error) {
 // parameter, and a trait for each trait named in choices, patching its
 // fields of the spec. A field with no choice goes where its parent goes,
 // and a top-level field to the component; a required one may only go there.
+// A field sent to a trait already made ("existing:<name>") is left out.
 func GenerateWith(src []byte, name string, choices []Choice, opts Options) ([]File, error) {
 	p, err := parse(src)
 	if err != nil {
 		return nil, err
 	}
+	component, parts, err := generate(p, name, choices, opts)
+	if err != nil {
+		return nil, err
+	}
+	files := []File{component}
+	for _, t := range parts {
+		f, err := traitFile(t, []Info{p.info})
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// traitPart is a trait patching part of a spec, before the workloads it applies to are known.
+type traitPart struct {
+	name, patch, params string
+	usesStrings         bool
+	// cut is the part of the spec it sets.
+	cut *schema
+}
+
+// generate is the component GenerateWith makes, and the traits, by name.
+func generate(p parsed, name string, choices []Choice, opts Options) (File, []traitPart, error) {
 	to := map[string]string{}
 	traits := map[string]bool{}
 	for _, c := range choices {
@@ -228,7 +257,7 @@ func GenerateWith(src []byte, name string, choices []Choice, opts Options) ([]Fi
 		}
 	}
 	if err := checkRequired(p.spec, nil, "component", to); err != nil {
-		return nil, err
+		return File{}, nil, err
 	}
 	apiVersion := p.info.Group + "/" + p.info.Version
 	var usesStrings bool
@@ -256,28 +285,44 @@ template: {
 	if usesStrings {
 		component = "import \"strings\"\n\n" + component
 	}
-	files := []File{}
 	text, err := format.Source([]byte(component))
 	if err != nil {
-		return nil, fmt.Errorf("the component does not format: %w", err)
+		return File{}, nil, fmt.Errorf("the component does not format: %w", err)
 	}
-	files = append(files, File{Name: name + ".cue", Text: string(text)})
 
 	names := make([]string, 0, len(traits))
 	for t := range traits {
 		names = append(names, t)
 	}
 	sort.Strings(names)
+	parts := make([]traitPart, 0, len(names))
 	for _, t := range names {
-		var usesStrings bool
 		// A trait sets only what it is given, so its top-level fields are optional.
 		cut := subsetOf(p.spec, nil, "component", inTrait(t), to)
-		params := cut.structOf(0, nil, true, &usesStrings)
-		patch := "patch: spec: parameter"
+		part := traitPart{name: t, cut: cut}
+		part.params = cut.structOf(0, nil, true, &part.usesStrings)
+		part.patch = "patch: spec: parameter"
 		if body, explicit := patchOf(cut, nil, "component", t, to); explicit {
-			patch = "patch: spec: {\n" + body + "}"
+			part.patch = "patch: spec: {\n" + body + "}"
 		}
-		trait := fmt.Sprintf(`%s: {
+		parts = append(parts, part)
+	}
+	return File{Name: name + ".cue", Text: string(text)}, parts, nil
+}
+
+// traitFile is a trait patching part of the spec of each CRD of.
+func traitFile(t traitPart, of []Info) (File, error) {
+	resources := make([]string, len(of))
+	kinds := make([]string, len(of))
+	for i, o := range of {
+		resources[i] = strconv.Quote(o.Plural + "." + o.Group)
+		kinds[i] = "a " + o.Kind
+	}
+	description := fmt.Sprintf("Sets part of %s's spec.", kinds[0])
+	if len(of) > 1 {
+		description = fmt.Sprintf("Sets part of the spec of %s or %s.", strings.Join(kinds[:len(kinds)-1], ", "), kinds[len(kinds)-1])
+	}
+	trait := fmt.Sprintf(`%s: {
 	type:        "trait"
 	description: %s
 	attributes: {
@@ -289,17 +334,15 @@ template: {
 	%s
 	parameter: %s
 }
-`, strconv.Quote(t), strconv.Quote(fmt.Sprintf("Sets part of a %s's spec.", p.info.Kind)), strconv.Quote(p.info.Plural+"."+p.info.Group), patch, params)
-		if usesStrings {
-			trait = "import \"strings\"\n\n" + trait
-		}
-		text, err := format.Source([]byte(trait))
-		if err != nil {
-			return nil, fmt.Errorf("trait %s does not format: %w", t, err)
-		}
-		files = append(files, File{Name: t + ".cue", Text: string(text)})
+`, strconv.Quote(t.name), strconv.Quote(description), strings.Join(resources, ", "), t.patch, t.params)
+	if t.usesStrings {
+		trait = "import \"strings\"\n\n" + trait
 	}
-	return files, nil
+	text, err := format.Source([]byte(trait))
+	if err != nil {
+		return File{}, fmt.Errorf("trait %s does not format: %w", t.name, err)
+	}
+	return File{Name: t.name + ".cue", Text: string(text)}, nil
 }
 
 // destination is where the field at path goes: its own choice, or its parent's.

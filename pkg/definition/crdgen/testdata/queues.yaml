@@ -1,0 +1,37 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: queues.shop.example.com
+spec:
+  group: shop.example.com
+  names:
+    kind: Queue
+    plural: queues
+    singular: queue
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [topic]
+              properties:
+                topic:
+                  type: string
+                  description: Topic the queue serves.
+                replicas:
+                  type: string
+                  description: Replicas, as a string.
+                persistence:
+                  type: object
+                  description: Keeps messages across restarts.
+                  properties:
+                    enabled: {type: boolean}
+                    size:
+                      type: string
+                      description: Disk for the queue.
