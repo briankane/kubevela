@@ -514,8 +514,25 @@ func set(s *ast.StructLit, path []string, value ast.Expr) {
 	}
 	field := &ast.Field{Label: labelFor(path[0]), Value: v}
 	ast.SetRelPos(field, token.Newline)
-	s.Elts = append(s.Elts, field)
+	// A new field goes after the last one written that comes before it in headerOrder.
+	at := len(s.Elts)
+	if rank, ok := headerOrder[path[0]]; ok {
+		at = 0
+		for i, e := range s.Elts {
+			if fd, ok := e.(*ast.Field); ok {
+				if n, ok := fieldName(fd.Label); ok {
+					if r, known := headerOrder[n]; known && r < rank {
+						at = i + 1
+					}
+				}
+			}
+		}
+	}
+	s.Elts = append(s.Elts[:at], append([]ast.Decl{field}, s.Elts[at:]...)...)
 }
+
+// headerOrder is the order a header's own fields are written in.
+var headerOrder = map[string]int{"type": 0, "description": 1, "alias": 2, "extends": 3, "abstract": 4, "labels": 5, "annotations": 6, "attributes": 7}
 
 // braced makes a struct written as a: b: c print with braces once it holds more.
 func braced(s *ast.StructLit) {

@@ -162,6 +162,10 @@ func TestEditHeader(t *testing.T) {
 	assert.Equal(t, map[string]string{"definition.oam.dev/icon": "db"}, valueAt(h, "annotations").Value)
 	assert.Empty(t, Analyze("t.cue", []byte(out)).Diagnostics, out)
 
+	e, err = EditHeader("t.cue", []byte(out), []string{"alias"}, "backup")
+	require.NoError(t, err)
+	assert.Contains(t, apply(t, out, e), "description: \"Adds a CacheBackup.\"\n\talias:       \"backup\"\n", "beside the description, not at the end")
+
 	_, err = EditHeader("t.cue", []byte(out), []string{"attributes", "status", "healthPolicy"}, "x")
 	assert.ErrorContains(t, err, "not a header field")
 }
