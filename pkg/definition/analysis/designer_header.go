@@ -48,6 +48,8 @@ type HeaderField struct {
 	Required bool `json:"required,omitempty"`
 	// Items are, for a list of structs, the fields of each, by name.
 	Items []HeaderField `json:"items,omitempty"`
+	// Advanced is whether it is seldom set, so shown folded until it is.
+	Advanced bool `json:"advanced,omitempty"`
 }
 
 // Header sections, in the order the designer shows them.
@@ -59,14 +61,32 @@ const (
 	SectionStatus     = "Status"
 )
 
-// headerExtras are what the generated schema cannot say of an attribute:
-// the values a string takes, what to suggest, and its section.
+// headerExtras are what the generated schema cannot say of an attribute, or
+// says in the Go type's words: the values a string takes, what to suggest,
+// its section, a plainer label and help, and whether it is seldom set.
 var headerExtras = map[string]HeaderField{
-	"stage":              {Kind: "enum", Enum: []string{"", "PreDispatch", "DefaultDispatch", "PostDispatch"}},
-	"scope":              {Kind: "enum", Enum: []string{"", "Application"}},
-	"appliesToWorkloads": {Suggest: "workloads"},
-	"conflictsWith":      {Suggest: "traits"},
-	"version":            {Section: SectionAbout},
+	"stage":                          {Kind: "enum", Enum: []string{"", "PreDispatch", "DefaultDispatch", "PostDispatch"}, Doc: "When its resources are dispatched: before the component's, with them (the default), or once they are healthy."},
+	"scope":                          {Kind: "enum", Enum: []string{"", "Application"}, Doc: "Application: it changes the Application before it is rendered."},
+	"appliesToWorkloads":             {Suggest: "workloads", Label: "Applies to", Doc: "Component types or workload resources (deployments.apps) it may be added to; none for any."},
+	"conflictsWith":                  {Suggest: "traits", Doc: "Traits it may not be added beside."},
+	"version":                        {Section: SectionAbout, Doc: "A semantic version: each makes its own revision, so a use can pin name@v1."},
+	"podDisruptive":                  {Doc: "Changing it restarts the workload's pods."},
+	"controlPlaneOnly":               {Advanced: true, Doc: "Its resources stay on the hub, never sent to a managed cluster."},
+	"manageWorkload":                 {Advanced: true, Label: "Manages the workload", Doc: "It renders the workload itself."},
+	"revisionEnabled":                {Advanced: true, Doc: "Its template may read context.revision."},
+	"workloadRefPath":                {Advanced: true, Label: "Workload ref path", Doc: "Where its object keeps a reference to the workload."},
+	"podSpecPath":                    {Advanced: true, Doc: "Where the output keeps its pod spec, for traits that patch it."},
+	"revisionLabel":                  {Advanced: true, Doc: "The label the workload's revision is written to."},
+	"workload.type":                  {Label: "Workload type", Doc: "A WorkloadDefinition, or autodetects.core.oam.dev to read the output's kind.", Advanced: true},
+	"workload.definition.apiVersion": {Label: "Workload apiVersion", Doc: "The output's apiVersion, which traits' Applies to matches."},
+	"workload.definition.kind":       {Label: "Workload kind", Doc: "The output's kind."},
+	"global":                         {Doc: "Applies to every Application in its namespace, or every namespace from vela-system."},
+	"priority":                       {Doc: "Global policies apply highest first."},
+	"manageHealthCheck":              {Advanced: true, Label: "Manages health check", Doc: "It decides the Application's health itself."},
+	"restrictions.namespaces":        {Doc: "Namespaces whose Applications may use it, as names or globs (tenant-*); none for any."},
+	"status.healthPolicy":            {Doc: "Sets isHealth."},
+	"status.customStatus":            {Label: "Status message", Doc: "Sets message, shown beside its health."},
+	"status.details":                 {Doc: "Fields shown with its status."},
 }
 
 // expanded are the attribute structs whose fields the designer shows one by one.
@@ -79,7 +99,7 @@ var expanded = map[string]bool{"workload": true, "workload.definition": true, "s
 func HeaderFields(typ string) []HeaderField {
 	out := []HeaderField{
 		{Path: []string{"description"}, Kind: "string", Label: "Description", Doc: "What it is, as VelaUX and vela show say.", Section: SectionAbout},
-		{Path: []string{"alias"}, Kind: "string", Label: "Alias", Doc: "A shorter name shown beside its own.", Section: SectionAbout},
+		{Path: []string{"alias"}, Kind: "string", Label: "Alias", Doc: "A shorter name shown beside its own.", Section: SectionAbout, Advanced: true},
 	}
 	schema := cuecontext.New().BuildFile(&ast.File{Decls: append([]ast.Decl{mustField(fmt.Sprintf("#this: #attributes[%q]", typ))}, headerSchema()...)}).LookupPath(cue.ParsePath("#this"))
 	if !schema.Exists() {
@@ -87,8 +107,8 @@ func HeaderFields(typ string) []HeaderField {
 	}
 	if schemaChild(schema, cue.Str("extends")).Exists() {
 		out = append(out,
-			HeaderField{Path: []string{"extends"}, Kind: "string", Label: "Extends", Doc: firstSentence(schemaChild(schema, cue.Str("extends"))), Section: SectionAbout, Suggest: "definitions"},
-			HeaderField{Path: []string{"abstract"}, Kind: "bool", Label: "Abstract", Doc: firstSentence(schemaChild(schema, cue.Str("abstract"))), Section: SectionAbout},
+			HeaderField{Path: []string{"extends"}, Kind: "string", Label: "Extends", Doc: "A definition of the same type whose template this one builds on.", Section: SectionAbout, Suggest: "definitions", Advanced: true},
+			HeaderField{Path: []string{"abstract"}, Kind: "bool", Label: "Abstract", Doc: "Only to be extended: no Application may use it.", Section: SectionAbout, Advanced: true},
 		)
 	}
 	var attrs, rest []HeaderField
@@ -103,8 +123,8 @@ func HeaderFields(typ string) []HeaderField {
 	sort.SliceStable(rest, func(i, j int) bool { return sectionOrder(rest[i].Section) < sectionOrder(rest[j].Section) })
 	out = append(out, rest...)
 	return append(out,
-		HeaderField{Path: []string{"labels"}, Kind: "map", Label: "Labels", Doc: "A key without oam.dev in it is written with custom.definition.oam.dev/ before it.", Section: SectionMeta},
-		HeaderField{Path: []string{"annotations"}, Kind: "map", Label: "Annotations", Doc: "A key without oam.dev in it is written with custom.definition.oam.dev/ before it.", Section: SectionMeta},
+		HeaderField{Path: []string{"labels"}, Kind: "map", Label: "Labels", Doc: "A key without oam.dev in it, here or in annotations, gets custom.definition.oam.dev/ before it.", Section: SectionMeta, Suggest: "labels"},
+		HeaderField{Path: []string{"annotations"}, Kind: "map", Label: "Annotations", Section: SectionMeta, Suggest: "annotations"},
 	)
 }
 
@@ -163,6 +183,16 @@ func walkAttributes(schema cue.Value, path []string, out *[]HeaderField) {
 			if x.Section != "" {
 				f.Section = x.Section
 			}
+			if x.Label != "" {
+				f.Label = x.Label
+			}
+			if x.Doc != "" {
+				f.Doc = x.Doc
+			}
+			f.Advanced = x.Advanced
+		}
+		if f.Kind == "other" {
+			f.Advanced = true
 		}
 		*out = append(*out, f)
 	}

@@ -53,8 +53,10 @@ func TestHeaderFields(t *testing.T) {
 	}
 	f, _ := fieldAt(trait, "attributes.appliesToWorkloads")
 	assert.Equal(t, "workloads", f.Suggest)
-	assert.Equal(t, "Applies to workloads", f.Label)
+	assert.Equal(t, "Applies to", f.Label)
 	assert.NotEmpty(t, f.Doc, "from the CRD")
+	cp, _ := fieldAt(trait, "attributes.controlPlaneOnly")
+	assert.True(t, cp.Advanced, "seldom set")
 	_, ok := fieldAt(trait, "attributes.extends")
 	assert.False(t, ok, "shown at the top level")
 
@@ -196,5 +198,9 @@ func TestAddonMetadataFields(t *testing.T) {
 	assert.False(t, ok, "the legacy spelling")
 	sys, _ := fieldAt(fs, "system.kubernetes")
 	assert.Equal(t, "Requires", sys.Section)
-	assert.Equal(t, "System: kubernetes", sys.Label)
+	assert.Equal(t, "Kubernetes version", sys.Label)
+	hidden, _ := fieldAt(fs, "invisible")
+	assert.False(t, hidden.Required, "a switch is false when not written")
+	plugins, _ := fieldAt(fs, "uxPlugins")
+	assert.True(t, plugins.Advanced)
 }

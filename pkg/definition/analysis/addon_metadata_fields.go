@@ -43,6 +43,19 @@ var addonMetaSections = map[string]string{
 // the legacy spelling of runtimeCluster.
 var addonMetaSkipped = map[string]bool{"deployTo.runtime_cluster": true}
 
+// addonMetaExtras are plainer labels for Meta's fields, and those seldom set.
+var addonMetaExtras = map[string]HeaderField{
+	"url":                          {Label: "URL"},
+	"uxPlugins":                    {Label: "VelaUX plugins", Advanced: true},
+	"annotations":                  {Advanced: true},
+	"invisible":                    {Label: "Hidden"},
+	"deployTo.disableControlPlane": {Label: "Skip the control plane"},
+	"deployTo.runtimeCluster":      {Label: "Runtime clusters too"},
+	"needNamespace":                {Label: "Namespaces to create"},
+	"system.vela":                  {Label: "KubeVela version"},
+	"system.kubernetes":            {Label: "Kubernetes version"},
+}
+
 // AddonMetadataFields are the fields of an addon's metadata.yaml as pkg/addon's
 // Meta type has them, with its docs, for the addon panel's form.
 var AddonMetadataFields = sync.OnceValue(func() []HeaderField {
@@ -82,9 +95,16 @@ func metaFields(schema cue.Value, path []string, out *[]HeaderField) {
 			metaFields(v, p, out)
 			continue
 		}
-		hf := HeaderField{Path: p, Kind: kind, Label: humanise(name), Doc: firstSentence(v), Section: section, Required: !it.IsOptional()}
+		// A switch is false when not written, so it is never required of the file.
+		hf := HeaderField{Path: p, Kind: kind, Label: humanise(name), Doc: firstSentence(v), Section: section, Required: !it.IsOptional() && kind != "bool"}
 		if len(path) > 0 {
 			hf.Label = humanise(path[len(path)-1]) + ": " + strings.ToLower(hf.Label)
+		}
+		if x, ok := addonMetaExtras[strings.Join(p, ".")]; ok {
+			if x.Label != "" {
+				hf.Label = x.Label
+			}
+			hf.Advanced = x.Advanced
 		}
 		if kind == "list" {
 			var items []HeaderField
