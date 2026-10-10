@@ -89,6 +89,18 @@ template: patch: spec: nothing: parameter.n
 	assert.NotContains(t, byName, "hpa", "it patches nothing")
 }
 
+// A trait this package made, patching the spec with its parameter, fits the CRD it was made from.
+func TestExistingTraitMadeHere(t *testing.T) {
+	files, err := Generate(caches(t), "cache", []Choice{{Path: []string{"persistence"}, To: "trait:cache-persistence"}})
+	require.NoError(t, err)
+	trait := fileNamed(t, files, "cache-persistence.cue")
+	require.Contains(t, trait.Text, "patch: spec: parameter")
+	members, err := ReadSetWith(caches(t), []Definition{{Name: "cache-persistence", Source: "workspace", CUE: trait.Text}})
+	require.NoError(t, err)
+	require.Len(t, members[0].Existing, 1)
+	assert.Equal(t, [][]string{{"persistence"}}, members[0].Existing[0].Fields)
+}
+
 func TestUseExistingTrait(t *testing.T) {
 	scaling := Definition{Name: "scaling", Source: "workspace", Path: "/ws/scaling.cue", CUE: `scaling: {
 	type: "trait"

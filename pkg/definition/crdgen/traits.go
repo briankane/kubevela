@@ -108,7 +108,8 @@ func readTrait(src string) (traitShape, bool) {
 	scope := map[string]ast.Expr{}
 	for _, d := range template.Elts {
 		if fd, ok := d.(*ast.Field); ok {
-			if name, ok := labelName(fd.Label); ok && name != "patch" && name != "parameter" {
+			// The parameter is followed too: patch: spec: parameter sets each of its fields.
+			if name, ok := labelName(fd.Label); ok && name != "patch" {
 				scope[name] = fd.Value
 			}
 		}
