@@ -101,6 +101,10 @@ type Cluster struct {
 	ReadController func() (*ControllerInfo, error)
 	// ListDefinitions reads its definitions again.
 	ListDefinitions func() []unstructured.Unstructured
+	// Addons lists the addons enabled on it and its registries;
+	// RegistryAddons fetches what a registry offers.
+	Addons         func() (AddonsResult, error)
+	RegistryAddons func(registry string) (RegistryAddonsResult, error)
 }
 
 // ClusterConnector reaches the cluster the kubeconfig names.
@@ -194,6 +198,18 @@ func ConnectKubeconfig() (Cluster, error) {
 	}
 	out.Clusters = func() ([]ManagedCluster, error) {
 		return withConfigClient(cfg, readClusters)
+	}
+	out.Addons = func() (AddonsResult, error) {
+		return withConfigClient(cfg, readAddons)
+	}
+	out.RegistryAddons = func(registry string) (RegistryAddonsResult, error) {
+		cli, err := configClient(cfg)
+		if err != nil {
+			return RegistryAddonsResult{}, err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), registryTimeout)
+		defer cancel()
+		return readRegistryAddons(ctx, cli, registry)
 	}
 	if !out.KubeVela {
 		return out, nil

@@ -474,6 +474,8 @@ func (s *Server) laterRequest(msg message) *ResponseError {
 		return s.configRequest(msg)
 	case MethodClusters:
 		return s.clustersRequest(msg)
+	case MethodAddons, MethodRegistryAddons:
+		return s.addonsRequest(msg)
 	case MethodDefinitionsOverview:
 		return s.definitionsOverviewRequest(msg)
 	case MethodClusterDefinition:
@@ -653,7 +655,7 @@ func (s *Server) handle(msg message) error {
 			text := p.ContentChanges[len(p.ContentChanges)-1].Text
 			return s.update(p.TextDocument.URI, text, &p.TextDocument.Version)
 		}
-	case MethodClusterDefinition, MethodRenderDefKit, MethodDebugData, MethodResource, MethodDefinitionSchema, MethodConfigs, MethodConfigTemplate, MethodConfigProperties, MethodClusters, MethodDefinitionsOverview:
+	case MethodClusterDefinition, MethodRenderDefKit, MethodDebugData, MethodResource, MethodDefinitionSchema, MethodConfigs, MethodConfigTemplate, MethodConfigProperties, MethodClusters, MethodAddons, MethodRegistryAddons, MethodDefinitionsOverview:
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
