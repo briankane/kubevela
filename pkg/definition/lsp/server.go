@@ -292,6 +292,26 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 				result = ComponentFromCRDResult{Files: files}
 			}
 		}
+	case MethodCRDSet:
+		var p CRDParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			members, err := crdgen.ReadSet([]byte(p.Text))
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = members
+			}
+		}
+	case MethodDefinitionsFromCRDs:
+		var p DefinitionsFromCRDsParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			files, err := crdgen.GenerateSet([]byte(p.Text), p.Plans)
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = ComponentFromCRDResult{Files: files}
+			}
+		}
 	case MethodPreviewValues:
 		var p PreviewValuesParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -606,7 +626,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodMoveToTrait, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
+	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodCRDSet, MethodDefinitionsFromCRDs, MethodMoveToTrait, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams

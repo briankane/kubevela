@@ -194,7 +194,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 13
+const VelaProtocol = 14
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -361,6 +361,23 @@ type ComponentFromCRDParams struct {
 // ComponentFromCRDResult are the files: the component first, then each trait.
 type ComponentFromCRDResult struct {
 	Files []crdgen.File `json:"files"`
+}
+
+// MethodCRDSet reads the CRDs among a YAML stream's documents, each as
+// MethodCRDFields does, with the fields of each found to name another. It is
+// this server's own request; the params are CRDParams and the answer a
+// []crdgen.Member.
+const MethodCRDSet = "vela/crdSet"
+
+// MethodDefinitionsFromCRDs makes the definitions for a set of CRDs, a
+// component or a trait adding the object to one, as each plan says. It is
+// this server's own request; the answer is a ComponentFromCRDResult.
+const MethodDefinitionsFromCRDs = "vela/definitionsFromCRDs"
+
+// DefinitionsFromCRDsParams are the CRDs and what to make of each.
+type DefinitionsFromCRDsParams struct {
+	Text  string        `json:"text"`
+	Plans []crdgen.Plan `json:"plans"`
 }
 
 // MethodMoveToTrait moves a component's parameter to a new trait. It is this

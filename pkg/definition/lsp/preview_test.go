@@ -135,6 +135,31 @@ func TestComponentFromCRD(t *testing.T) {
 	assert.Contains(t, string(m["error"]), "not a CustomResourceDefinition")
 }
 
+func TestDefinitionsFromCRDs(t *testing.T) {
+	cache, err := os.ReadFile("../crdgen/testdata/caches.yaml")
+	require.NoError(t, err)
+	related, err := os.ReadFile("../crdgen/testdata/related.yaml")
+	require.NoError(t, err)
+	src := string(cache) + "---\n" + string(related)
+	c := newClient(t)
+	m := c.response(c.send(MethodCRDSet, CRDParams{Text: src}, true))
+	require.Empty(t, string(m["error"]))
+	var members []crdgen.Member
+	require.NoError(t, json.Unmarshal(m["result"], &members))
+	require.Len(t, members, 3)
+	assert.Equal(t, "Cache", members[1].Refs[0].Of)
+
+	m = c.response(c.send(MethodDefinitionsFromCRDs, DefinitionsFromCRDsParams{Text: src, Plans: []crdgen.Plan{
+		{Kind: "Cache", Role: "component", Name: "cache"},
+		{Kind: "CacheBackup", Role: "trait", Name: "cache-backup", Of: "Cache", Ref: []string{"cacheRef"}},
+	}}, true))
+	require.Empty(t, string(m["error"]))
+	var r ComponentFromCRDResult
+	require.NoError(t, json.Unmarshal(m["result"], &r))
+	require.Len(t, r.Files, 2)
+	assert.Equal(t, "cache-backup.cue", r.Files[1].Name)
+}
+
 func TestPreviewOutputNamesWhatIsMissing(t *testing.T) {
 	c := newClient(t)
 	m := c.response(c.send(MethodPreviewOutput, PreviewOutputParams{TextDocument: TextDocumentIdentifier{URI: uri}, Text: previewDef}, true))

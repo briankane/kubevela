@@ -334,13 +334,14 @@ func destination(path []string, parent string, to map[string]string) string {
 	return parent
 }
 
-// checkRequired refuses a required field sent anywhere but where its parent goes.
+// checkRequired refuses a required field sent anywhere but where its parent
+// goes, other than the reference a related object's trait sets ("ref").
 func checkRequired(s *schema, path []string, parent string, to map[string]string) error {
 	for _, pr := range s.Props {
 		p := append(append([]string{}, path...), pr.Name)
 		d := destination(p, parent, to)
 		overridden := strings.HasPrefix(d, "both:") && inComponent(parent)
-		if s.required(pr.Name) && d != parent && !overridden {
+		if s.required(pr.Name) && d != parent && !overridden && d != "ref" {
 			return fmt.Errorf("%s is required, so it goes where its parent goes (%s), or stays and is overridden", strings.Join(p, "."), parent)
 		}
 		if err := checkRequired(pr.Schema, p, d, to); err != nil {
