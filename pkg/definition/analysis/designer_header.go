@@ -18,6 +18,7 @@ package analysis
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,8 +87,8 @@ func HeaderFields(typ string) []HeaderField {
 	}
 	if schemaChild(schema, cue.Str("extends")).Exists() {
 		out = append(out,
-			HeaderField{Path: []string{"extends"}, Kind: "string", Label: "Extends", Doc: firstSentences(schemaChild(schema, cue.Str("extends"))), Section: SectionAbout, Suggest: "definitions"},
-			HeaderField{Path: []string{"abstract"}, Kind: "bool", Label: "Abstract", Doc: firstSentences(schemaChild(schema, cue.Str("abstract"))), Section: SectionAbout},
+			HeaderField{Path: []string{"extends"}, Kind: "string", Label: "Extends", Doc: firstSentence(schemaChild(schema, cue.Str("extends"))), Section: SectionAbout, Suggest: "definitions"},
+			HeaderField{Path: []string{"abstract"}, Kind: "bool", Label: "Abstract", Doc: firstSentence(schemaChild(schema, cue.Str("abstract"))), Section: SectionAbout},
 		)
 	}
 	var attrs, rest []HeaderField
@@ -144,7 +145,7 @@ func walkAttributes(schema cue.Value, path []string, out *[]HeaderField) {
 			walkAttributes(v, p, out)
 			continue
 		}
-		f := HeaderField{Path: p, Kind: kindOfSchema(v), Label: humanise(name), Doc: firstSentences(v), Section: section}
+		f := HeaderField{Path: p, Kind: kindOfSchema(v), Label: humanise(name), Doc: firstSentence(v), Section: section}
 		switch {
 		case section == SectionStatus:
 			f.Kind = "cue"
@@ -195,22 +196,23 @@ func kindOfSchema(v cue.Value) string {
 	return "other"
 }
 
-// firstSentences is a schema field's doc comment up to its first blank line, on one line.
-func firstSentences(v cue.Value) string {
-	var lines []string
+// firstSentence is a schema field's doc comment up to the end of its first sentence, on one line.
+func firstSentence(v cue.Value) string {
 	for _, g := range v.Doc() {
-		for _, l := range strings.Split(strings.TrimSpace(g.Text()), "\n") {
-			if strings.TrimSpace(l) == "" {
-				return strings.Join(lines, " ")
-			}
-			lines = append(lines, strings.TrimSpace(l))
+		text := strings.Join(strings.Fields(g.Text()), " ")
+		if text == "" {
+			continue
 		}
-		if len(lines) > 0 {
-			break
+		if m := sentenceEnd.FindStringIndex(text); m != nil {
+			return text[:m[0]+1]
 		}
+		return text
 	}
-	return strings.Join(lines, " ")
+	return ""
 }
+
+// sentenceEnd is a full stop followed by a space and a capital, or the end.
+var sentenceEnd = regexp.MustCompile(`\.(\s+[A-Z]|$)`)
 
 // humanise is a camel-case name as a label: appliesToWorkloads is Applies to workloads.
 func humanise(name string) string {

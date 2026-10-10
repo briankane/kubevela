@@ -82,7 +82,7 @@ func metaFields(schema cue.Value, path []string, out *[]HeaderField) {
 			metaFields(v, p, out)
 			continue
 		}
-		hf := HeaderField{Path: p, Kind: kind, Label: humanise(name), Doc: firstSentences(v), Section: section, Required: !it.IsOptional()}
+		hf := HeaderField{Path: p, Kind: kind, Label: humanise(name), Doc: firstSentence(v), Section: section, Required: !it.IsOptional()}
 		if len(path) > 0 {
 			hf.Label = humanise(path[len(path)-1]) + ": " + strings.ToLower(hf.Label)
 		}
