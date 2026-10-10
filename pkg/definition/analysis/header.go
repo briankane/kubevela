@@ -105,7 +105,7 @@ var headerSchema = sync.OnceValue(func() []ast.Decl {
 		src, err := headerSchemaFS.ReadFile(name)
 		if err == nil {
 			var f *ast.File
-			if f, err = parser.ParseFile(name, src); err == nil {
+			if f, err = parser.ParseFile(name, src, parser.ParseComments); err == nil {
 				decls = append(decls, f.Decls...)
 				continue
 			}

@@ -19,8 +19,8 @@ package lsp
 import (
 	"encoding/json"
 
+	"github.com/oam-dev/kubevela/pkg/definition/analysis"
 	"github.com/oam-dev/kubevela/pkg/definition/crdgen"
-
 	"github.com/oam-dev/kubevela/pkg/definition/preview"
 )
 
@@ -194,7 +194,7 @@ type CompletionList struct {
 }
 
 // VelaProtocol is the version of the vela/* methods this server answers.
-const VelaProtocol = 15
+const VelaProtocol = 16
 
 // ExperimentalCapabilities are this server's own capabilities.
 type ExperimentalCapabilities struct {
@@ -398,6 +398,48 @@ type MoveToTraitParams struct {
 type MoveToTraitResult struct {
 	Edits []TextEdit `json:"edits"`
 	Trait string     `json:"trait"`
+}
+
+// MethodDefinitionHeader reads a definition's header for the designer: each
+// field its type has, as the file sets it, and the values to suggest. It is
+// this server's own request; the answer is a DefinitionHeaderResult.
+const MethodDefinitionHeader = "vela/definitionHeader"
+
+// DefinitionHeaderParams are the definition and its text.
+type DefinitionHeaderParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+}
+
+// HeaderValue is a header field as the file sets it, with where, in the protocol's terms.
+type HeaderValue struct {
+	analysis.HeaderField
+	Set      bool        `json:"set"`
+	Value    interface{} `json:"value,omitempty"`
+	Computed bool        `json:"computed,omitempty"`
+	Range    *Range      `json:"range,omitempty"`
+}
+
+// DefinitionHeaderResult is the header, or Error saying why there is none.
+type DefinitionHeaderResult struct {
+	Name        string              `json:"name,omitempty"`
+	Type        string              `json:"type,omitempty"`
+	Fields      []HeaderValue       `json:"fields,omitempty"`
+	Suggestions map[string][]string `json:"suggestions,omitempty"`
+	Error       string              `json:"error,omitempty"`
+}
+
+// MethodEditDefinitionHeader sets a field of a definition's header, or
+// removes it when Value is null. It is this server's own request; the
+// answer is the edits to make.
+const MethodEditDefinitionHeader = "vela/editDefinitionHeader"
+
+// EditDefinitionHeaderParams are the definition, its text, the field and its value.
+type EditDefinitionHeaderParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Text         string                 `json:"text"`
+	Path         []string               `json:"path"`
+	Value        interface{}            `json:"value"`
 }
 
 // MethodPreviewValues writes a values file for a definition: its defaults

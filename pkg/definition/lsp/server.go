@@ -272,6 +272,35 @@ func (s *Server) velaRequest(msg message) (result interface{}, rerr *ResponseErr
 				result = MoveToTraitResult{Edits: changes, Trait: trait}
 			}
 		}
+	case MethodDefinitionHeader:
+		var p DefinitionHeaderParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			h, ok := analysis.ReadHeader(pathOf(p.TextDocument.URI), []byte(p.Text))
+			if !ok {
+				result = DefinitionHeaderResult{Error: "This file has no definition header to read: it may not parse yet."}
+			} else {
+				r := DefinitionHeaderResult{Name: h.Name, Type: h.Type, Suggestions: analysis.HeaderSuggestions(h.Type, s.options())}
+				for _, v := range h.Fields {
+					hv := HeaderValue{HeaderField: v.HeaderField, Set: v.Set, Value: v.Value, Computed: v.Computed}
+					if v.Range != nil {
+						pr := protocolRange(p.Text, *v.Range)
+						hv.Range = &pr
+					}
+					r.Fields = append(r.Fields, hv)
+				}
+				result = r
+			}
+		}
+	case MethodEditDefinitionHeader:
+		var p EditDefinitionHeaderParams
+		if rerr = decode(msg.Params, &p); rerr == nil {
+			e, err := analysis.EditHeader(pathOf(p.TextDocument.URI), []byte(p.Text), p.Path, p.Value)
+			if err != nil {
+				rerr = &ResponseError{Code: CodeInvalidParams, Message: err.Error()}
+			} else {
+				result = []TextEdit{{Range: protocolRange(p.Text, e.Range), NewText: e.NewText}}
+			}
+		}
 	case MethodCRDFields:
 		var p CRDParams
 		if rerr = decode(msg.Params, &p); rerr == nil {
@@ -626,7 +655,7 @@ func (s *Server) handle(msg message) error {
 		if rerr = s.laterRequest(msg); rerr == nil {
 			return nil
 		}
-	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodCRDSet, MethodDefinitionsFromCRDs, MethodMoveToTrait, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
+	case MethodPreviewOutput, MethodPreviewValues, MethodProvenance, MethodEvaluate, MethodPreviewTest, MethodExplore, MethodCRDFields, MethodComponentFromCRD, MethodDefinitionHeader, MethodEditDefinitionHeader, MethodCRDSet, MethodDefinitionsFromCRDs, MethodMoveToTrait, MethodDefinitions, MethodTestCases, MethodNewTest, MethodNewPackage, MethodReconnectCluster, MethodDefinitionFiles, MethodSource, MethodComponentTypes, MethodNewApplication, MethodAddToApplication, MethodTestKinds, MethodLocate, MethodAddonSchema, MethodNewConfigTemplate, MethodNewConfig, MethodConfigTemplateNames, MethodFeatureGates:
 		result, rerr = s.velaRequest(msg)
 	case "textDocument/hover":
 		var p HoverParams
