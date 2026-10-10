@@ -44,6 +44,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/config"
 	"github.com/oam-dev/kubevela/pkg/definition/kubeschema"
 	"github.com/oam-dev/kubevela/pkg/schema"
+	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
 const cueExt = ".cue"
@@ -1243,17 +1244,21 @@ func (d *document) checkAddonParameter() []Diagnostic {
 }
 
 // checkParameterSchema makes the parameter's schema as vela addon enable
-// does before anything else, and reports where CUE's generator cannot: it
-// refuses a number's bound beside its type in a disjunction.
+// does before anything else, and reports where it cannot; and, as a warning,
+// a default beside a number's bound in a disjunction, which released KubeVela
+// refuses since CUE's generator alone cannot make a schema of it.
 func (d *document) checkParameterSchema() []Diagnostic {
-	if _, err := schema.ParsePropertiesToSchema(context.Background(), string(d.src)); err != nil {
-		pos := token.NoPos
-		for _, decl := range d.file.Decls {
-			if f, ok := decl.(*ast.Field); ok && labelName(f.Label) == parameterLabel {
-				pos = f.Label.Pos()
-			}
+	pos := token.NoPos
+	for _, decl := range d.file.Decls {
+		if f, ok := decl.(*ast.Field); ok && labelName(f.Label) == parameterLabel {
+			pos = f.Label.Pos()
 		}
-		return []Diagnostic{d.at(pos, fmt.Sprintf("vela addon enable refuses this addon: it makes a schema of the parameter, and CUE's generator cannot (%v). A number's bound beside its type in a disjunction is one cause: write *1 | >=1, or int & >=1 without a default", err))}
+	}
+	if _, err := schema.ParsePropertiesToSchema(context.Background(), string(d.src)); err != nil {
+		return []Diagnostic{d.at(pos, fmt.Sprintf("vela addon enable refuses this addon: it makes a schema of the parameter, and cannot (%v)", err))}
+	}
+	if v := cuecontext.New().CompileString(string(d.src)); v.Err() == nil && common.RefusedByEncoderAlone(v) {
+		return asWarnings([]Diagnostic{d.at(pos, "released KubeVela refuses this addon on enable: a default beside a number's bound in a disjunction (*1 | int & >=1) is more than CUE's schema generator takes. Write *1 | >=1, or int & >=1 without a default, for those versions")})
 	}
 	return nil
 }

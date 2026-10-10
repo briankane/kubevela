@@ -481,13 +481,13 @@ func TestAddonYAMLAsKubeVelaReadsIt(t *testing.T) {
 	assert.Contains(t, strings.Join(got, "\n"), "KubeVela cannot read")
 }
 
-// vela addon enable makes the parameter's schema first, and refuses the
-// addon where CUE's generator cannot: a typed bound in a disjunction.
+// vela addon enable makes the parameter's schema first; released versions
+// refuse a typed bound beside a default in a disjunction, which this one takes.
 func TestAddonParameterEnableCanSchema(t *testing.T) {
 	dir := addonDir(t)
 	got := checkAddon(t, dir, "parameter.cue", "parameter: {\n\t// +usage=How many\n\treplicas: *1 | int & >=1\n}\n")
 	if assert.Len(t, got, 1) {
-		assert.Contains(t, got[0], "vela addon enable")
+		assert.Contains(t, got[0], "released KubeVela")
 		assert.Contains(t, got[0], "*1 | >=1")
 	}
 	assert.Empty(t, checkAddon(t, dir, "parameter.cue", "parameter: {\n\treplicas: *1 | >=1\n}\n"))

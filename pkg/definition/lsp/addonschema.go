@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/oam-dev/kubevela/pkg/schema"
+	"github.com/oam-dev/kubevela/pkg/utils/common"
 )
 
 // MethodAddonSchema reads an addon folder for its panel: its metadata, its
@@ -54,6 +55,9 @@ type AddonSchemaResult struct {
 	// EnableError is why vela addon enable would refuse it: it makes the
 	// parameters' schema first, as Schema is made where it can be.
 	EnableError string `json:"enableError,omitempty"`
+	// ReleasedError is why released KubeVela would refuse it on enable where
+	// this vela takes it: a default beside a number's bound.
+	ReleasedError string `json:"releasedError,omitempty"`
 }
 
 // addonMetadata is the part of an addon's metadata.yaml its panel shows.
@@ -85,6 +89,9 @@ func addonSchema(folder string) (AddonSchemaResult, error) {
 		if s, err := schema.ParsePropertiesToSchema(context.Background(), string(param)); err == nil {
 			if b, err := s.MarshalJSON(); err == nil {
 				out.Schema = b
+			}
+			if v := cuecontext.New().CompileBytes(param); v.Err() == nil && common.RefusedByEncoderAlone(v) {
+				out.ReleasedError = "Released KubeVela refuses this addon on enable: a default beside a number's bound (*1 | int & >=1). Write *1 | >=1 for those versions."
 			}
 		} else if v := cuecontext.New().CompileBytes(param).LookupPath(cue.ParsePath("parameter")); v.Err() == nil && v.Exists() {
 			// The generator refuses some constraints it could not express: read it field by field.

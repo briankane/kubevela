@@ -351,7 +351,11 @@ func GenOpenAPI(val cue.Value) (b []byte, err error) {
 	defaultConfig := &openapi.Config{ExpandReferences: true}
 	b, err = openapi.Gen(paramOnlyVal, defaultConfig)
 	if err != nil {
-		return nil, err
+		fixed, ok := genWithoutBoundedDefaults(paramOnlyVal, defaultConfig)
+		if !ok {
+			return nil, err
+		}
+		b = fixed
 	}
 	var out = &bytes.Buffer{}
 	_ = json.Indent(out, b, "", "   ")
@@ -374,7 +378,11 @@ func GenOpenAPIWithCueX(val cue.Value) (b []byte, err error) {
 	defaultConfig := &openapi.Config{ExpandReferences: true}
 	b, err = openapi.Gen(paramOnlyVal, defaultConfig)
 	if err != nil {
-		return nil, err
+		fixed, ok := genWithoutBoundedDefaults(paramOnlyVal, defaultConfig)
+		if !ok {
+			return nil, err
+		}
+		b = fixed
 	}
 	var out = &bytes.Buffer{}
 	_ = json.Indent(out, b, "", "   ")

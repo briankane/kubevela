@@ -64,14 +64,16 @@ func TestAddonSchema(t *testing.T) {
 	assert.Contains(t, string(m["error"]), "metadata.yaml")
 }
 
-// An addon whose parameters the generator refuses still gives a form.
-func TestAddonSchemaTheGeneratorRefuses(t *testing.T) {
+// An addon with a default beside a number's bound gets its schema, and a
+// note that released KubeVela refuses it on enable.
+func TestAddonSchemaReleasedVersionsRefuse(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "metadata.yaml"), []byte("name: x\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "parameter.cue"), []byte("parameter: {\n\treplicas: *1 | int & >=1\n}\n"), 0o600))
 	r, err := addonSchema(dir)
 	require.NoError(t, err)
 	assert.Empty(t, r.SchemaError)
-	assert.Contains(t, string(r.Schema), `"replicas"`)
-	assert.Contains(t, r.EnableError, "vela addon enable refuses", "the form is given, but enabling it is not")
+	assert.Empty(t, r.EnableError, "this vela enables it")
+	assert.Contains(t, string(r.Schema), `"minimum":1`)
+	assert.Contains(t, r.ReleasedError, "Released KubeVela")
 }
