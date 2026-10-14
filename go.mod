@@ -344,4 +344,6 @@ replace (
 	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.25.1-0.20261003005320-02048c9ac9b1
 )
 
-replace github.com/kubevela/workflow => github.com/briankane/workflow v0.6.5-0.20261014133200-b60716b1d143
+replace github.com/kubevela/workflow => github.com/briankane/workflow v0.6.5-0.20261014133408-791d01c56b41
+
+replace github.com/kubevela/pkg => github.com/briankane/pkg v0.0.0-20261014104027-2a2c76e989b1
