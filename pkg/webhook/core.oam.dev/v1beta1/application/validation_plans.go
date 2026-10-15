@@ -17,6 +17,7 @@ package application
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/google/cel-go/cel"
 	celengine "github.com/kubevela/pkg/cel"
+	wfexpressions "github.com/kubevela/workflow/pkg/expressions"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -35,12 +37,19 @@ import (
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
+	"github.com/oam-dev/kubevela/pkg/schema"
 	"github.com/oam-dev/kubevela/pkg/sources"
 )
 
 // everyRoot permits every root, for a Check that applies one root's rules and
 // leaves which roots a surface offers to the roots pass.
-var everyRoot = []string{propexpr.SourceIdent, propexpr.ContextIdent, propexpr.ComponentIdent}
+var everyRoot = func() []string {
+	out := make([]string, len(celexpr.Roots))
+	for i, r := range celexpr.Roots {
+		out[i] = r.Name
+	}
+	return out
+}()
 
 // blobPlan is one properties blob of an Application, planned once: where it
 // sits, the surface that evaluates it, what it feeds, and its expressions.
@@ -58,6 +67,9 @@ type blobPlan struct {
 	// targetKind and targetType name the definition the blob feeds, and
 	// targetDesc is how a refusal names it.
 	targetKind, targetType, targetDesc string
+	// loopItems is forEach.items of the loop whose iteration evaluates the blob,
+	// as written; nil outside a loop.
+	loopItems []byte
 }
 
 // planApplication plans every properties blob of an Application, in the order
@@ -96,9 +108,18 @@ func planApplication(app *v1beta1.Application, appScoped func(string) bool) []bl
 	if app.Spec.Workflow != nil {
 		for i, step := range app.Spec.Workflow.Steps {
 			p := field.NewPath("spec", "workflow", "steps").Index(i)
+			// A step with forEach is run once per item; a step group's sub-steps are.
+			var items []byte
+			if raw := forEachItems(step); raw != nil {
+				items = raw.Raw
+			}
 			add(step.Properties, blobPlan{base: p.Child("properties"), surface: sources.SurfaceWorkflowStep,
 				ctxSchema: propexpr.WorkflowStepContext, sourceIndex: -1, targetKind: "workflowstep", targetType: step.Type,
-				targetDesc: fmt.Sprintf("workflow step %q parameter", step.Type)})
+				targetDesc: fmt.Sprintf("workflow step %q parameter", step.Type), loopItems: items})
+			// A step's $( ) if is decided once, before any pass of its loop, and feeds
+			// no definition: it is typed as a bool instead.
+			add(conditionValue(step.If), blobPlan{base: p.Child("if"), surface: sources.SurfaceWorkflowStep,
+				ctxSchema: propexpr.WorkflowStepContext, sourceIndex: -1, targetKind: conditionTarget, targetDesc: "if"})
 			// forEach.items resolves on the step's surface, and feeds no definition: it
 			// is typed as a list instead.
 			add(forEachItems(step), blobPlan{base: p.Child("forEach", "items"), surface: sources.SurfaceWorkflowStep,
@@ -108,7 +129,10 @@ func planApplication(app *v1beta1.Application, appScoped func(string) bool) []bl
 				add(sub.Properties, blobPlan{base: p.Child("subSteps").Index(j).Child("properties"),
 					surface: sources.SurfaceWorkflowStep, ctxSchema: propexpr.WorkflowStepContext, sourceIndex: -1,
 					targetKind: "workflowstep", targetType: sub.Type,
-					targetDesc: fmt.Sprintf("workflow step %q parameter", sub.Type)})
+					targetDesc: fmt.Sprintf("workflow step %q parameter", sub.Type), loopItems: items})
+				add(conditionValue(sub.If), blobPlan{base: p.Child("subSteps").Index(j).Child("if"),
+					surface: sources.SurfaceWorkflowStep, ctxSchema: propexpr.WorkflowStepContext, sourceIndex: -1,
+					targetKind: conditionTarget, targetDesc: "if", loopItems: items})
 			}
 		}
 	}
@@ -130,6 +154,22 @@ func forEachItems(step wfv1alpha1.WorkflowStep) *runtime.RawExtension {
 		return nil
 	}
 	return &runtime.RawExtension{Raw: step.ForEach.Items.Raw}
+}
+
+// conditionTarget marks the blob planned for a step's $( ) if.
+const conditionTarget = "if"
+
+// conditionValue is a step's if as raw JSON, the shape the property passes walk,
+// when it is a $( ) condition; nil for a CUE if, which these passes do not read.
+func conditionValue(cond string) *runtime.RawExtension {
+	if !wfexpressions.IsCondition(cond) {
+		return nil
+	}
+	raw, err := json.Marshal(strings.TrimSpace(cond))
+	if err != nil {
+		return nil
+	}
+	return &runtime.RawExtension{Raw: raw}
 }
 
 // refusal is an admission refusal carried through a CheckError, with the value
@@ -342,25 +382,19 @@ func (bp blobPlan) target(param *cueStruct) celengine.Target {
 }
 
 // typing is what typing expressions needs, built once per admission: the
-// binding schemas, the judges over them, and a typed environment per context.
+// binding schemas, the judges over them, a typed environment per context, and
+// what each component applies, loaded when a component read is first typed.
 type typing struct {
-	schemas map[string]string
-	opts    celengine.TypeOptions
-	envs    map[string]*cel.Env
+	schemas      map[string]string
+	compiled     propexpr.Schemas
+	envs         map[string]*cel.Env
+	loadProduced func() map[string]schema.Produced
+	produced     map[string]schema.Produced
 }
 
-func newTyping(schemas map[string]string) *typing {
+func newTyping(schemas map[string]string, loadProduced func() map[string]schema.Produced) *typing {
 	compiled := propexpr.CompileSchemas(schemas)
-	return &typing{schemas: schemas, envs: map[string]*cel.Env{}, opts: celengine.TypeOptions{
-		// The has()-default rule: a read that may be missing, unguarded, is
-		// refused where it feeds a required parameter.
-		Optional: func(r celengine.Read) bool {
-			may, err := compiled.CanBeAbsent(r.Reference)
-			return err == nil && may
-		},
-		// A schema's number may hold an integer, which CEL's double loses.
-		DeclaredKind: func(r celengine.Read) (cue.Kind, bool) { return compiled.Kind(r.Reference) },
-	}}
+	return &typing{schemas: schemas, compiled: compiled, envs: map[string]*cel.Env{}, loadProduced: loadProduced}
 }
 
 func (t *typing) env(ctxSchema propexpr.ContextSchema) (*cel.Env, error) {
@@ -393,8 +427,12 @@ func (t *typing) faultsAgainst(bp blobPlan, ctxSchema propexpr.ContextSchema, ta
 	if err != nil {
 		return nil, err
 	}
+	// A read is judged by the kind its schema declares where CEL cannot see
+	// one: a component's live object and a loop's items are dyn to CEL, and a
+	// schema's number may hold an integer, which CEL's double loses.
+	opts := celengine.TypeOptions{DeclaredKind: t.readKinds(bp), Optional: t.mayBeAbsent(bp)}
 	out := map[string]celengine.CheckError{}
-	for _, f := range bp.plan.CheckTypes(env, target, t.opts) {
+	for _, f := range bp.plan.CheckTypes(env, target, opts) {
 		out[f.Property] = f
 	}
 	return out, nil
@@ -413,6 +451,29 @@ var forEachItemsList = func() celengine.Target {
 		return list, true, true
 	})
 }()
+
+// conditionBool is a $( ) if as the engine's Target: a required bool, since a
+// condition that may be absent decides nothing.
+var conditionBool = func() celengine.Target {
+	b := cuecontext.New().CompileString("bool")
+	return celengine.TargetFunc(func(property string) (cue.Value, bool, bool) {
+		if property != "" {
+			return cue.Value{}, false, false
+		}
+		return b, true, true
+	})
+}()
+
+// conditionWording names a step's if, which decides the step rather than feeding a
+// parameter.
+var conditionWording = wording{
+	mismatch: func(lf inputLeaf, m *celengine.TypeMismatch) string {
+		return fmt.Sprintf("type mismatch: expression %v is %s but if expects bool", lf.literal, m.Got)
+	},
+	absent: func(_ inputLeaf, read string) string {
+		return fmt.Sprintf("%s may be absent and decides the step; %s", read, defaultHint(read))
+	},
+}
 
 // forEachItemsWording names forEach.items, which feeds the loop rather than a
 // parameter.

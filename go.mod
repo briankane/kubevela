@@ -39,7 +39,7 @@ require (
 	github.com/imdario/mergo v0.3.16
 	github.com/jeremywohl/flatten/v2 v2.0.0-20211013061545-07e4a09fb8e4
 	github.com/kubevela/pkg v1.11.1-0.20261009133112-e56a460cd803
-	github.com/kubevela/workflow v0.7.3-0.20261014144706-70126a20bf25
+	github.com/kubevela/workflow v0.7.3-0.20261015101125-f746a3a43489
 	github.com/kyokomi/emoji v2.2.4+incompatible
 	github.com/magiconair/properties v1.8.7
 	github.com/mattn/go-runewidth v0.0.15
@@ -343,3 +343,5 @@ replace (
 	// v0.25.2. Switch to the v0.26.0 release once it is out.
 	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.25.1-0.20261003005320-02048c9ac9b1
 )
+
+replace github.com/kubevela/workflow => github.com/briankane/workflow v0.6.5-0.20261015101502-2443bd61f47f
