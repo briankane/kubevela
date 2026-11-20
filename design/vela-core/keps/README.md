@@ -31,6 +31,7 @@
 > - `KEP-2.22`: Multi-Instance Addons — `instance` field in `_module.cue`, per-instance Addon CR naming, namespace-scoped definition isolation
 > - `KEP-2.23`: Plugin Extension Points — named points where controller behaviour is replaced or extended by operator-supplied CUE; Go interface paired with an embedded schema, three cardinality modes, a Go base implementation per point, confined execution via `#Invoke`
 > - `KEP-2.24`: Component Configuration & Policies as Transforms — per-resource config moves onto the component, policy reduces to a CUE transform over component structure, and downstream consumers read a stable annotation contract
+> - `KEP-2.25`: CueX Packages: CUE libraries and provider functions (WebAssembly or a server over HTTP or gRPC) published as versioned packages from any registry, imported as `path@vN`, targeted at named compilers, and loaded per compilation only where imported; a team's packages are visible only in its namespace, under `local/`
 
 ---
 
@@ -357,3 +358,4 @@ This subsumes the current workaround of maintaining manual RBAC groups per defin
 | KEP-2.22 | Multi-Instance Addons | Medium | [2.22-multi-instance-addons/README.md](2.22-multi-instance-addons/README.md) |
 | KEP-2.23 | Plugin Extension Points | High | [2.23-plugins/README.md](2.23-plugins/README.md) |
 | KEP-2.24 | Component Configuration & Policies as Transforms | High | [2.24-component-config-policies/README.md](2.24-component-config-policies/README.md) |
+| KEP-2.25 | CueX Packages | High | [2.25-cuex-packages/README.md](2.25-cuex-packages/README.md) |
