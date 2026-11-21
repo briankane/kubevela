@@ -54,6 +54,10 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     verbs: ["get", "list", "watch"]
+  # Membership in a definition's or Package's required roles is read from bindings.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
   {{- if .Values.multicluster.enabled }}
   # cluster-gateway's admission plugins watch these; until they can, it refuses every request.
   # The mutating ones are watched from Kubernetes 1.36, where they are on by default.

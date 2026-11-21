@@ -21,13 +21,16 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/definition/access"
 	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
@@ -122,5 +125,34 @@ var _ = Describe("Definition access against RBAC", Ordered, func() {
 	})
 	It("leaves a definition with no role or grant alone", func() {
 		Expect(check("worker", "bob")).To(BeEmpty())
+	})
+})
+
+// vela-core reads bindings through its manager's cache, so membership comes from
+// informers: a binding made later is seen once the informer has it, with no
+// request per check.
+var _ = Describe("Definition access membership from informers", func() {
+	It("sees a binding made after the first check", func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		informers, err := cache.New(cfg, cache.Options{Scheme: testScheme})
+		Expect(err).NotTo(HaveOccurred())
+		go func() { _ = informers.Start(ctx) }()
+		Expect(informers.WaitForCacheSync(ctx)).To(BeTrue())
+		cached, err := client.New(cfg, client.Options{Scheme: testScheme, Cache: &client.CacheOptions{Reader: informers}})
+		Expect(err).NotTo(HaveOccurred())
+
+		grace := authenticationv1.UserInfo{Username: "grace"}
+		roles := []common.RoleRef{{Kind: "ClusterRole", Name: "informer-db-owners"}}
+		Expect(access.Member(ctx, cached, grace, roles, oam.SystemDefinitionNamespace)).To(BeFalse())
+
+		b := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "informer-db-owners-grace"},
+			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "informer-db-owners"},
+			Subjects: []rbacv1.Subject{{Kind: rbacv1.UserKind, Name: "grace"}}}
+		Expect(k8sClient.Create(ctx, b)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(context.Background(), b) }()
+		Eventually(func() (bool, error) {
+			return access.Member(ctx, cached, grace, roles, oam.SystemDefinitionNamespace)
+		}).Should(BeTrue())
 	})
 })

@@ -57,5 +57,41 @@ webhooks:
         resources:
           - componentdefinitions
     timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+  - clientConfig:
+      {{- include "kubevela.webhookCABundle" (dict "root" $ "hooks" $hooks "name" "mutating.core.oam.dev.v1beta1.writers") | nindent 6 }}
+      service:
+        name: {{ template "kubevela.name" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /mutating-core-oam-dev-v1beta1-writers
+    {{- include "kubevela.webhookFailurePolicy" (dict "root" $ "hooks" $hooks "name" "mutating.core.oam.dev.v1beta1.writers" "policy" "Fail") | nindent 4 }}
+    name: mutating.core.oam.dev.v1beta1.writers
+    sideEffects: None
+    admissionReviewVersions:
+      - v1beta1
+      - v1
+    rules:
+      - apiGroups:
+          - core.oam.dev
+        apiVersions:
+          - v1beta1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - componentdefinitions
+          - traitdefinitions
+          - policydefinitions
+          - workflowstepdefinitions
+          - sourcedefinitions
+      - apiGroups:
+          - cue.oam.dev
+        apiVersions:
+          - "*"
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - packages
+    timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
 
 {{- end -}}

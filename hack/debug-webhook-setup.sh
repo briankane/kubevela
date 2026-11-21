@@ -416,6 +416,22 @@ webhooks:
   admissionReviewVersions: ["v1", "v1beta1"]
   sideEffects: None
   failurePolicy: Fail
+- name: mutating.core.oam.dev.v1beta1.writers
+  clientConfig:
+    url: https://${HOST_IP}:${WEBHOOK_PORT}/mutating-core-oam-dev-v1beta1-writers
+    caBundle: ${CA_BUNDLE}
+  rules:
+  - apiGroups: ["core.oam.dev"]
+    apiVersions: ["v1beta1"]
+    resources: ["componentdefinitions", "traitdefinitions", "policydefinitions", "workflowstepdefinitions", "sourcedefinitions"]
+    operations: ["CREATE", "UPDATE"]
+  - apiGroups: ["cue.oam.dev"]
+    apiVersions: ["*"]
+    resources: ["packages"]
+    operations: ["CREATE", "UPDATE"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
 EOF
 
     kubectl apply -f /tmp/mutating-webhook-config.yaml
