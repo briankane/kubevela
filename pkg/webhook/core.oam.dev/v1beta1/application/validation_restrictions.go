@@ -371,16 +371,7 @@ func (c *restrictionCheck) checkDefinition(defType string, newDef func() client.
 	// Definitions are cached for the controller already, which makes this free; an
 	// uncached read would cost an API call per type on every admission.
 	name := baseDefinitionName(defType)
-	def := newDef()
-	err := oamutil.GetDefinition(c.defCtx, c.h.Client, def, name)
-	if errors.IsNotFound(err) {
-		// A module's definition is installed under a name derived from module, version and
-		// name, which the type may give in full or by its bare name.
-		if resolved, rerr := appfile.ResolveModuleType(c.defCtx, c.h.Client, name, capTypeOf(def)); rerr == nil && resolved != name {
-			def = newDef()
-			err = oamutil.GetDefinition(c.defCtx, c.h.Client, def, resolved)
-		}
-	}
+	def, err := loadDefinition(c.defCtx, c.h.Client, name, newDef)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// ValidateComponents reports a missing definition, and better.
@@ -414,6 +405,22 @@ func (c *restrictionCheck) checkDefinition(defType string, newDef func() client.
 		return nil
 	}
 	return def
+}
+
+// loadDefinition reads the definition name, pin already stripped, from the
+// Application's namespace or the system one. A module's definition is installed
+// under a name derived from module, version and name, which the type may give in
+// full or by its bare name.
+func loadDefinition(defCtx context.Context, cli client.Client, name string, newDef func() client.Object) (client.Object, error) {
+	def := newDef()
+	err := oamutil.GetDefinition(defCtx, cli, def, name)
+	if errors.IsNotFound(err) {
+		if resolved, rerr := appfile.ResolveModuleType(defCtx, cli, name, capTypeOf(def)); rerr == nil && resolved != name {
+			def = newDef()
+			err = oamutil.GetDefinition(defCtx, cli, def, resolved)
+		}
+	}
+	return def, err
 }
 
 // checkQuota counts the namespace's uses of a definition against its quota. name is

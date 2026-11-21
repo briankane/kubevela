@@ -736,11 +736,12 @@ func ContainerStateToString(state corev1.ContainerState) string {
 	}
 }
 
-// DefinitionRestrictions limits where a definition may be used. Absent or empty
-// means it is usable anywhere.
+// DefinitionRestrictions limits where, and by whom, a definition may be used.
+// Absent or empty means anyone may use it anywhere.
 //
-// The fields are alternatives: a namespace is allowed if it matches Namespaces or
-// NamespaceSelector.
+// Namespaces and NamespaceSelector are alternatives: a namespace is allowed if it
+// matches either. RequireRoles and RequireGrant are checked as well, against
+// whoever writes the Application.
 type DefinitionRestrictions struct {
 	// Namespaces are the namespaces whose Applications may use this definition, as
 	// names or globs ("tenant-*", matched with path.Match).
@@ -769,7 +770,49 @@ type DefinitionRestrictions struct {
 	// Applications there using these definitions.
 	// +optional
 	Quota []NamespaceQuota `json:"quota,omitempty"`
+
+	// RequireRoles are roles any one of whose members may use the definition. The
+	// Application's writer is a member when a ClusterRoleBinding, or a RoleBinding in
+	// the definition's namespace, binds the role to the writer's user, one of its
+	// groups or its service account.
+	// +optional
+	RequireRoles []RoleRef `json:"requireRoles,omitempty"`
+
+	// RequireGrant requires the Application's writer to hold the verb "use" on this
+	// definition, asked in the definition's namespace.
+	// +optional
+	RequireGrant bool `json:"requireGrant,omitempty"`
+
+	// Mode is Enforce, the default, or Warn, which admits with a warning naming
+	// what a role or grant would have refused. Quota keeps its own warn and limit.
+	// +kubebuilder:validation:Enum=Enforce;Warn
+	// +optional
+	Mode RestrictionMode `json:"mode,omitempty"`
+
+	// Message is shown with a role or grant refusal or warning, to say where to ask.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
+
+// RoleRef names a ClusterRole, or a Role in the definition's namespace.
+type RoleRef struct {
+	// +kubebuilder:validation:Enum=Role;ClusterRole
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
+// String is the role as kind/name.
+func (r RoleRef) String() string { return r.Kind + "/" + r.Name }
+
+// RestrictionMode says whether a role or grant restriction refuses or only warns.
+type RestrictionMode string
+
+const (
+	// RestrictionModeEnforce refuses an Application whose writer fails a role or grant.
+	RestrictionModeEnforce RestrictionMode = "Enforce"
+	// RestrictionModeWarn admits it with a warning.
+	RestrictionModeWarn RestrictionMode = "Warn"
+)
 
 // NamespaceQuota caps how many uses of a definition the namespaces it matches may
 // contain. Its matcher fields carry the same meaning as the ones on

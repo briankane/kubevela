@@ -462,3 +462,41 @@ func TestKindOfDoesNotPanicOnUnexpectedTypes(t *testing.T) {
 		assert.Equal(t, "Application", KindOf(&v1beta1.Application{}))
 	})
 }
+
+// Roles and grants restrict who, not where: they open no namespace check and
+// combine with the annotation as namespaces do.
+func TestWriterRestrictions(t *testing.T) {
+	role := common.RoleRef{Kind: "ClusterRole", Name: "db-owners"}
+	cd := func(r *common.DefinitionRestrictions, ann map[string]string) *v1beta1.ComponentDefinition {
+		return &v1beta1.ComponentDefinition{ObjectMeta: metav1.ObjectMeta{Name: "d", Annotations: ann},
+			Spec: v1beta1.ComponentDefinitionSpec{Restrictions: r}}
+	}
+
+	r := Of(cd(&common.DefinitionRestrictions{RequireRoles: []common.RoleRef{role}}, nil))
+	require.True(t, RestrictsWriters(r))
+	assert.True(t, Allows(r, "anywhere", nil), "a role alone restricts no namespace")
+
+	r = Of(cd(&common.DefinitionRestrictions{RequireGrant: true},
+		map[string]string{oam.AnnotationRestrictNamespaces: "team-*", oam.AnnotationRequireRoles: "ClusterRole/db-owners"}))
+	assert.Equal(t, []string{"team-*"}, r.Namespaces)
+	assert.Equal(t, []common.RoleRef{role}, r.RequireRoles)
+	assert.True(t, r.RequireGrant)
+
+	r = Of(cd(nil, map[string]string{oam.AnnotationRequireRoles: "ClusterRole/db-owners"}))
+	assert.Equal(t, []common.RoleRef{role}, r.RequireRoles)
+	assert.Empty(t, r.Namespaces)
+
+	for ann, want := range map[string]string{
+		"db-owners":            `definition.oam.dev/require-roles: requireRoles[0] kind "db-owners" is neither Role nor ClusterRole`,
+		"ClusterRole/":         "definition.oam.dev/require-roles: requireRoles[0] has no name",
+		"ClusterRole/a,Role/b": "",
+	} {
+		err := ValidateObject(cd(nil, map[string]string{oam.AnnotationRequireRoles: ann}))
+		if want == "" {
+			assert.NoError(t, err, ann)
+		} else {
+			assert.EqualError(t, err, want, ann)
+		}
+	}
+	assert.EqualError(t, Validate(&common.DefinitionRestrictions{Mode: "Audit"}), `mode "Audit" is neither Enforce nor Warn`)
+}

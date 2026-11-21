@@ -172,6 +172,11 @@ const (
 	// wrong.
 	AnnotationRestrictNamespaces = "definition.oam.dev/restrict-namespaces"
 
+	// AnnotationRequireRoles lists the roles whose members may use a definition, as
+	// comma-separated Kind/name pairs ("ClusterRole/db-owners"). It is the channel for
+	// definitions whose spec you do not own, as AnnotationRestrictNamespaces is.
+	AnnotationRequireRoles = "definition.oam.dev/require-roles"
+
 	// AnnotationQuotaExempt, set to "true" on a Namespace, lifts every definition
 	// quota for that namespace. It is for getting out of the way of an incident,
 	// not for carving out a permanent exception, so each use is logged.

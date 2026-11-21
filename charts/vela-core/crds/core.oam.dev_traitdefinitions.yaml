@@ -167,6 +167,18 @@ spec:
                   usable anywhere. A non-empty block overrides the
                   definition.oam.dev/restrict-namespaces annotation.
                 properties:
+                  message:
+                    description: Message is shown with a role or grant refusal or
+                      warning, to say where to ask.
+                    type: string
+                  mode:
+                    description: |-
+                      Mode is Enforce, the default, or Warn, which admits with a warning naming
+                      what a role or grant would have refused. Quota keeps its own warn and limit.
+                    enum:
+                    - Enforce
+                    - Warn
+                    type: string
                   namespaceSelector:
                     description: |-
                       NamespaceSelector selects those namespaces by label instead, for membership
@@ -318,6 +330,33 @@ spec:
                           format: int32
                           minimum: 0
                           type: integer
+                      type: object
+                    type: array
+                  requireGrant:
+                    description: |-
+                      RequireGrant requires the Application's writer to hold the verb "use" on this
+                      definition, asked in the definition's namespace.
+                    type: boolean
+                  requireRoles:
+                    description: |-
+                      RequireRoles are roles any one of whose members may use the definition. The
+                      Application's writer is a member when a ClusterRoleBinding, or a RoleBinding in
+                      the definition's namespace, binds the role to the writer's user, one of its
+                      groups or its service account.
+                    items:
+                      description: RoleRef names a ClusterRole, or a Role in the definition's
+                        namespace.
+                      properties:
+                        kind:
+                          enum:
+                          - Role
+                          - ClusterRole
+                          type: string
+                        name:
+                          type: string
+                      required:
+                      - kind
+                      - name
                       type: object
                     type: array
                 type: object

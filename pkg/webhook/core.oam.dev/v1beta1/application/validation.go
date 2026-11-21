@@ -864,18 +864,20 @@ func (h *ValidatingHandler) ValidateCreate(ctx context.Context, app *v1beta1.App
 // Nothing here evaluates a template or resolves a source, so it is cheap and has
 // no side effects.
 func (h *ValidatingHandler) validateSoundness(ctx context.Context, app, oldApp *v1beta1.Application, req admission.Request) (field.ErrorList, []string) {
-	errs := h.validateRequester(ctx, app, oldApp, req)
-	contentErrs, warnings := h.validateContent(ctx, app, oldApp)
-	return append(errs, contentErrs...), warnings
+	errs, warnings := h.validateRequester(ctx, app, oldApp, req)
+	contentErrs, contentWarnings := h.validateContent(ctx, app, oldApp)
+	return append(errs, contentErrs...), append(warnings, contentWarnings...)
 }
 
 // validateRequester runs the soundness checks that turn on who is asking: whether they may set
-// the annotations they set, use the definitions the Application names, and install the addons
-// its addon components name.
-func (h *ValidatingHandler) validateRequester(ctx context.Context, app, oldApp *v1beta1.Application, req admission.Request) field.ErrorList {
+// the annotations they set, use the definitions the Application names, hold the roles and grants
+// those definitions require, and install the addons its addon components name.
+func (h *ValidatingHandler) validateRequester(ctx context.Context, app, oldApp *v1beta1.Application, req admission.Request) (field.ErrorList, []string) {
 	errs := h.ValidateAnnotations(ctx, app, oldApp, req)
 	errs = append(errs, h.ValidateDefinitionPermissions(ctx, app, req)...)
-	return append(errs, h.ValidateAddonInstallers(ctx, app, req)...)
+	accessErrs, warnings := h.ValidateDefinitionAccess(ctx, app, oldApp, req)
+	errs = append(errs, accessErrs...)
+	return append(errs, h.ValidateAddonInstallers(ctx, app, req)...), warnings
 }
 
 // validateContent runs the soundness checks on what the Application says.
@@ -915,9 +917,10 @@ func (h *ValidatingHandler) ValidateUpdate(ctx context.Context, newApp, oldApp *
 	// A definition removed since is no rule that changed: the Application can no longer render,
 	// so its update is validated in full.
 	specUnchanged := apiequality.Semantic.DeepEqual(newApp.Spec, oldApp.Spec) && !h.usesMissingDefinition(ctx, newApp)
-	errs := h.validateRequester(ctx, newApp, oldApp, req)
+	errs, warnings := h.validateRequester(ctx, newApp, oldApp, req)
 	errs = append(errs, h.ValidateImmutableFields(ctx, newApp, oldApp)...)
-	contentErrs, warnings := h.validateContent(ctx, newApp, oldApp)
+	contentErrs, contentWarnings := h.validateContent(ctx, newApp, oldApp)
+	warnings = append(warnings, contentWarnings...)
 	contentErrs, stored := withoutStoredProblems(contentErrs, specUnchanged, func() field.ErrorList {
 		storedErrs, _ := h.validateContent(ctx, oldApp, oldApp)
 		return storedErrs

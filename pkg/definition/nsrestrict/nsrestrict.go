@@ -60,24 +60,28 @@ func Of(obj client.Object) *common.DefinitionRestrictions {
 }
 
 // effective combines the two channels. The spec settles the namespaces where it
-// names any, the annotation otherwise. A quota is spec-only, so adding one never
-// widens who may use the definition.
+// names any, and the roles where it names any; the annotations settle them
+// otherwise. A quota, a grant, the mode and the message are spec-only, so adding
+// one never widens who may use the definition.
 func effective(spec *common.DefinitionRestrictions, annotations map[string]string) *common.DefinitionRestrictions {
-	if restrictsNamespaces(spec) {
-		return spec // already carries its own quota
-	}
 	ann := fromAnnotation(annotations)
 	if ann == nil {
 		if isEmpty(spec) {
 			return nil
 		}
-		return spec // quota only
+		return spec
 	}
-	if spec == nil || len(spec.Quota) == 0 {
-		return ann
+	r := &common.DefinitionRestrictions{}
+	if spec != nil {
+		r = spec.DeepCopy()
 	}
-	// Namespaces from the annotation, quota from the spec.
-	return &common.DefinitionRestrictions{Namespaces: ann.Namespaces, Quota: spec.Quota}
+	if !restrictsNamespaces(r) {
+		r.Namespaces = ann.Namespaces
+	}
+	if len(r.RequireRoles) == 0 {
+		r.RequireRoles = ann.RequireRoles
+	}
+	return r
 }
 
 // NeedsNamespaceLabels reports whether Allows needs the target namespace's labels
@@ -288,6 +292,19 @@ func Validate(r *common.DefinitionRestrictions) error {
 			return fmt.Errorf("namespaceSelector is not a valid label selector: %w", err)
 		}
 	}
+	for i, role := range r.RequireRoles {
+		if role.Kind != "Role" && role.Kind != "ClusterRole" {
+			return fmt.Errorf("requireRoles[%d] kind %q is neither Role nor ClusterRole", i, role.Kind)
+		}
+		if role.Name == "" {
+			return fmt.Errorf("requireRoles[%d] has no name", i)
+		}
+	}
+	switch r.Mode {
+	case "", common.RestrictionModeEnforce, common.RestrictionModeWarn:
+	default:
+		return fmt.Errorf("mode %q is neither Enforce nor Warn", r.Mode)
+	}
 	for i := range r.Quota {
 		q := &r.Quota[i]
 		if err := validateQuota(q); err != nil {
@@ -363,8 +380,15 @@ func ValidateObject(obj client.Object) error {
 	if err := validateQuotaKind(spec, kind); err != nil {
 		return fmt.Errorf("spec.restrictions: %w", err)
 	}
-	if err := Validate(fromAnnotation(obj.GetAnnotations())); err != nil {
+	ann := fromAnnotation(obj.GetAnnotations())
+	if ann == nil {
+		return nil
+	}
+	if err := Validate(&common.DefinitionRestrictions{Namespaces: ann.Namespaces}); err != nil {
 		return fmt.Errorf("%s: %w", oam.AnnotationRestrictNamespaces, err)
+	}
+	if err := Validate(&common.DefinitionRestrictions{RequireRoles: ann.RequireRoles}); err != nil {
+		return fmt.Errorf("%s: %w", oam.AnnotationRequireRoles, err)
 	}
 	return nil
 }
@@ -416,7 +440,13 @@ func describe(r *common.DefinitionRestrictions) string {
 // should be consulted instead. A quota counts: a definition may cap usage without
 // restricting which namespaces may use it.
 func isEmpty(r *common.DefinitionRestrictions) bool {
-	return r == nil || (!restrictsNamespaces(r) && len(r.Quota) == 0)
+	return r == nil || (!restrictsNamespaces(r) && len(r.Quota) == 0 && !RestrictsWriters(r))
+}
+
+// RestrictsWriters reports whether the block limits who may use the definition, by
+// role or grant, as opposed to where.
+func RestrictsWriters(r *common.DefinitionRestrictions) bool {
+	return r != nil && (len(r.RequireRoles) > 0 || r.RequireGrant)
 }
 
 // restrictsNamespaces reports whether the block limits which namespaces may use the
@@ -466,6 +496,12 @@ func fromAnnotation(annotations map[string]string) *common.DefinitionRestriction
 	for _, p := range strings.Split(annotations[oam.AnnotationRestrictNamespaces], ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			r.Namespaces = append(r.Namespaces, p)
+		}
+	}
+	for _, p := range strings.Split(annotations[oam.AnnotationRequireRoles], ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			kind, name, _ := strings.Cut(p, "/")
+			r.RequireRoles = append(r.RequireRoles, common.RoleRef{Kind: kind, Name: name})
 		}
 	}
 	if isEmpty(r) {
