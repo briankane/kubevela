@@ -246,11 +246,7 @@ var _ = Describe("Upgrading config storage from 1.11", func() {
 
 	It("adopts what is left once with the gate on, and a further restart changes nothing (check 4)", Label("gate"), func() {
 		oldCLI("config", "create", lateConfig, "-t", seedNS+"/up-plain", "-n", seedNS, "value=v-late")
-		chart, err := filepath.Abs("../../charts/vela-core")
-		Expect(err).ShouldNot(HaveOccurred())
-		mustRun("helm", "upgrade", "kubevela", chart, "-n", "vela-system", "--reuse-values",
-			"--set", "featureGates.autoMigrateLegacyConfigs=true", "--wait", "--timeout", "5m")
-		mustRun("kubectl", "-n", "vela-system", "rollout", "status", "deploy/kubevela-vela-core", "--timeout=180s")
+		enableGate("AutoMigrateLegacyConfigs", "autoMigrateLegacyConfigs")
 
 		var late configv1alpha1.Config
 		Eventually(func(g Gomega) {
@@ -269,12 +265,10 @@ var _ = Describe("Upgrading config storage from 1.11", func() {
 		}
 		before := versions()
 
-		mustRun("kubectl", "-n", "vela-system", "rollout", "restart", "deploy/kubevela-vela-core")
-		mustRun("kubectl", "-n", "vela-system", "rollout", "status", "deploy/kubevela-vela-core", "--timeout=180s")
+		restartController()
 		// the sweep runs on the leader, which may take the lease well after the rollout
 		Eventually(func() string {
-			out, _ := run("kubectl", "-n", "vela-system", "logs", "deploy/kubevela-vela-core")
-			return out
+			return controllerLogs()
 		}, waitTimeout, waitPoll).Should(ContainSubstring("legacy config migration sweep finished"))
 		Consistently(func(g Gomega) {
 			g.Expect(versions()).Should(Equal(before))
@@ -325,3 +319,40 @@ var _ = Describe("Upgrading config storage from 1.11", func() {
 		})
 	})
 })
+
+// The controller is changed through VELA_E2E_CONTROLLER when it names a harness that runs
+// vela-core itself (e.g. "veladock env"); without one, through the chart, as on a real cluster.
+func controllerHarness() []string { return strings.Fields(os.Getenv("VELA_E2E_CONTROLLER")) }
+
+// enableGate restarts vela-core with a feature gate on.
+func enableGate(gate, chartValue string) {
+	if h := controllerHarness(); len(h) > 0 {
+		mustRun(h[0], append(h[1:], "restart", "-gate", gate+"=true")...)
+		return
+	}
+	chart, err := filepath.Abs("../../charts/vela-core")
+	ExpectWithOffset(1, err).ShouldNot(HaveOccurred())
+	mustRun("helm", "upgrade", "kubevela", chart, "-n", "vela-system", "--reuse-values",
+		"--set", "featureGates."+chartValue+"=true", "--wait", "--timeout", "5m")
+	mustRun("kubectl", "-n", "vela-system", "rollout", "status", "deploy/kubevela-vela-core", "--timeout=180s")
+}
+
+// restartController restarts vela-core with the settings it has.
+func restartController() {
+	if h := controllerHarness(); len(h) > 0 {
+		mustRun(h[0], append(h[1:], "restart")...)
+		return
+	}
+	mustRun("kubectl", "-n", "vela-system", "rollout", "restart", "deploy/kubevela-vela-core")
+	mustRun("kubectl", "-n", "vela-system", "rollout", "status", "deploy/kubevela-vela-core", "--timeout=180s")
+}
+
+// controllerLogs reads vela-core's log.
+func controllerLogs() string {
+	if h := controllerHarness(); len(h) > 0 {
+		out, _ := run(h[0], append(h[1:], "logs")...)
+		return out
+	}
+	out, _ := run("kubectl", "-n", "vela-system", "logs", "deploy/kubevela-vela-core")
+	return out
+}
