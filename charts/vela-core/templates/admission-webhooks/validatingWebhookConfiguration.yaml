@@ -266,4 +266,27 @@ webhooks:
         resources:
           - sourcedefinitions
     timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+  - clientConfig:
+      {{- include "kubevela.webhookCABundle" (dict "root" $ "hooks" $hooks "name" "validating.cue.oam-dev.v1alpha1.packages") | nindent 6 }}
+      service:
+        name: {{ template "kubevela.name" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validating-cue-oam-dev-v1alpha1-packages
+    {{- include "kubevela.webhookFailurePolicy" (dict "root" $ "hooks" $hooks "name" "validating.cue.oam-dev.v1alpha1.packages" "policy" "Fail") | nindent 4 }}
+    name: validating.cue.oam-dev.v1alpha1.packages
+    sideEffects: None
+    admissionReviewVersions:
+      - v1beta1
+      - v1
+    rules:
+      - apiGroups:
+          - cue.oam.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - packages
+    timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
 {{- end -}}

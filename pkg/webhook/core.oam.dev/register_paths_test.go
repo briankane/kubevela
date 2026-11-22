@@ -45,10 +45,11 @@ func TestWebhookPathsAreRegisteredEverywhere(t *testing.T) {
 		// config.oam.dev arrived with the Config and ConfigTemplate CRDs and was
 		// registered in Go and in the chart but not in the debug script, so every
 		// local run admitted Configs unvalidated - the exact failure this test
-		// exists to catch, in the one group it was not looking at.
-		pathRegexp = `/(validating|mutating)-(core|config)-oam-dev-v1(beta1|alpha1)-[a-z]+`
+		// exists to catch, in the one group it was not looking at. cue.oam.dev
+		// validates Packages.
+		pathRegexp = `/(validating|mutating)-(core|config|cue)-oam-dev-v1(beta1|alpha1)-[a-z]+`
 	)
-	goSources := []string{"v1beta1", "../config.oam.dev/v1alpha1"}
+	goSources := []string{"v1beta1", "../config.oam.dev/v1alpha1", "../cue.oam.dev/v1alpha1"}
 
 	re := regexp.MustCompile(pathRegexp)
 

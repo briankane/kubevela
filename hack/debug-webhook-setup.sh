@@ -290,6 +290,18 @@ webhooks:
   admissionReviewVersions: ["v1", "v1beta1"]
   sideEffects: None
   failurePolicy: Fail
+- name: packages.cue.oam.dev
+  clientConfig:
+    url: https://${HOST_IP}:${WEBHOOK_PORT}/validating-cue-oam-dev-v1alpha1-packages
+    caBundle: ${CA_BUNDLE}
+  rules:
+  - apiGroups: ["cue.oam.dev"]
+    apiVersions: ["v1alpha1"]
+    resources: ["packages"]
+    operations: ["CREATE", "UPDATE"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
 - name: configtemplate.config.oam.dev
   clientConfig:
     url: https://${HOST_IP}:${WEBHOOK_PORT}/validating-config-oam-dev-v1alpha1-configtemplates
