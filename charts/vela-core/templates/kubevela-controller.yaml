@@ -54,6 +54,10 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     verbs: ["get", "list", "watch"]
+  # CueX Packages are loaded into the compilers, and a call's restrictions read from them.
+  - apiGroups: ["cue.oam.dev"]
+    resources: ["packages"]
+    verbs: ["get", "list", "watch"]
   # Membership in a definition's or Package's required roles is read from bindings.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings", "clusterrolebindings"]

@@ -751,6 +751,11 @@ func createControllerManager(ctx context.Context, kubeConfig *rest.Config, coreO
 
 // setupControllers sets up controllers based on sharding configuration
 func setupControllers(ctx context.Context, manager ctrl.Manager, coreOptions *options.CoreOptions) error {
+	recheck := config.NewCUEConfig().AccessRecheckInterval
+	if coreOptions.CUE != nil {
+		recheck = coreOptions.CUE.AccessRecheckInterval
+	}
+	installCallCheck(manager.GetClient(), recheck)
 	if !sharding.EnableSharding {
 		return prepareRun(ctx, manager, coreOptions)
 	}

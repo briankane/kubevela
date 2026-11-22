@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"time"
 
 	"github.com/kubevela/pkg/cue/cuex"
 	wfupgrade "github.com/kubevela/workflow/pkg/cue/upgrade"
@@ -40,6 +41,9 @@ type CUEConfig struct {
 	CUEUpgradeGenericDefaultGuard bool
 	CUEUpgradeKeepValidators      bool
 	CUEUpgradeEvalv3SelfRefGuard  bool
+	// AccessRecheckInterval is how long a grant on a restricted Package is
+	// trusted before it is asked again.
+	AccessRecheckInterval time.Duration
 }
 
 // NewCUEConfig creates a new CUEConfig with defaults.
@@ -55,6 +59,7 @@ func NewCUEConfig() *CUEConfig {
 		CUEUpgradeGenericDefaultGuard: upgrade.EnableGenericDefaultGuardUpgrade,
 		CUEUpgradeKeepValidators:      upgrade.EnableKeepValidatorsSingletonUpgrade,
 		CUEUpgradeEvalv3SelfRefGuard:  upgrade.EnableEvalv3SelfRefGuardUpgrade,
+		AccessRecheckInterval:         5 * time.Minute,
 	}
 }
 
@@ -100,6 +105,10 @@ func (c *CUEConfig) AddFlags(fs *pflag.FlagSet) {
 		"cue-upgrade-evalv3-selfref-guard-enabled",
 		c.CUEUpgradeEvalv3SelfRefGuard,
 		"Enable evalv3 self-reference default-guard compatibility rewrite pass.")
+	fs.DurationVar(&c.AccessRecheckInterval,
+		"cuex-access-recheck-interval",
+		c.AccessRecheckInterval,
+		"How long a writer's grant to call a restricted CueX Package is trusted before it is asked again. Role membership is read from the cache on every call.")
 }
 
 // SyncToCUEGlobals syncs the parsed configuration values to CUE package global variables.
