@@ -122,7 +122,7 @@ func TestDefinitionAccessOnUpdate(t *testing.T) {
 		app     *v1beta1.Application
 		refused []string
 	}{
-		"another component changed": {accessApp(comp("web", "webservice", `{"image":"b"}`), comp("db", "aws-rds", `{"size":"small"}`)), nil},
+		"another component changed":      {accessApp(comp("web", "webservice", `{"image":"b"}`), comp("db", "aws-rds", `{"size":"small"}`)), nil},
 		"the restricted component moved": {accessApp(comp("db", "aws-rds", `{"size":"small"}`), comp("web", "webservice", `{"image":"b"}`)), nil},
 		"a trait added to the restricted component": {accessApp(comp("web", "webservice", `{"image":"a"}`),
 			comp("db", "aws-rds", `{"size":"small"}`, common.ApplicationTrait{Type: "scaler"})), nil},
