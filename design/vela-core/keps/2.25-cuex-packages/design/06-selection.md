@@ -166,6 +166,23 @@ The check was prototyped in the compiler with real RBAC on k3s v1.35: 17 cases (
 
 The generated GitHub `githubwrite` package, restricted to grants, was then rendered against its generated Roles: `github-issues-write` reaches `issues/create` and not `issues/add-assignees`, adding `github-pull-requests-write` reaches both, `github-issues-read` reaches neither, and a function with no published permission needs a grant on the package.
 
+### Built ahead of phase 1
+
+The gate was then built for real, as a thin slice across the three repos, without selection, registries or Package status: `spec.restrictions`, the check in the compiler's dispatch, a cluster-backed `Authorizer` (bindings from the cache, grants by `SubjectAccessReview` remembered for `--cuex-access-recheck-interval`), the owner at every render (components, traits, policies, workflow steps and sources), the check installed on every vela-core compiler and on the WorkflowRun controller's, and Package admission refusing restrictions it cannot read. A compiler with no check refuses a restricted Package outright.
+
+On k3d, with the generated `github` package restricted to grants and `repos/get` written as a workflow step in a team namespace by two impersonated users:
+
+| Case | Result |
+| --- | --- |
+| A Package with `namespaces: ["team-["]` | refused at admission, naming `spec.restrictions.namespaces[0]` |
+| The step written by a user with no grant | the step fails, naming the three grants any one of which would do |
+| The step written by a member of a group bound to `github-metadata-read` | runs, and the repository lands in a ConfigMap |
+| The Package also restricted to vela-system callers | refused: `it is restricted` |
+| Someone without the grant edits the granted step's spec | the stamp is theirs now, and the call is refused as them |
+| Restrictions removed | the ungranted user's step runs |
+
+Components, traits, sources and the standalone WorkflowRun controller are covered by unit tests, each checked by removing its wiring and watching it fail.
+
 ## The shipped definitions
 
 Every shipped definition under `vela-templates/definitions/internal` was rendered with all built-ins attached and with selection, with kubevela's provider CUE loaded as packages with no functions. 107 render identically. The other 60 fail both ways, because they import `vela/op`, which kubevela assembles at run time and the spike does not load. Phase 1 runs the same comparison inside kubevela, where `vela/op` exists.
@@ -180,3 +197,7 @@ Every shipped definition under `vela-templates/definitions/internal` was rendere
 | An unimported broken package never broke a render | selection is argued on providers and cost, not blast radius |
 | A provider wrapper cannot gate `@concurrency` calls: their decode gets no context | the check runs in the compiler's dispatch, phase 2 |
 | Package files named only by path make a call's writer ambiguous | the loader names them by namespace and name, phase 1 |
+| Loops answered before resolving (`WithOptimise`) call providers from a path of their own, a third beside one at a time and together | the gate travels in the compile's context and is set there too; each path has its own test |
+| A source resolves inside its component's render, so it compiled as the component | each source compiles as its own SourceDefinition, or as no owner when that is unknown; an empty owner clears the outer one |
+| With `authentication.enabled`, vela-core's ClusterRole had no rule for `cue.oam.dev` | the chart's role reads Packages |
+| An `extends` chain compiles as the leaf, so a call in a parent is checked as the leaf's writer | fails closed but can refuse what the parent's writer could do; per-level owners come with design 01's `inherit.Level` change, phase 1 |

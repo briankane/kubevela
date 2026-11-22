@@ -95,7 +95,7 @@ Every replica loads; only the leader writes status, from the same view, so statu
 
 ## Every compile says whose it is
 
-The owner context and every load point are in [design 01](01-api.md#which-definition-a-compile-is-for). Phase 1 adds `cuex.WithOwner` and `cuex.OwnerFrom` in `kubevela/pkg`, a `workflow` loader that returns the owner beside the template, and sets it at each load point in `kubevela`, each with a test that a compile it starts carries it.
+The owner context and every load point are in [design 01](01-api.md#which-definition-a-compile-is-for). `cuex.WithOwner` and `cuex.OwnerFrom`, the `workflow` loader returning the owner, and the owner at every render (components, traits, policies, steps and sources) landed ahead with restricted functions ([design 06](06-selection.md#built-ahead-of-phase-1)). Phase 1 adds the rest of design 01's load points, the ones that matter for what a compile can import rather than what it may call: admission, schema generation, `vela def` and the tools on it, and a per-level owner for `extends` chains. Each gets a test that a compile it starts carries the owner.
 
 ## Discovery
 

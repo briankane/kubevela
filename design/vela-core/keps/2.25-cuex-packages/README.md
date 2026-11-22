@@ -661,6 +661,8 @@ These hold for Packages with `spec.source`, and for legacy Packages once the leg
 
 Each phase is useful on its own, and each lands in `kubevela/pkg`, then `workflow`, then `kubevela`.
 
+Restricted functions came first, ahead of phase 1, as a thin slice: the gate, the owner at every render and Package admission, proven on k3d ([design 06](design/06-selection.md#built-ahead-of-phase-1)). Phase 2 keeps what it needs from selection: wrapping only the Packages a compile selected, and checking calls between Packages once dependencies exist.
+
 ## Alternatives considered
 
 ### Per-definition `@uses` resolution
