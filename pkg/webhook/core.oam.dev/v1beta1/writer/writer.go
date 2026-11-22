@@ -45,6 +45,10 @@ const (
 
 	// Path is where the handler is served.
 	Path = "/mutating-core-oam-dev-v1beta1-writers"
+	// WebhookName is the webhook's name in the chart's configuration. Its policy
+	// is always Ignore: a definition written while no vela-core serves it has no
+	// writer, and its restricted calls are refused at render.
+	WebhookName = "mutating.core.oam.dev.v1beta1.writers"
 )
 
 // Handler stamps the writer on create and on any update that changes the spec,

@@ -57,13 +57,16 @@ webhooks:
         resources:
           - componentdefinitions
     timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+  # Ignore, so an upgrade whose pods do not serve this path yet leaves definitions
+  # writable. A definition written then has no writer, and its restricted calls are
+  # refused at render until it is written again.
   - clientConfig:
       {{- include "kubevela.webhookCABundle" (dict "root" $ "hooks" $hooks "name" "mutating.core.oam.dev.v1beta1.writers") | nindent 6 }}
       service:
         name: {{ template "kubevela.name" . }}-webhook
         namespace: {{ .Release.Namespace }}
         path: /mutating-core-oam-dev-v1beta1-writers
-    {{- include "kubevela.webhookFailurePolicy" (dict "root" $ "hooks" $hooks "name" "mutating.core.oam.dev.v1beta1.writers" "policy" "Fail") | nindent 4 }}
+    {{- include "kubevela.webhookFailurePolicy" (dict "root" $ "hooks" $hooks "name" "mutating.core.oam.dev.v1beta1.writers" "policy" "Ignore") | nindent 4 }}
     name: mutating.core.oam.dev.v1beta1.writers
     sideEffects: None
     admissionReviewVersions:

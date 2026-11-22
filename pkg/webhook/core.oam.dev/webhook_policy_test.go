@@ -25,11 +25,13 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"helm.sh/helm/v3/pkg/chartutil"
 	"helm.sh/helm/v3/pkg/engine"
+
+	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/writer"
 )
 
 // webhookPolicies renders the chart's webhook configurations with values and returns each
-// webhook's failurePolicy, in order.
-func webhookPolicies(t *testing.T, values map[string]interface{}) []string {
+// webhook's failurePolicy by name.
+func webhookPolicies(t *testing.T, values map[string]interface{}) map[string]string {
 	t.Helper()
 	chart, err := loader.Load("../../../charts/vela-core")
 	require.NoError(t, err)
@@ -37,14 +39,16 @@ func webhookPolicies(t *testing.T, values map[string]interface{}) []string {
 	require.NoError(t, err)
 	out, err := engine.Render(chart, vals)
 	require.NoError(t, err)
-	var policies []string
-	re := regexp.MustCompile(`(?m)^\s*failurePolicy:\s*(\S+)`)
+	policies := map[string]string{}
+	re := regexp.MustCompile(`(?m)^\s*failurePolicy:\s*(\S+)\s*\n\s*name:\s*(\S+)`)
 	for name, doc := range out {
 		if !strings.Contains(name, "admission-webhooks/") || !strings.Contains(name, "WebhookConfiguration") {
 			continue
 		}
+		require.Equal(t, strings.Count(doc, "failurePolicy:"), len(re.FindAllStringSubmatch(doc, -1)),
+			"%s: every failurePolicy is followed by its webhook's name", name)
 		for _, m := range re.FindAllStringSubmatch(doc, -1) {
-			policies = append(policies, m[1])
+			policies[m[2]] = m[1]
 		}
 	}
 	require.NotEmpty(t, policies, "the chart renders webhook configurations")
@@ -60,18 +64,20 @@ func webhooks(certManager, patch bool) map[string]interface{} {
 
 // The chart renders the configured failure policy wherever nothing else would set it. Webhooks
 // start as Ignore only where vela-core manages the certificate and sets the policy itself once it
-// serves; with cert-manager or a supplied certificate the chart's Fail is what applies.
+// serves; with cert-manager or a supplied certificate the chart's Fail is what applies. The writer
+// stamp is Ignore in every mode.
 func TestWebhooksRenderTheConfiguredFailurePolicyPerCertificateMode(t *testing.T) {
-	for _, p := range webhookPolicies(t, webhooks(false, true)) {
-		require.Equal(t, "Ignore", p, "vela-core manages the certificate: it sets the policy once it serves")
+	expect := func(values map[string]interface{}, want, why string) {
+		policies := webhookPolicies(t, values)
+		require.Equal(t, "Ignore", policies[writer.WebhookName], "the writer stamp fails open")
+		for name, p := range policies {
+			if name != writer.WebhookName {
+				require.Equal(t, want, p, "%s: %s", name, why)
+			}
+		}
 	}
-	for _, p := range webhookPolicies(t, webhooks(true, true)) {
-		require.Equal(t, "Fail", p, "cert-manager: nothing else sets the policy")
-	}
-	for _, p := range webhookPolicies(t, webhooks(true, false)) {
-		require.Equal(t, "Fail", p)
-	}
-	for _, p := range webhookPolicies(t, webhooks(false, false)) {
-		require.Equal(t, "Fail", p, "a supplied certificate")
-	}
+	expect(webhooks(false, true), "Ignore", "vela-core manages the certificate: it sets the policy once it serves")
+	expect(webhooks(true, true), "Fail", "cert-manager: nothing else sets the policy")
+	expect(webhooks(true, false), "Fail", "cert-manager")
+	expect(webhooks(false, false), "Fail", "a supplied certificate")
 }

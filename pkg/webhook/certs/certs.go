@@ -55,6 +55,9 @@ type Options struct {
 	// Ignore until vela-core sets the caBundle, so admission does not fail
 	// before then.
 	FailurePolicy admissionregistrationv1.FailurePolicyType
+	// Pinned names webhooks that get their own policy in place of FailurePolicy,
+	// whenever FailurePolicy is given.
+	Pinned map[string]admissionregistrationv1.FailurePolicyType
 	// ConversionCRDs are CRDs whose conversion webhook should point at the
 	// webhook Service, at path /convert.
 	ConversionCRDs []string
@@ -80,7 +83,7 @@ func Ensure(ctx context.Context, c client.Client, opts Options) (*servingcert.Re
 		return nil, err
 	}
 	for _, obj := range configs {
-		if err = patchConfiguration(ctx, c, obj, res.CABundle, opts.FailurePolicy); err != nil {
+		if err = patchConfiguration(ctx, c, obj, res.CABundle, opts.FailurePolicy, opts.Pinned); err != nil {
 			return nil, err
 		}
 	}
@@ -166,9 +169,15 @@ func patchWebhook(cc *admissionregistrationv1.WebhookClientConfig, failurePolicy
 }
 
 // patchConfiguration sets the CA, and the failure policy if given, on every
-// webhook of the webhook configuration obj.
+// webhook of the webhook configuration obj, with a pinned webhook's own policy.
 func patchConfiguration(ctx context.Context, c client.Client, obj client.Object, ca []byte,
-	policy admissionregistrationv1.FailurePolicyType) error {
+	policy admissionregistrationv1.FailurePolicyType, pinned map[string]admissionregistrationv1.FailurePolicyType) error {
+	policyOf := func(name string) admissionregistrationv1.FailurePolicyType {
+		if p, ok := pinned[name]; ok && policy != "" {
+			return p
+		}
+		return policy
+	}
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := c.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
 			return client.IgnoreNotFound(err)
@@ -177,11 +186,11 @@ func patchConfiguration(ctx context.Context, c client.Client, obj client.Object,
 		switch o := obj.(type) {
 		case *admissionregistrationv1.MutatingWebhookConfiguration:
 			for i := range o.Webhooks {
-				changed = patchWebhook(&o.Webhooks[i].ClientConfig, &o.Webhooks[i].FailurePolicy, ca, policy) || changed
+				changed = patchWebhook(&o.Webhooks[i].ClientConfig, &o.Webhooks[i].FailurePolicy, ca, policyOf(o.Webhooks[i].Name)) || changed
 			}
 		case *admissionregistrationv1.ValidatingWebhookConfiguration:
 			for i := range o.Webhooks {
-				changed = patchWebhook(&o.Webhooks[i].ClientConfig, &o.Webhooks[i].FailurePolicy, ca, policy) || changed
+				changed = patchWebhook(&o.Webhooks[i].ClientConfig, &o.Webhooks[i].FailurePolicy, ca, policyOf(o.Webhooks[i].Name)) || changed
 			}
 		}
 		if !changed {

@@ -431,7 +431,7 @@ webhooks:
     operations: ["CREATE", "UPDATE"]
   admissionReviewVersions: ["v1", "v1beta1"]
   sideEffects: None
-  failurePolicy: Fail
+  failurePolicy: Ignore
 EOF
 
     kubectl apply -f /tmp/mutating-webhook-config.yaml

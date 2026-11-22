@@ -78,6 +78,7 @@ import (
 	webhookcerts "github.com/oam-dev/kubevela/pkg/webhook/certs"
 	configwebhook "github.com/oam-dev/kubevela/pkg/webhook/config.oam.dev/v1alpha1"
 	oamwebhook "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev"
+	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/writer"
 	"github.com/oam-dev/kubevela/version"
 )
 
@@ -613,7 +614,10 @@ func webhookTLSOptions(cfg *config.WebhookConfig) (webhookcerts.Options, error) 
 		SecretName:        name,
 		ConfigurationName: cfg.ConfigurationName,
 		FailurePolicy:     policy,
-		ConversionCRDs:    cfg.ConversionCRDs,
+		// The writer stamp fails open, so definitions stay writable while no
+		// vela-core serves it, as during an upgrade from a version without it.
+		Pinned:         map[string]admissionregistrationv1.FailurePolicyType{writer.WebhookName: admissionregistrationv1.Ignore},
+		ConversionCRDs: cfg.ConversionCRDs,
 	}, nil
 }
 

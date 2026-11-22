@@ -164,6 +164,22 @@ func TestEnsure(t *testing.T) {
 		require.Equal(t, 2, updates, "a second run must not update anything")
 	})
 
+	t.Run("gives a pinned webhook its own policy", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(testMutating(), testValidating()).Build()
+		opts := testOptions()
+		opts.Pinned = map[string]admissionregistrationv1.FailurePolicyType{"mutating.b": admissionregistrationv1.Ignore}
+		m, _ := getConfigs(t, c)
+		m.Webhooks[1].FailurePolicy = ptr.To(admissionregistrationv1.Fail)
+		require.NoError(t, c.Update(ctx, m))
+
+		_, err := Ensure(ctx, c, opts)
+		require.NoError(t, err)
+
+		m, _ = getConfigs(t, c)
+		require.Equal(t, admissionregistrationv1.Fail, *m.Webhooks[0].FailurePolicy)
+		require.Equal(t, admissionregistrationv1.Ignore, *m.Webhooks[1].FailurePolicy, "set back from Fail")
+	})
+
 	t.Run("leaves failurePolicy alone when none is given", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(testMutating(), testValidating()).Build()
 		opts := testOptions()

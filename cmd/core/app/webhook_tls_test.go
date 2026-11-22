@@ -35,6 +35,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/utils/common"
 	"github.com/oam-dev/kubevela/pkg/utils/servingcert"
 	webhookcerts "github.com/oam-dev/kubevela/pkg/webhook/certs"
+	"github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/writer"
 )
 
 const testWebhookConfigName = "kubevela-vela-core-admission"
@@ -57,6 +58,7 @@ var _ = Describe("webhookTLSOptions", func() {
 			SecretName:        testWebhookConfigName,
 			ConfigurationName: testWebhookConfigName,
 			FailurePolicy:     admissionregistrationv1.Fail,
+			Pinned:            map[string]admissionregistrationv1.FailurePolicyType{writer.WebhookName: admissionregistrationv1.Ignore},
 			ConversionCRDs:    []string{"applications.core.oam.dev"},
 		}))
 	})
