@@ -25,8 +25,10 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/kubevela/pkg/cue/cuex"
+	cuexaccess "github.com/kubevela/pkg/cue/cuex/access"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/pkg/auth"
@@ -95,57 +97,7 @@ func Check(ctx context.Context, cli client.Client, def client.Object, writer aut
 // or by a RoleBinding in namespace. Membership is by name: a binding to another
 // role, however wide, does not count.
 func Member(ctx context.Context, cli client.Reader, writer authenticationv1.UserInfo, roles []common.RoleRef, namespace string) (bool, error) {
-	crbs := &rbacv1.ClusterRoleBindingList{}
-	if err := cli.List(ctx, crbs); err != nil {
-		return false, fmt.Errorf("cannot list ClusterRoleBindings to check role membership: %w", err)
-	}
-	for _, b := range crbs.Items {
-		if wants(roles, b.RoleRef.Kind, b.RoleRef.Name) && boundTo(writer, b.Subjects) {
-			return true, nil
-		}
-	}
-	rbs := &rbacv1.RoleBindingList{}
-	if err := cli.List(ctx, rbs, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("cannot list RoleBindings in %q to check role membership: %w", namespace, err)
-	}
-	for _, b := range rbs.Items {
-		if wants(roles, b.RoleRef.Kind, b.RoleRef.Name) && boundTo(writer, b.Subjects) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func wants(roles []common.RoleRef, kind, name string) bool {
-	for _, r := range roles {
-		if r.Kind == kind && r.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// boundTo reports whether subjects name writer, as RBAC matches them.
-func boundTo(writer authenticationv1.UserInfo, subjects []rbacv1.Subject) bool {
-	for _, s := range subjects {
-		switch s.Kind {
-		case rbacv1.UserKind:
-			if s.Name == writer.Username {
-				return true
-			}
-		case rbacv1.GroupKind:
-			for _, g := range writer.Groups {
-				if g == s.Name {
-					return true
-				}
-			}
-		case rbacv1.ServiceAccountKind:
-			if writer.Username == "system:serviceaccount:"+s.Namespace+":"+s.Name {
-				return true
-			}
-		}
-	}
-	return false
+	return cuexaccess.Member(ctx, cli, cuex.Writer{User: writer.Username, Groups: writer.Groups}, roles, namespace)
 }
 
 func roleList(roles []common.RoleRef) string {

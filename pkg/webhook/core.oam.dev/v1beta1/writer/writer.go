@@ -33,15 +33,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	cuev1alpha1 "github.com/kubevela/pkg/apis/cue/v1alpha1"
+
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/utils"
 )
 
 const (
 	// AnnotationWriter is the user who last changed the object's spec.
-	AnnotationWriter = "cue.oam.dev/writer"
+	AnnotationWriter = cuev1alpha1.AnnotationWriter
 	// AnnotationWriterGroups is that user's groups at the time, comma-separated.
-	AnnotationWriterGroups = "cue.oam.dev/writer-groups"
+	AnnotationWriterGroups = cuev1alpha1.AnnotationWriterGroups
 
 	// Path is where the handler is served.
 	Path = "/mutating-core-oam-dev-v1beta1-writers"

@@ -40,6 +40,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kubevela/pkg/util/nsmatch"
+
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
@@ -106,10 +108,7 @@ func Allows(r *common.DefinitionRestrictions, ns string, nsLabels map[string]str
 	if !restrictsNamespaces(r) {
 		return true
 	}
-	if matchesName(r.Namespaces, ns) {
-		return true
-	}
-	return matchesSelector(r.NamespaceSelector, nsLabels)
+	return nsmatch.Matches(r.Namespaces, r.NamespaceSelector, ns, nsLabels)
 }
 
 // OfUnstructured returns the restrictions a definition declares, read from
