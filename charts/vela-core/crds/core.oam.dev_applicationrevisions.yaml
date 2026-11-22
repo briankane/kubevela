@@ -1569,7 +1569,7 @@ spec:
                                 groups or its service account.
                               items:
                                 description: RoleRef names a ClusterRole, or a Role
-                                  in the definition's namespace.
+                                  in the restricted object's namespace.
                                 properties:
                                   kind:
                                     enum:
@@ -1577,6 +1577,7 @@ spec:
                                     - ClusterRole
                                     type: string
                                   name:
+                                    minLength: 1
                                     type: string
                                 required:
                                 - kind
@@ -2125,7 +2126,7 @@ spec:
                                 groups or its service account.
                               items:
                                 description: RoleRef names a ClusterRole, or a Role
-                                  in the definition's namespace.
+                                  in the restricted object's namespace.
                                 properties:
                                   kind:
                                     enum:
@@ -2133,6 +2134,7 @@ spec:
                                     - ClusterRole
                                     type: string
                                   name:
+                                    minLength: 1
                                     type: string
                                 required:
                                 - kind
@@ -2575,7 +2577,7 @@ spec:
                                 groups or its service account.
                               items:
                                 description: RoleRef names a ClusterRole, or a Role
-                                  in the definition's namespace.
+                                  in the restricted object's namespace.
                                 properties:
                                   kind:
                                     enum:
@@ -2583,6 +2585,7 @@ spec:
                                     - ClusterRole
                                     type: string
                                   name:
+                                    minLength: 1
                                     type: string
                                 required:
                                 - kind
@@ -3102,7 +3105,7 @@ spec:
                                 groups or its service account.
                               items:
                                 description: RoleRef names a ClusterRole, or a Role
-                                  in the definition's namespace.
+                                  in the restricted object's namespace.
                                 properties:
                                   kind:
                                     enum:
@@ -3110,6 +3113,7 @@ spec:
                                     - ClusterRole
                                     type: string
                                   name:
+                                    minLength: 1
                                     type: string
                                 required:
                                 - kind
@@ -3786,7 +3790,7 @@ spec:
                                 groups or its service account.
                               items:
                                 description: RoleRef names a ClusterRole, or a Role
-                                  in the definition's namespace.
+                                  in the restricted object's namespace.
                                 properties:
                                   kind:
                                     enum:
@@ -3794,6 +3798,7 @@ spec:
                                     - ClusterRole
                                     type: string
                                   name:
+                                    minLength: 1
                                     type: string
                                 required:
                                 - kind

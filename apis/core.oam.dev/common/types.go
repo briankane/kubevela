@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	cuev1alpha1 "github.com/kubevela/pkg/apis/cue/v1alpha1"
 	wfTypesv1alpha1 "github.com/kubevela/pkg/apis/oam/v1alpha1"
 	workflowv1alpha1 "github.com/kubevela/workflow/api/v1alpha1"
 
@@ -794,15 +795,9 @@ type DefinitionRestrictions struct {
 	Message string `json:"message,omitempty"`
 }
 
-// RoleRef names a ClusterRole, or a Role in the definition's namespace.
-type RoleRef struct {
-	// +kubebuilder:validation:Enum=Role;ClusterRole
-	Kind string `json:"kind"`
-	Name string `json:"name"`
-}
-
-// String is the role as kind/name.
-func (r RoleRef) String() string { return r.Kind + "/" + r.Name }
+// RoleRef names a ClusterRole, or a Role in the definition's namespace. It is
+// the role reference CueX Packages restrict calls with, so both read alike.
+type RoleRef = cuev1alpha1.RoleRef
 
 // RestrictionMode says whether a role or grant restriction refuses or only warns.
 type RestrictionMode string
