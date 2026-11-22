@@ -93,6 +93,7 @@ func ResolveSourceExpressions(ctx process.Context, params interface{}, surface s
 		Bindings:  in.Bindings,
 		Types:     in.Types,
 		Templates: in.Templates,
+		Owners:    in.Owners,
 		Sensitive: in.Sensitive,
 		Store:     in.Store,
 
@@ -150,6 +151,7 @@ type sourceResolver struct {
 	sourceProps     map[string]map[string]interface{}
 	sourceTypes     map[string]string
 	sourceTemplates map[string]string
+	sourceOwners    map[string]*upstreamcuex.Owner
 	sourceSchemas   map[string]string
 	sensitivePaths  map[string][]string
 	cacheStore      velaprocess.SourceCacheStore
@@ -217,6 +219,8 @@ type sourceInputs struct {
 	Types map[string]string
 	// Templates is definition type -> its CUE template.
 	Templates map[string]string
+	// Owners is definition type -> the SourceDefinition its template came from.
+	Owners map[string]*upstreamcuex.Owner
 	// Sensitive is definition type -> the paths its schema marks +sensitive.
 	Sensitive map[string][]string
 	// Store persists resolved values. Nil disables caching, which resolves
@@ -298,6 +302,9 @@ func sourceInputsFromContext(ctx process.Context) sourceInputs {
 	if v, ok := ctx.GetData(velaprocess.ContextAppSourceTemplates).(map[string]string); ok && v != nil {
 		in.Templates = v
 	}
+	if v, ok := ctx.GetData(velaprocess.ContextAppSourceOwners).(map[string]*upstreamcuex.Owner); ok && v != nil {
+		in.Owners = v
+	}
 	if v, ok := ctx.GetData(velaprocess.ContextAppSourceSensitivePaths).(map[string][]string); ok && v != nil {
 		in.Sensitive = v
 	}
@@ -352,6 +359,7 @@ func newSourceResolver(goCtx context.Context, ctxValues map[string]interface{}, 
 		sourceProps:     in.Bindings,
 		sourceTypes:     in.Types,
 		sourceTemplates: in.Templates,
+		sourceOwners:    in.Owners,
 		sourceSchemas:   sourceSchemas,
 		sensitivePaths:  in.Sensitive,
 		cacheStore:      in.Store,
@@ -469,7 +477,7 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	if err != nil {
 		return r.fail(sourceName, sourceType, cachePolicy.Key, err, "")
 	}
-	val, err := r.compiler.CompileString(r.goCtx, strings.Join([]string{
+	val, err := r.compiler.CompileString(r.asOwner(sourceType), strings.Join([]string{
 		render.Template(sourceTemplate), paramFile, c,
 	}, "\n"))
 	if err != nil {
@@ -521,4 +529,13 @@ func (r *sourceResolver) resolve(sourceName string) (map[string]interface{}, err
 	}
 	r.setSourceStatus(sourceName, sourceType, PhaseResolved, "", cachePolicy.Key, expiresAt)
 	return output, nil
+}
+
+// asOwner is the context a source of sourceType compiles with: its own
+// SourceDefinition as the owner, never the render it resolves inside.
+func (r *sourceResolver) asOwner(sourceType string) context.Context {
+	if owner := r.sourceOwners[sourceType]; owner != nil {
+		return upstreamcuex.WithOwner(r.goCtx, *owner)
+	}
+	return upstreamcuex.WithOwner(r.goCtx, upstreamcuex.Owner{})
 }

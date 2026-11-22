@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/kubevela/pkg/cue/cuex"
 	"github.com/kubevela/workflow/pkg/tasks/template"
 	wfTypes "github.com/kubevela/workflow/pkg/types"
 
@@ -49,11 +50,20 @@ type WorkflowStepLoader struct {
 	loadCapabilityDefinition func(ctx context.Context, capName string) (*appfile.Template, error)
 }
 
+var _ template.OwnerLoader = &WorkflowStepLoader{}
+
 // LoadTemplate gets the workflowStep definition.
 func (loader *WorkflowStepLoader) LoadTemplate(ctx context.Context, name string) (string, error) {
+	tmpl, _, err := loader.LoadTemplateWithOwner(ctx, name)
+	return tmpl, err
+}
+
+// LoadTemplateWithOwner gets the workflowStep definition and who it is. An
+// embedded step has no owner.
+func (loader *WorkflowStepLoader) LoadTemplateWithOwner(ctx context.Context, name string) (string, *cuex.Owner, error) {
 	files, err := templateFS.ReadDir(templateDir)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if name == wfTypes.WorkflowStepTypeApplyComponent {
 		name = wfTypes.WorkflowStepTypeBuiltinApplyComponent
@@ -63,21 +73,21 @@ func (loader *WorkflowStepLoader) LoadTemplate(ctx context.Context, name string)
 		if staticFilename == file.Name() {
 			fileName := fmt.Sprintf("%s/%s", templateDir, file.Name())
 			content, err := templateFS.ReadFile(fileName)
-			return string(content), err
+			return string(content), nil, err
 		}
 	}
 
 	templ, err := loader.loadCapabilityDefinition(ctx, name)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	schematic := templ.WorkflowStepDefinition.Spec.Schematic
 	if schematic != nil && schematic.CUE != nil {
 		tmpl, _ := upgrade.EnsureCueVersionCompatibility(schematic.CUE.Template, name, upgrade.WorkflowStepKind, upgrade.TemplateAreaMain)
-		return tmpl, nil
+		return tmpl, templ.Owner(), nil
 	}
 
-	return "", errors.New("custom workflowStep only support cue")
+	return "", nil, errors.New("custom workflowStep only support cue")
 }
 
 // NewWorkflowStepTemplateLoader create a task template loader.

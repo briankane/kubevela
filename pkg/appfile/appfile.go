@@ -28,6 +28,7 @@ import (
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 
+	upstreamcuex "github.com/kubevela/pkg/cue/cuex"
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 
 	"github.com/oam-dev/kubevela/pkg/cue/definition/health"
@@ -106,6 +107,7 @@ type Component struct {
 
 // EvalContext eval workload template and set the result to context
 func (comp *Component) EvalContext(ctx process.Context) error {
+	defer asOwner(ctx, comp.FullTemplate)()
 	return comp.engine.Complete(ctx, comp.FullTemplate.TemplateStr, comp.Params)
 }
 
@@ -162,6 +164,7 @@ func (trait *Trait) GetTypeLabel() string {
 
 // EvalContext eval trait template and set result to context
 func (trait *Trait) EvalContext(ctx process.Context) error {
+	defer asOwner(ctx, trait.FullTemplate)()
 	return trait.engine.Complete(ctx, trait.Template, trait.Params)
 }
 
@@ -1067,6 +1070,7 @@ func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess
 		Sources:              map[string]map[string]interface{}{},
 		SourceTypes:          map[string]string{},
 		SourceTemplates:      map[string]string{},
+		SourceOwners:         map[string]*upstreamcuex.Owner{},
 		SourceSensitivePaths: map[string][]string{},
 		SourceCacheStore:     appfile.SourceCacheStore,
 	}
@@ -1088,6 +1092,7 @@ func GenerateContextDataFromAppFile(appfile *Appfile, wlName string) velaprocess
 	for sourceType, def := range appfile.RelatedSourceDefinitions {
 		if def != nil && def.Spec.Schematic != nil && def.Spec.Schematic.CUE != nil {
 			data.SourceTemplates[sourceType] = def.Spec.Schematic.CUE.Template
+			data.SourceOwners[sourceType] = OwnerOf("SourceDefinition", def)
 			data.SourceSensitivePaths[sourceType] = sources.ExtractSensitiveOutputPaths(def.Spec.Schematic.CUE.Template)
 		}
 	}

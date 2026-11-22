@@ -47,6 +47,9 @@ const (
 	ContextAppSourceTypes = "appSourceTypes"
 	// ContextAppSourceTemplates maps source definition type to CUE template.
 	ContextAppSourceTemplates = "appSourceTemplates"
+	// ContextAppSourceOwners maps source definition type to the SourceDefinition
+	// its template came from.
+	ContextAppSourceOwners = "appSourceOwners"
 	// ContextAppSourceSensitivePaths maps source definition type to platform-sensitive paths.
 	ContextAppSourceSensitivePaths = "appSourceSensitivePaths"
 	// ContextAppSourceCacheStore stores the source cache store used for source cache access.

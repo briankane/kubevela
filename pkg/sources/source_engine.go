@@ -25,6 +25,7 @@ import (
 	"github.com/google/cel-go/cel"
 	celengine "github.com/kubevela/pkg/cel"
 	"github.com/kubevela/pkg/cel/template"
+	"github.com/kubevela/pkg/cue/cuex"
 
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/definition/celexpr"
@@ -56,6 +57,9 @@ type SourceEngineOptions struct {
 	Types map[string]string
 	// Templates is definition type -> its CUE template.
 	Templates map[string]string
+	// Owners is definition type -> the SourceDefinition its template came from,
+	// which its compile runs as. A type not listed compiles as no definition.
+	Owners map[string]*cuex.Owner
 	// Sensitive is definition type -> paths its schema marks +sensitive.
 	//
 	// Optional: any type not listed has its paths derived from its template. Supply
@@ -175,6 +179,7 @@ func (e *SourceEngine) CachePolicy(ctx context.Context, binding string) (CachePo
 		Bindings:  e.opts.Bindings,
 		Types:     e.opts.Types,
 		Templates: e.opts.Templates,
+		Owners:    e.opts.Owners,
 		Sensitive: e.opts.Sensitive,
 		Store:     NewReadOnlySourceCacheStore(e.opts.Store),
 		Compiler:  e.opts.Compiler,
@@ -218,6 +223,7 @@ func (e *SourceEngine) Resolve(ctx context.Context, properties interface{}) (Sou
 		Bindings:  e.opts.Bindings,
 		Types:     e.opts.Types,
 		Templates: e.opts.Templates,
+		Owners:    e.opts.Owners,
 		Sensitive: e.opts.Sensitive,
 		Store:     e.opts.Store,
 		Compiler:  e.opts.Compiler,

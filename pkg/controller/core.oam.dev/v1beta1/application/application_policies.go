@@ -711,7 +711,8 @@ func (h *AppHandler) renderPolicyCUETemplate(ctx monitorContext.Context, app *v1
 		baseContext,
 	}, "\n")
 
-	val, err := cuex.DefaultCompiler.Get().CompileString(pCtx.GetCtx(), cueSource)
+	compileCtx := appfile.CompileAs(pCtx.GetCtx(), appfile.OwnerOf("PolicyDefinition", policyDef))
+	val, err := cuex.DefaultCompiler.Get().CompileString(compileCtx, cueSource)
 	if err != nil {
 		return cue.Value{}, errors.Wrap(err, "failed to compile CUE template")
 	}

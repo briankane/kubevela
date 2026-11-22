@@ -92,6 +92,7 @@ func (r *sourceResolver) inputs() sourceInputs {
 		Bindings:  r.sourceProps,
 		Types:     r.sourceTypes,
 		Templates: r.sourceTemplates,
+		Owners:    r.sourceOwners,
 		Sensitive: r.sensitivePaths,
 		Store:     r.cacheStore,
 		Compiler:  r.compiler,

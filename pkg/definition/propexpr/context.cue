@@ -282,6 +282,8 @@ excluded: {
 	// +reason=internal plumbing for source resolution, not user-facing context
 	appSourceTemplates: _
 	// +reason=internal plumbing for source resolution, not user-facing context
+	appSourceOwners: _
+	// +reason=internal plumbing for source resolution, not user-facing context
 	appSourceSensitivePaths: _
 	// +reason=internal plumbing for source resolution, not user-facing context
 	appSourceCacheStore: _

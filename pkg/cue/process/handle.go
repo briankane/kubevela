@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kubevela/pkg/cue/cuex"
 	"github.com/kubevela/workflow/pkg/cue/process"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
@@ -52,6 +53,9 @@ type ContextData struct {
 	Sources         map[string]map[string]interface{}
 	SourceTypes     map[string]string
 	SourceTemplates map[string]string
+	// SourceOwners maps source definition type to the SourceDefinition its
+	// template came from.
+	SourceOwners map[string]*cuex.Owner
 	// SourceSensitivePaths maps source definition type to non-overridable sensitive field paths.
 	SourceSensitivePaths map[string][]string
 	// SourceCacheStore is used for persistent source cache read/write operations.
@@ -175,6 +179,10 @@ func NewContext(data ContextData) process.Context {
 		data.SourceTemplates = map[string]string{}
 	}
 	ctx.PushData(ContextAppSourceTemplates, data.SourceTemplates)
+	if data.SourceOwners == nil {
+		data.SourceOwners = map[string]*cuex.Owner{}
+	}
+	ctx.PushData(ContextAppSourceOwners, data.SourceOwners)
 	if data.SourceSensitivePaths == nil {
 		data.SourceSensitivePaths = map[string][]string{}
 	}
