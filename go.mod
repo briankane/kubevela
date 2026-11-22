@@ -348,3 +348,7 @@ replace (
 	// v0.25.2. Switch to the v0.26.0 release once it is out.
 	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.25.1-0.20261003005320-02048c9ac9b1
 )
+
+replace github.com/kubevela/pkg => github.com/briankane/pkg v0.0.0-20261122131135-987e8b7ab173
+
+replace github.com/kubevela/workflow => github.com/briankane/workflow v0.6.5-0.20261122131511-d69713ec9348
