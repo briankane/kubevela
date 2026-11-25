@@ -1,3 +1,4 @@
+{{- if not .Values.agent.only }}
 apiVersion: "v1"
 kind:       "ConfigMap"
 metadata: 
@@ -42,3 +43,4 @@ data:
               error: response.err
           }
       }
+{{- end }}

@@ -95,6 +95,7 @@ require (
 	k8s.io/utils v0.0.0-20260707023825-cf1189d6abe3
 	open-cluster-management.io/api v0.11.0
 	oras.land/oras-go v1.2.5
+	sigs.k8s.io/cli-utils v0.37.2
 	sigs.k8s.io/controller-runtime v0.25.2
 	sigs.k8s.io/controller-tools v0.22.0
 	sigs.k8s.io/gateway-api v0.7.1

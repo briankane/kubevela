@@ -1,3 +1,6 @@
+{{- if and .Values.agent.only (not .Values.featureGates.enableComponentDispatch) }}
+{{- fail "agent.only needs featureGates.enableComponentDispatch: vela-agent applies the Components a hub dispatches, and the gate turns it on" }}
+{{- end }}
 {{- if .Values.serviceAccount.create -}}
 apiVersion: v1
 kind: ServiceAccount
@@ -54,7 +57,7 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     verbs: ["get", "list", "watch"]
-  {{- if .Values.multicluster.enabled }}
+  {{- if include "kubevela.multicluster" . }}
   # cluster-gateway's admission plugins watch these; until they can, it refuses every request.
   # The mutating ones are watched from Kubernetes 1.36, where they are on by default.
   - apiGroups: ["admissionregistration.k8s.io"]
@@ -355,7 +358,7 @@ spec:
             - "--system-definition-namespace={{ include "systemDefinitionNamespace" . }}"
             - "--application-revision-limit={{ .Values.applicationRevisionLimit }}"
             - "--definition-revision-limit={{ .Values.definitionRevisionLimit }}"
-            {{ if .Values.multicluster.enabled }}
+            {{ if include "kubevela.multicluster" . }}
             - "--enable-cluster-gateway"
             {{ if include "kubevela.clusterGatewayRuntimeCerts" . }}
             - "--cluster-gateway-tls-secret={{ .Release.Namespace }}/{{ template "kubevela.fullname" . }}-cluster-gateway-tls-v2"
@@ -372,7 +375,7 @@ spec:
             {{ end }}
             {{ end }}
             {{ end }}
-            {{ if .Values.multicluster.metrics.enabled }}
+            {{ if and (include "kubevela.multicluster" .) .Values.multicluster.metrics.enabled }}
             - "--enable-cluster-metrics"
             {{ end }}
             - "--application-re-sync-period={{ .Values.controllerArgs.reSyncPeriod }}"
@@ -446,6 +449,13 @@ spec:
             - "--feature-gates=ValidateUndeclaredParameters={{- .Values.featureGates.validateUndeclaredParameters | toString -}}"
             - "--feature-gates=EnableDefinitionInheritance={{- .Values.featureGates.enableDefinitionInheritance | toString -}}"
             - "--feature-gates=AutoMigrateLegacyConfigs={{- .Values.featureGates.autoMigrateLegacyConfigs | toString -}}"
+            - "--feature-gates=EnableComponentDispatch={{- .Values.featureGates.enableComponentDispatch | toString -}}"
+            - "--agent-only={{ .Values.agent.only }}"
+            - "--agent-cluster-name={{ .Values.agent.clusterName }}"
+            - "--component-producers=system:serviceaccount:{{ .Release.Namespace }}:{{ include "kubevela.serviceAccountName" . }}{{ range .Values.agent.producers }},{{ . }}{{ end }}"
+            {{- with .Values.componentDispatch.signingKeyMaxAge }}
+            - "--component-signing-key-max-age={{ . }}"
+            {{- end }}
             - "--feature-gates=DisableWorkflowHTTP={{- .Values.featureGates.disableWorkflowHTTP | toString -}}"
             - "--feature-gates=BlockPrivateHTTPAddresses={{- .Values.featureGates.blockPrivateHTTPAddresses | toString -}}"
             - "--feature-gates=ValidateDefinitionPermissions={{ .Values.authorization.definitionValidationEnabled | toString -}}"
@@ -481,7 +491,7 @@ spec:
           resources:
           {{- toYaml .Values.resources | nindent 12 }}
           {{- $needAdmissionTLS := .Values.admissionWebhooks.enabled }}
-          {{- $needClusterGatewayTLS := and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.direct }}
+          {{- $needClusterGatewayTLS := and (include "kubevela.multicluster" .) .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.direct }}
           {{- /* With runtime certs, vela-core creates the Secret itself and cannot
                  mount it. It writes the files into an emptyDir at startup. */}}
           {{- $webhookRuntime := include "kubevela.webhookRuntimeCerts" . }}
@@ -628,7 +638,7 @@ spec:
       component: vela-core-controller
 {{- end -}}
 
-{{- if and (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") .Values.multicluster.metrics.enabled .Values.multicluster.clusterGateway.serviceMonitor.enabled }}
+{{- if and (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") (include "kubevela.multicluster" .) .Values.multicluster.metrics.enabled .Values.multicluster.clusterGateway.serviceMonitor.enabled }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

@@ -29,6 +29,7 @@ import (
 	errors2 "github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -178,4 +179,11 @@ func ListExistingClusterSecrets(ctx context.Context, c client.Client) ([]v1.Secr
 		return nil, errors2.Wrapf(err, "failed to list cluster secrets")
 	}
 	return secrets.Items, nil
+}
+
+// NewClusterReader reads past any cache, from the cluster its context names: the hub
+// directly, any other cluster through cluster-gateway. A manager's APIReader reads the hub
+// whatever cluster the context names.
+func NewClusterReader(config *rest.Config, mapper meta.RESTMapper) (client.Reader, error) {
+	return pkgmulticluster.NewDefaultClient(config, client.Options{Scheme: common.Scheme, Mapper: mapper})
 }

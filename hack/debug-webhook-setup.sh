@@ -254,6 +254,18 @@ webhooks:
   admissionReviewVersions: ["v1", "v1beta1"]
   sideEffects: None
   failurePolicy: Fail
+- name: component.core.oam.dev
+  clientConfig:
+    url: https://${HOST_IP}:${WEBHOOK_PORT}/validating-core-oam-dev-v1alpha1-components
+    caBundle: ${CA_BUNDLE}
+  rules:
+  - apiGroups: ["core.oam.dev"]
+    apiVersions: ["v1alpha1"]
+    resources: ["components"]
+    operations: ["CREATE", "UPDATE"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
 - name: policydefinition.core.oam.dev
   clientConfig:
     url: https://${HOST_IP}:${WEBHOOK_PORT}/validating-core-oam-dev-v1beta1-policydefinitions

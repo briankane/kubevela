@@ -112,16 +112,30 @@ var Optional = []CRD{
 		Plural:           "packages",
 		GroupVersionKind: schema.GroupVersionKind{Group: "cue.oam.dev", Version: "v1alpha1", Kind: "Package"},
 	},
+	// Watched only with the EnableComponentDispatch gate, which requires it through Agent.
+	core("components", "Component", "v1alpha1"),
 }
 
-// Verify reports every required CRD the cluster does not serve.
+// Agent are the CRDs vela-agent watches and writes. They are all a cluster the hub
+// dispatches to needs, and the full controller needs them too once Component dispatch is on.
+var Agent = []CRD{
+	core("components", "Component", "v1alpha1"),
+	core("resourcetrackers", "ResourceTracker", "v1beta1"),
+}
+
+// Verify reports every Required CRD the cluster does not serve.
+func Verify(mapper meta.RESTMapper) error {
+	return VerifyCRDs(mapper, Required)
+}
+
+// VerifyCRDs reports every one of crds the cluster does not serve.
 //
 // A NoKindMatchError means the CRD is not installed. Any other error means
 // discovery itself failed, which usually means the API server is not up yet, and
 // reporting that as a missing CRD sends an operator down the wrong path.
-func Verify(mapper meta.RESTMapper) error {
+func VerifyCRDs(mapper meta.RESTMapper, crds []CRD) error {
 	var missing []CRD
-	for _, c := range Required {
+	for _, c := range crds {
 		if _, err := mapper.RESTMapping(c.GroupKind(), c.Version); err != nil {
 			if meta.IsNoMatchError(err) {
 				missing = append(missing, c)

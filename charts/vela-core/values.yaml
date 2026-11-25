@@ -207,6 +207,7 @@ optimize:
 ##@param featureGates.restrictDefinitionNamespaces enforce a definition's spec.restrictions or definition.oam.dev/restrict-namespaces annotation when an Application is created or updated (Beta, on by default; a no-op until a definition declares a restriction)
 ##@param featureGates.enableDefinitionInheritance enable spec.extends on ComponentDefinition and TraitDefinition
 ##@param featureGates.enableModuleComponent enable installing a module as an Application component via the type: module ComponentDefinition (Alpha)
+##@param featureGates.enableComponentDispatch run vela-agent, which applies the signed Components a hub dispatches, and push the hub's signing keys to every cluster (Alpha)
 ##@param featureGates.autoMigrateLegacyConfigs adopt legacy config templates and configs into ConfigTemplate and Config CRs once at controller startup, the same as running vela config-template migrate --all in every namespace; legacy objects are kept (Alpha)
 ##@param featureGates.disableWorkflowHTTP disable outbound HTTP from workflow request/webhook steps
 ##@param featureGates.blockPrivateHTTPAddresses block workflow outbound HTTP to RFC-1918 and ULA destinations
@@ -237,6 +238,7 @@ featureGates:
   enableCueExpVariable: true
   enableAddonComponent: false
   enableModuleComponent: false
+  enableComponentDispatch: false
   restrictDefinitionNamespaces: true
   enableDefinitionInheritance: false
   autoMigrateLegacyConfigs: false
@@ -510,6 +512,18 @@ authentication:
 ## Both features can be used together for defense in depth.
 authorization:
   definitionValidationEnabled: false
+
+## @param agent.only Run vela-core as vela-agent alone, on a cluster a hub dispatches Components to: installs only vela-core and the Component webhook. Every CRD still installs (Helm cannot skip some), but only Component and ResourceTracker are used. Needs featureGates.enableComponentDispatch
+## @param agent.clusterName This cluster's name as the hub addresses it; vela-agent refuses Components addressed elsewhere
+## @param agent.producers Identities besides vela-core's own service account that may create Components and change their spec (usernames, or group:<name>); on a cluster a hub pushes to, the identity the hub joined it with
+agent:
+  only: false
+  clusterName: local
+  producers: []
+
+## @param componentDispatch.signingKeyMaxAge On the hub, rotate the Component signing key once it has been active this long (a duration, e.g. 2160h); empty rotates only when asked
+componentDispatch:
+  signingKeyMaxAge: ""
 
 ## @param sharding.enabled When sharding enabled, the controller will run as master mode. Refer to https://github.com/kubevela/kubevela/blob/master/design/vela-core/sharding.md for details.
 ## @param sharding.schedulableShards The shards available for scheduling. If empty, dynamic discovery will be used.

@@ -90,3 +90,32 @@ func TestAnApplicationAndAComponentShareAResource(t *testing.T) {
 	err = recreated.Dispatch(ctx, []*unstructured.Unstructured{renderedConfigMap("shared")}, nil)
 	r.ErrorContains(err, "Component/default/backend")
 }
+
+// A Component takes over the resources its own Application controlled when it names that
+// Application in AdoptFrom: no delete, no recreate, and nobody else's resources.
+func TestAComponentAdoptsItsApplicationsResources(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	cli := fake.NewClientBuilder().WithScheme(common.Scheme).Build()
+	app, err := New(ctx, cli, shopApp(1))
+	r.NoError(err)
+	r.NoError(app.Dispatch(ctx, []*unstructured.Unstructured{renderedConfigMap("settings")}, nil))
+	before := &corev1.ConfigMap{}
+	r.NoError(cli.Get(ctx, client.ObjectKey{Namespace: "default", Name: "settings"}, before))
+
+	component := func(adoptFrom string) resourcekeeper.ResourceKeeper {
+		rk, err := resourcekeeper.New(ctx, cli, resourcetracker.NewBase(resourcetracker.Owner{Kind: "Component", Namespace: "default", Name: "backend", UID: "uid-backend", Generation: 1}),
+			resourcekeeper.Policies{AdoptFrom: adoptFrom}, resourcekeeper.Options{})
+		r.NoError(err)
+		return rk
+	}
+	err = component("Application/default/other").Dispatch(ctx, []*unstructured.Unstructured{renderedConfigMap("settings")}, nil)
+	r.ErrorContains(err, "Application/default/shop", "adopting from another owner is refused")
+
+	r.NoError(component("Application/default/shop").Dispatch(ctx, []*unstructured.Unstructured{renderedConfigMap("settings")}, nil))
+	after := &corev1.ConfigMap{}
+	r.NoError(cli.Get(ctx, client.ObjectKey{Namespace: "default", Name: "settings"}, after))
+	r.Equal(before.UID, after.UID, "adopted in place")
+	r.Equal("Component", after.Labels[oam.LabelOwnerKind])
+	r.Equal("backend", after.Labels[oam.LabelOwnerName])
+}

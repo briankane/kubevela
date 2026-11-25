@@ -11,6 +11,8 @@ metadata:
     cert-manager.io/inject-ca-from: {{ printf "%s/%s-root-cert" .Release.Namespace (include "kubevela.fullname" .) | quote }}
   {{- end }}
 webhooks:
+  {{- /* vela-agent alone serves only the Component webhook; the others fail closed with nothing behind them. */}}
+  {{- if not .Values.agent.only }}
   - clientConfig:
       {{- include "kubevela.webhookCABundle" (dict "root" $ "hooks" $hooks "name" "validating.core.oam.dev.v1beta1.traitdefinitions") | nindent 6 }}
       service:
@@ -126,6 +128,33 @@ webhooks:
         resources:
           - componentdefinitions
     timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+  {{- end }}
+  {{- if .Values.featureGates.enableComponentDispatch }}
+  - clientConfig:
+      {{- include "kubevela.webhookCABundle" (dict "root" $ "hooks" $hooks "name" "validating.core.oam-dev.v1alpha1.components") | nindent 6 }}
+      service:
+        name: {{ template "kubevela.name" . }}-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validating-core-oam-dev-v1alpha1-components
+    {{- include "kubevela.webhookFailurePolicy" (dict "root" $ "hooks" $hooks "name" "validating.core.oam-dev.v1alpha1.components" "policy" "Fail") | nindent 4 }}
+    name: validating.core.oam-dev.v1alpha1.components
+    sideEffects: None
+    admissionReviewVersions:
+      - v1beta1
+      - v1
+    rules:
+      - apiGroups:
+          - core.oam.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - components
+    timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+  {{- end }}
+  {{- if not .Values.agent.only }}
   - clientConfig:
       {{- include "kubevela.webhookCABundle" (dict "root" $ "hooks" $hooks "name" "validating.core.oam-dev.v1beta1.policydefinitions") | nindent 6 }}
       service:
@@ -266,4 +295,5 @@ webhooks:
         resources:
           - sourcedefinitions
     timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+  {{- end }}
 {{- end -}}

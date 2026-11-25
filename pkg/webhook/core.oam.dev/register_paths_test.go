@@ -48,7 +48,7 @@ func TestWebhookPathsAreRegisteredEverywhere(t *testing.T) {
 		// exists to catch, in the one group it was not looking at.
 		pathRegexp = `/(validating|mutating)-(core|config)-oam-dev-v1(beta1|alpha1)-[a-z]+`
 	)
-	goSources := []string{"v1beta1", "../config.oam.dev/v1alpha1"}
+	goSources := []string{"v1beta1", "v1alpha1", "../config.oam.dev/v1alpha1"}
 
 	re := regexp.MustCompile(pathRegexp)
 

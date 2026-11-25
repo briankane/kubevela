@@ -1,4 +1,4 @@
-{{ if .Values.multicluster.enabled }}
+{{ if include "kubevela.multicluster" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

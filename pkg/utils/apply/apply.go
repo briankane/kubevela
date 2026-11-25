@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -62,6 +63,7 @@ type Applicator interface {
 
 type applyAction struct {
 	takeOver         bool
+	adoptFrom        []string
 	readOnly         bool
 	isShared         bool
 	skipUpdate       bool
@@ -401,6 +403,15 @@ func TakeOver() ApplyOption {
 	}
 }
 
+// AdoptFrom lets the applying owner take over objects controlled by an owner with one of keys,
+// and only those. It must run before MustBeControlledBy.
+func AdoptFrom(keys ...string) ApplyOption {
+	return func(act *applyAction, _, _ client.Object) error {
+		act.adoptFrom = append(act.adoptFrom, keys...)
+		return nil
+	}
+}
+
 // TakeOverIf is TakeOver for the existing objects the predicate accepts: the caller names
 // the shape it may claim and leaves every other unowned object to the refusal. It must run
 // before MustBeControlledBy.
@@ -464,7 +475,7 @@ func MustBeControlledBy(owner Owner) ApplyOption {
 		if by == "" && !legacyOwnerValidation() && existing.GetResourceVersion() != "" && !act.takeOver {
 			return fmt.Errorf("%s %s/%s exists but not managed by any %s now", existing.GetObjectKind().GroupVersionKind().Kind, existing.GetNamespace(), existing.GetName(), strings.ToLower(kind))
 		}
-		if by != "" && !sameOwner(by, key) {
+		if by != "" && !sameOwner(by, key) && !slices.ContainsFunc(act.adoptFrom, func(k string) bool { return sameOwner(by, k) }) {
 			return fmt.Errorf("existing object %s %s/%s is managed by other %s %s", existing.GetObjectKind().GroupVersionKind().Kind, existing.GetNamespace(), existing.GetName(), strings.ToLower(kind), by)
 		}
 		return nil

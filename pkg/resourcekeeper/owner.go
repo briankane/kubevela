@@ -37,6 +37,9 @@ type Policies struct {
 	TakeOver       *v1alpha1.TakeOverPolicySpec
 	ReadOnly       *v1alpha1.ReadOnlyPolicySpec
 	ResourceUpdate *v1alpha1.ResourceUpdatePolicySpec
+	// AdoptFrom is the key of an owner whose resources this owner takes over in place, as a
+	// Component does from the Application it replaces.
+	AdoptFrom string
 }
 
 // New creates a keeper for an owner, given its Tracked (see resourcetracker.Tracked). What
@@ -71,6 +74,9 @@ func (h *resourceKeeper) policyApplyOptions(manifest *unstructured.Unstructured)
 	}
 	if h.canTakeOver(manifest) {
 		opts = append(opts, apply.TakeOver())
+	}
+	if h.policies.AdoptFrom != "" {
+		opts = append(opts, apply.AdoptFrom(h.policies.AdoptFrom))
 	}
 	if h.isReadOnly(manifest) {
 		opts = append(opts, apply.ReadOnly())

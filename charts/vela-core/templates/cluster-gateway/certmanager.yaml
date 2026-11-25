@@ -1,4 +1,4 @@
-{{- if and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.secureTLS.certManager.enabled }}
+{{- if and (include "kubevela.multicluster" .) .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.secureTLS.certManager.enabled }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:

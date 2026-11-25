@@ -29,6 +29,14 @@ Welcome to use the KubeVela! Enjoy your shipping application journey!
 
 
 You can refer to https://kubevela.io for more details.
+{{- if .Values.agent.only }}
+
+This cluster runs vela-agent only, as cluster "{{ .Values.agent.clusterName }}". It applies the Components a
+hub dispatches here and reconciles nothing else: an Application created on this cluster is accepted
+but never deployed. Every KubeVela CRD is installed, since Helm installs a chart's CRDs whole; only
+Component and ResourceTracker are used. For just those two, install with --skip-crds and apply
+crds/core.oam.dev_components.yaml and crds/core.oam.dev_resourcetrackers.yaml yourself.
+{{- end }}
 
 {{- if and .Values.authentication.enabled (not .Values.authentication.withUser) }}
 
@@ -42,7 +50,7 @@ WARNING: Authentication is enabled but withUser is disabled.
      --set authentication.withUser=true
 {{- end }}
 
-{{- if and (not .Values.authorization.definitionValidationEnabled) (not .Values.authentication.enabled) }}
+{{- if and (not .Values.agent.only) (not .Values.authorization.definitionValidationEnabled) (not .Values.authentication.enabled) }}
 
 SECURITY RECOMMENDATION: Both authentication and definition validation are disabled.
    If KubeVela is running with cluster-admin or other high-level permissions,

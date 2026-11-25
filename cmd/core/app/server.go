@@ -233,59 +233,8 @@ func run(ctx context.Context, coreOptions *options.CoreOptions) error {
 		go resyncWebhookTLS(ctx, certClient, webhookTLS, coreOptions.Webhook.CertDir, func() bool { return started(nil) == nil })
 	}
 
-	// Before anything registers a watch. Six of these kinds are watched with
-	// For(), and a watch on a kind the API server does not serve takes the manager
-	// down with it, reported as a bare "no matches for kind" from an informer.
-	// Helm never updates a chart's CRDs on upgrade, so that is a routine outcome
-	// of a `helm upgrade` onto a version that added one, and it deserves a cause.
-	//
-	// Deliberately not a hooks.PreStartHook, despite being exactly that shape.
-	// The hook list runs inside prepareRun, which a worker shard never reaches -
-	// it goes straight to application.Setup - and a worker shard watches
-	// Applications and reads definitions like any other process. Here is where
-	// both paths converge, and it is earlier than the hooks besides.
-	klog.V(2).InfoS("Verifying required CRDs are installed")
-	if err := requiredcrds.Verify(manager.GetRESTMapper()); err != nil {
-		klog.ErrorS(err, "Required CustomResourceDefinitions are missing")
+	if err := prepareManager(ctx, manager, coreOptions); err != nil {
 		return err
-	}
-
-	controllerNamespace := resolveControllerNamespace(coreOptions.Server.LeaderElectionNamespace)
-	httpguard.SetEnhancer(controllerHTTPPolicy)
-	// Use APIReader: GetClient() is cache-backed and is not ready before mgr.Start.
-	if err := httpguard.LoadConfigMaps(ctx, manager.GetAPIReader(), coreOptions.Workflow.HTTPDenyConfigTemplateName, controllerNamespace); err != nil {
-		klog.ErrorS(err, "Failed to initialize workflow HTTP deny ConfigMaps",
-			"template", coreOptions.Workflow.HTTPDenyConfigTemplateName, "namespace", controllerNamespace)
-		return fmt.Errorf("failed to initialize workflow HTTP deny ConfigMaps: %w", err)
-	}
-	if err := httpguard.SetupWatcher(manager, coreOptions.Workflow.HTTPDenyConfigTemplateName, controllerNamespace); err != nil {
-		klog.ErrorS(err, "Failed to watch workflow HTTP deny ConfigMaps",
-			"template", coreOptions.Workflow.HTTPDenyConfigTemplateName, "namespace", controllerNamespace)
-		return fmt.Errorf("failed to watch workflow HTTP deny ConfigMaps: %w", err)
-	}
-
-	// Register health checks
-	klog.V(2).InfoS("Registering health and readiness checks")
-	if err := registerHealthChecks(manager); err != nil {
-		klog.ErrorS(err, "Failed to register health checks")
-		return fmt.Errorf("failed to register health checks: %w", err)
-	}
-
-	// Setup controllers based on sharding mode
-	klog.InfoS("Setting up controllers",
-		"shardingEnabled", sharding.EnableSharding,
-		"shardID", sharding.ShardID)
-	if err := setupControllers(ctx, manager, coreOptions); err != nil {
-		klog.ErrorS(err, "Failed to setup controllers")
-		return fmt.Errorf("failed to setup controllers: %w", err)
-	}
-	klog.InfoS("Controllers setup completed successfully")
-
-	// Start application monitor
-	klog.InfoS("Starting application metrics monitor")
-	if err := startApplicationMonitor(ctx, manager); err != nil {
-		klog.ErrorS(err, "Failed to start application monitor")
-		return fmt.Errorf("failed to start application monitor: %w", err)
 	}
 
 	// Start the manager
@@ -308,6 +257,12 @@ func syncConfigurations(ctx context.Context, coreOptions *options.CoreOptions) {
 		coreOptions.Workflow.SyncToWorkflowGlobals()
 	}
 	if coreOptions.CUE != nil {
+		if coreOptions.Agent != nil && coreOptions.Agent.AgentOnly {
+			// vela-agent renders with the CUE standard library alone, and the cluster it
+			// runs on need not serve Package CRs.
+			coreOptions.CUE.EnableExternalPackage = false
+			coreOptions.CUE.EnableExternalPackageWatch = false
+		}
 		klog.V(3).InfoS("Syncing CUE configuration")
 		coreOptions.CUE.SyncToCUEGlobals(ctx)
 	}
@@ -702,7 +657,7 @@ func buildManagerOptions(ctx context.Context, coreOptions *options.CoreOptions) 
 		RenewDeadline:          &coreOptions.Server.RenewDeadline,
 		RetryPeriod:            &coreOptions.Server.RetryPeriod,
 		NewClient:              velaclient.DefaultNewControllerClient,
-		NewCache: cache.BuildCache(ctx,
+		NewCache: newCache(ctx, coreOptions,
 			ctrlcache.Options{
 				Scheme:     scheme,
 				SyncPeriod: &coreOptions.Kubernetes.InformerSyncPeriod,
@@ -720,6 +675,19 @@ func buildManagerOptions(ctx context.Context, coreOptions *options.CoreOptions) 
 			},
 		},
 	}
+}
+
+// newCache builds vela-core's informer cache. vela-agent alone gets a plain cache, without the
+// full controller's Application indexes and sharding: the cluster it runs on has only the
+// Component and ResourceTracker CRDs.
+func newCache(ctx context.Context, coreOptions *options.CoreOptions, opts ctrlcache.Options, shardingObjects ...ctrlclient.Object) ctrlcache.NewCacheFunc {
+	if coreOptions.Agent.AgentOnly {
+		return func(config *rest.Config, defaults ctrlcache.Options) (ctrlcache.Cache, error) {
+			opts.Mapper, opts.HTTPClient = defaults.Mapper, defaults.HTTPClient
+			return ctrlcache.New(config, opts)
+		}
+	}
+	return cache.BuildCache(ctx, opts, shardingObjects...)
 }
 
 // createControllerManager creates and configures the controller-runtime manager
@@ -743,6 +711,89 @@ func createControllerManager(ctx context.Context, kubeConfig *rest.Config, coreO
 	}
 
 	return manager, nil
+}
+
+// prepareManager readies a created manager to start: it checks the CRDs are served and
+// registers the health checks and controllers. vela-agent alone needs only its own CRDs
+// and controller.
+func prepareManager(ctx context.Context, manager ctrl.Manager, coreOptions *options.CoreOptions) error {
+	if err := coreOptions.Agent.Validate(); err != nil {
+		return err
+	}
+	if coreOptions.Agent.AgentOnly {
+		klog.InfoS("Running as vela-agent only", "cluster", coreOptions.Agent.ClusterName)
+		if err := requiredcrds.VerifyCRDs(manager.GetRESTMapper(), requiredcrds.Agent); err != nil {
+			klog.ErrorS(err, "Required CustomResourceDefinitions are missing")
+			return err
+		}
+		if err := registerHealthChecks(manager); err != nil {
+			return fmt.Errorf("failed to register health checks: %w", err)
+		}
+		return setupAgent(manager, coreOptions)
+	}
+
+	// Before anything registers a watch. Six of these kinds are watched with
+	// For(), and a watch on a kind the API server does not serve takes the manager
+	// down with it, reported as a bare "no matches for kind" from an informer.
+	// Helm never updates a chart's CRDs on upgrade, so that is a routine outcome
+	// of a `helm upgrade` onto a version that added one, and it deserves a cause.
+	//
+	// Deliberately not a hooks.PreStartHook, despite being exactly that shape.
+	// The hook list runs inside prepareRun, which a worker shard never reaches -
+	// it goes straight to application.Setup - and a worker shard watches
+	// Applications and reads definitions like any other process. Here is where
+	// both paths converge, and it is earlier than the hooks besides.
+	klog.V(2).InfoS("Verifying required CRDs are installed")
+	if err := requiredcrds.Verify(manager.GetRESTMapper()); err != nil {
+		klog.ErrorS(err, "Required CustomResourceDefinitions are missing")
+		return err
+	}
+	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableComponentDispatch) {
+		if err := requiredcrds.VerifyCRDs(manager.GetRESTMapper(), requiredcrds.Agent); err != nil {
+			klog.ErrorS(err, "Required CustomResourceDefinitions are missing")
+			return err
+		}
+	}
+
+	controllerNamespace := resolveControllerNamespace(coreOptions.Server.LeaderElectionNamespace)
+	httpguard.SetEnhancer(controllerHTTPPolicy)
+	// Use APIReader: GetClient() is cache-backed and is not ready before mgr.Start.
+	if err := httpguard.LoadConfigMaps(ctx, manager.GetAPIReader(), coreOptions.Workflow.HTTPDenyConfigTemplateName, controllerNamespace); err != nil {
+		klog.ErrorS(err, "Failed to initialize workflow HTTP deny ConfigMaps",
+			"template", coreOptions.Workflow.HTTPDenyConfigTemplateName, "namespace", controllerNamespace)
+		return fmt.Errorf("failed to initialize workflow HTTP deny ConfigMaps: %w", err)
+	}
+	if err := httpguard.SetupWatcher(manager, coreOptions.Workflow.HTTPDenyConfigTemplateName, controllerNamespace); err != nil {
+		klog.ErrorS(err, "Failed to watch workflow HTTP deny ConfigMaps",
+			"template", coreOptions.Workflow.HTTPDenyConfigTemplateName, "namespace", controllerNamespace)
+		return fmt.Errorf("failed to watch workflow HTTP deny ConfigMaps: %w", err)
+	}
+
+	// Register health checks
+	klog.V(2).InfoS("Registering health and readiness checks")
+	if err := registerHealthChecks(manager); err != nil {
+		klog.ErrorS(err, "Failed to register health checks")
+		return fmt.Errorf("failed to register health checks: %w", err)
+	}
+
+	// Setup controllers based on sharding mode
+	klog.InfoS("Setting up controllers",
+		"shardingEnabled", sharding.EnableSharding,
+		"shardID", sharding.ShardID)
+	if err := setupControllers(ctx, manager, coreOptions); err != nil {
+		klog.ErrorS(err, "Failed to setup controllers")
+		return fmt.Errorf("failed to setup controllers: %w", err)
+	}
+	klog.InfoS("Controllers setup completed successfully")
+
+	// Start application monitor
+	klog.InfoS("Starting application metrics monitor")
+	if err := startApplicationMonitor(ctx, manager); err != nil {
+		klog.ErrorS(err, "Failed to start application monitor")
+		return fmt.Errorf("failed to start application monitor: %w", err)
+	}
+
+	return nil
 }
 
 // setupControllers sets up controllers based on sharding configuration
@@ -864,6 +915,14 @@ func prepareRun(ctx context.Context, manager manager.Manager, coreOptions *optio
 		return err
 	}
 	klog.InfoS("Config controllers setup completed successfully")
+
+	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableComponentDispatch) {
+		klog.InfoS("Setting up Component dispatch", "cluster", coreOptions.Agent.ClusterName)
+		if err := setupComponentDispatch(manager, coreOptions); err != nil {
+			klog.ErrorS(err, "Unable to setup Component dispatch")
+			return err
+		}
+	}
 
 	klog.V(2).InfoS("Initializing control plane cluster info")
 	if err := multicluster.InitClusterInfo(manager.GetConfig()); err != nil {

@@ -45,6 +45,7 @@ type CoreOptions struct {
 	Profiling     *config.ProfilingConfig
 	KLog          *config.KLogConfig
 	Controller    *config.ControllerConfig
+	Agent         *config.AgentConfig
 }
 
 // NewCoreOptions creates a new NewVelaCoreOptions object with default parameters
@@ -70,6 +71,7 @@ func NewCoreOptions() *CoreOptions {
 	profiling := config.NewProfilingConfig()
 	klog := config.NewKLogConfig(observability)
 	controller := config.NewControllerConfig()
+	agent := config.NewAgentConfig()
 
 	s := &CoreOptions{
 		// Config modules
@@ -93,6 +95,7 @@ func NewCoreOptions() *CoreOptions {
 		Profiling:     profiling,
 		KLog:          klog,
 		Controller:    controller,
+		Agent:         agent,
 	}
 
 	return s
@@ -122,6 +125,7 @@ func (s *CoreOptions) Flags() cliflag.NamedFlagSets {
 	s.Client.AddFlags(fss.FlagSet("client"))
 	s.Reconcile.AddFlags(fss.FlagSet("reconcile"))
 	s.Sharding.AddFlags(fss.FlagSet("sharding"))
+	s.Agent.AddFlags(fss.FlagSet("agent"))
 	s.Feature.AddFlags(fss.FlagSet("feature"))
 	s.Profiling.AddFlags(fss.FlagSet("profiling"))
 	s.KLog.AddFlags(fss.FlagSet("klog"))

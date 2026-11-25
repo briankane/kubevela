@@ -162,7 +162,7 @@ Returns "true" when vela-core manages the cluster-gateway serving cert itself
 (--cluster-gateway-tls-secret). The alternative is cert-manager.
 */}}
 {{- define "kubevela.clusterGatewayRuntimeCerts" -}}
-{{- if and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled (not .Values.multicluster.clusterGateway.secureTLS.certManager.enabled) -}}true{{- end -}}
+{{- if and (include "kubevela.multicluster" .) .Values.multicluster.clusterGateway.secureTLS.enabled (not .Values.multicluster.clusterGateway.secureTLS.certManager.enabled) -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -210,4 +210,12 @@ failurePolicy: Ignore
 {{- else -}}
 failurePolicy: {{ .policy }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+kubevela.multicluster is "true" when vela-core reaches other clusters through cluster-gateway:
+multicluster is on and this is not vela-agent alone, which never leaves its own cluster.
+*/}}
+{{- define "kubevela.multicluster" -}}
+{{- if and .Values.multicluster.enabled (not .Values.agent.only) -}}true{{- end -}}
 {{- end -}}

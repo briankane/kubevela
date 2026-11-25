@@ -1,3 +1,4 @@
+{{- if not .Values.agent.only }}
 {{- if .Values.admissionWebhooks.enabled -}}
 {{- /* Webhooks already in the cluster, to keep their caBundle and failurePolicy on upgrade. */}}
 {{- $hooks := include "kubevela.existingWebhooks" (dict "kind" "MutatingWebhookConfiguration" "name" (printf "%s-admission" (include "kubevela.fullname" .))) | fromJson -}}
@@ -59,3 +60,4 @@ webhooks:
     timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
 
 {{- end -}}
+{{- end }}

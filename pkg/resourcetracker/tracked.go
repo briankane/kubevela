@@ -224,6 +224,16 @@ func (b *Base) NewTracker(rtType v1beta1.ResourceTrackerType) (*v1beta1.Resource
 	return rt, nil
 }
 
+// OtherOwnerError is a tracker under an owner's name that belongs to an earlier owner of that
+// name, one with another UID.
+type OtherOwnerError struct {
+	Tracker, Kind, Key, UID string
+}
+
+func (e *OtherOwnerError) Error() string {
+	return fmt.Sprintf("resourcetracker %s exists but is controlled by another %s %s (uid: %s)", e.Tracker, e.Kind, e.Key, e.UID)
+}
+
 // LoadTrackers lists the owner's trackers by its owner.oam.dev/* labels.
 func (b *Base) LoadTrackers(ctx context.Context, cli client.Client) (Trackers, error) {
 	OnList(b.kind)
@@ -235,7 +245,7 @@ func (b *Base) LoadTrackers(ctx context.Context, cli client.Client) (Trackers, e
 	for _, _rt := range rts.Items {
 		rt := _rt.DeepCopy()
 		if uid := rt.GetLabels()[oam.LabelOwnerUID]; uid != "" && uid != string(b.uid) {
-			return Trackers{}, errors.Errorf("resourcetracker %s exists but is controlled by another %s %s (uid: %s)", rt.Name, b.kind, b.Key(), uid)
+			return Trackers{}, &OtherOwnerError{Tracker: rt.Name, Kind: b.kind, Key: b.Key(), UID: uid}
 		}
 		switch rt.Spec.Type {
 		case v1beta1.ResourceTrackerTypeRoot:

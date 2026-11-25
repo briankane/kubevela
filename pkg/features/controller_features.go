@@ -210,6 +210,11 @@ const (
 	// startup error. Off by default: the CLI command is the on-demand path, this
 	// gate is for operators who want the upgrade itself to do it.
 	AutoMigrateLegacyConfigs featuregate.Feature = "AutoMigrateLegacyConfigs"
+
+	// EnableComponentDispatch runs vela-agent, which applies, tracks and health-checks the
+	// signed Components a hub dispatches, and on the hub keeps its signing keys trusted on
+	// every cluster. With --agent-only, vela-core runs vela-agent and nothing else.
+	EnableComponentDispatch featuregate.Feature = "EnableComponentDispatch"
 )
 
 var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
@@ -249,6 +254,7 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	EnableDefinitionInheritance:                   {Default: false, PreRelease: featuregate.Alpha},
 	EnableModuleComponent:                         {Default: false, PreRelease: featuregate.Alpha},
 	AutoMigrateLegacyConfigs:                      {Default: false, PreRelease: featuregate.Alpha},
+	EnableComponentDispatch:                       {Default: false, PreRelease: featuregate.Alpha},
 }
 
 func init() {

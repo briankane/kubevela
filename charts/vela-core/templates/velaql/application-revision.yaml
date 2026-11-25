@@ -1,3 +1,4 @@
+{{- if not .Values.agent.only }}
 apiVersion: "v1"
 kind: "ConfigMap"
 metadata:
@@ -31,3 +32,4 @@ data:
 
     status: output.value
 
+{{- end }}

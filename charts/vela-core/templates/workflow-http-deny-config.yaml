@@ -1,3 +1,4 @@
+{{- if not .Values.agent.only }}
 {{- $raw := .Values.workflow.httpDeny.configTemplateName }}
 {{- /* A number would be decoded as float64 and lose its text (1e+06, 1.1). */}}
 {{- if not (or (kindIs "invalid" $raw) (kindIs "string" $raw)) }}
@@ -39,4 +40,5 @@ data:
 {{ join "\n" .Values.workflow.httpDeny.defaultConfig.denyHosts | indent 4 }}
   denyCIDRs: |-
 {{ join "\n" .Values.workflow.httpDeny.defaultConfig.denyCIDRs | indent 4 }}
+{{- end }}
 {{- end }}

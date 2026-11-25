@@ -1,3 +1,4 @@
+{{- if not .Values.agent.only }}
 apiVersion: v1
 data:
   template: |
@@ -79,3 +80,4 @@ kind: ConfigMap
 metadata:
   name: component-pod-view
   namespace: {{ include "systemDefinitionNamespace" . }}
+{{- end }}

@@ -606,6 +606,27 @@ func GetBaseContextLabels(ctx process.Context) map[string]string {
 
 	return baseLabels
 }
+
+// TraitOutputs is what each of assists rendered in ctx, labelled with ctx's common labels, the
+// trait type and the output's name, as every renderer of traits labels them.
+func TraitOutputs(ctx process.Context, assists []process.Auxiliary) ([]*unstructured.Unstructured, error) {
+	common := GetCommonLabels(GetBaseContextLabels(ctx))
+	objs := make([]*unstructured.Unstructured, 0, len(assists))
+	for _, assist := range assists {
+		obj, err := assist.Ins.Unstructured()
+		if err != nil {
+			return nil, fmt.Errorf("output %s: %w", assist.Name, err)
+		}
+		labels := util.MergeMapOverrideWithDst(common, map[string]string{oam.TraitTypeLabel: assist.Type})
+		if assist.Name != "" {
+			labels[oam.TraitResource] = assist.Name
+		}
+		util.AddLabels(obj, labels)
+		objs = append(objs, obj)
+	}
+	return objs, nil
+}
+
 func initRoot(contextLabels map[string]string) map[string]interface{} {
 	var root = map[string]interface{}{}
 	for k, v := range contextLabels {

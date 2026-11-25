@@ -1,3 +1,4 @@
+{{- if not .Values.agent.only }}
 {{- $byKind := dict -}}
 {{- range $path, $_ := .Files.Glob "definitions/*.yaml" -}}
 {{-   $content := tpl ($.Files.Get $path) $ -}}
@@ -20,4 +21,5 @@ metadata:
     {{- include "kubevela.labels" $ | nindent 4 }}
 data:
   {{- toYaml (get $byKind $kind) | nindent 2 }}
+{{- end }}
 {{- end }}
