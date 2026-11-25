@@ -7,7 +7,7 @@
 
 A `Dispatcher` is the pluggable delivery mechanism the hub application-controller uses to place rendered resources onto target clusters. Each Dispatcher implementation handles a different cluster connectivity model.
 
-This KEP defines the dispatcher feature contract first, then maps it to current baseline behavior and planned architecture.
+This KEP defines the dispatcher feature contract first, then maps it to current baseline behavior and planned architecture. Under Component dispatch ([KEP-2.3](../2.3-hub-controller/README.md)), what a Dispatcher delivers is a signed `Component` and its payload rather than loose rendered resources; see [Dispatchers Deliver Components](#dispatchers-deliver-components).
 
 ## Feature Scope
 
@@ -180,6 +180,33 @@ This creates an intentional loose coupling between policy design and dispatch im
 As a result, dispatchers can start using new policy properties by updating CUE templates, without requiring underlying controller code changes for each policy evolution.
 
 This keeps platform extensibility high while maintaining a stable dispatch runtime contract.
+
+## Dispatchers Deliver Components
+
+With Component dispatch, packaging and delivery are two layers:
+
+| Layer | Owns | Written in |
+|---|---|---|
+| Component packaging (KEP-2.3) | One `Component` per component per target: resource index, apply options, health, observations, payload Secret, signature, revision, tombstones | Go, in the application-controller. Never in a template, so no template can alter what is signed |
+| Dispatcher (this KEP) | Which targets (`targetsTemplate`), and how the Component and its payload reach each one (`dispatchTemplate`): written locally, written through cluster-gateway, or wrapped in a `ManifestWork` | CUE |
+| vela-agent (KEP-2.2) | Verifying, applying, tracking, health | Go, in the target cluster |
+
+For a Component-dispatching Application, `dispatchTemplate` receives the packaged objects instead of the rendered outputs:
+
+```cue
+context: {
+  component: {...}     // the signed Component
+  payload:   {...}     // its payload Secret (ciphertext once payloads are encrypted)
+  target: {clusterName: string, namespace: string}
+}
+output: {...}          // what to write: the pair itself, or an envelope around it
+```
+
+A template may wrap the pair but must not change it: anything it alters fails verification at vela-agent.
+
+`statusMappingTemplate` and `healthOverrideTemplate` read the delivered `Component.status` (directly, or from envelope feedback such as `ManifestWork` status) and map it to `observedRevision`, health and `status.observed`. Since every Component has the same status shape, one mapping serves every component type.
+
+Which path an Application takes is still its own choice: the per-Application opt-in in KEP-2.3. Dispatcher selection, below, is unchanged by it.
 
 ## Dispatcher Selection
 
@@ -370,6 +397,8 @@ In this model, OCM concerns (work namespace, naming, feedback rules, condition i
 
 ### Health/status implication
 
+> With Component dispatch, the `ManifestWork` carries one `Component` and its payload, and feedback rules only ever need the Component's own status fields (`observedRevision`, health, `status.observed`). vela-agent evaluates health against the real resources on the managed cluster, and the hub asks for specific live fields through `spec.observe`. That removes both constraints below: no per-kind status recovery, and no JSONPaths against CUE-shaped resources. The rest of this section describes the baseline without Component dispatch.
+
 When dispatch target is `ManifestWork`, native workload health (`Deployment` status, etc.) is not always directly available in the same shape expected by default component health templates.
 
 Dispatcher-level status mapping and health override exist to bridge this gap:
@@ -518,3 +547,4 @@ With this default:
 - Define lifecycle and validation model for dispatcher-owned topology templates (`ConfigTemplate` integration).
 - Specify protected-baseline policy for `default` dispatcher mutation prevention in production installs.
 - Evaluate component-level dispatcher preference model and precedence contract.
+- Ship built-in Component-delivering templates for local, cluster-gateway and OCM `ManifestWork`, with a shared status mapping for `Component.status`.

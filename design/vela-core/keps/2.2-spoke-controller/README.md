@@ -1,6 +1,6 @@
 > ⚠️ **Early concept draft.** This KEP is an early-stage exploration. It is **incomplete and may be inaccurate**, its direction is unsettled, and it should not be relied upon for implementation or as a description of committed behaviour. Expect substantial change.
 
-# KEP-2.2: Spoke Component-Controller & Workflow Engine
+# KEP-2.2: vela-agent
 
 **Status:** Drafting (Not ready for consumption)
 **Parent:** [vNext Roadmap](../README.md)
@@ -9,62 +9,36 @@
 
 ## Overview
 
-KEP-2.2 defines the spoke component-controller: the controller that runs on every target cluster, executes CUE rendering, the trait pipeline, lifecycle workflows, health evaluation, and ResourceTracker management. The workflow engine is embedded directly in the component-controller — it is not a separate addon.
+KEP-2.2 defines vela-agent, the controller that reconciles `Component` CRs in the cluster it runs in. It verifies each Component's signature, applies the rendered resources the Component carries, keeps them converged, tracks them in a `ResourceTracker`, garbage-collects what drops out, evaluates health, and writes status back onto the Component.
+
+It renders one thing only: PostDispatch traits, which read the live workload, from templates the hub signs into the Component (see [PostDispatch Traits](#postdispatch-traits)). The hub application-controller parses the Application, applies policies, runs the workflow and renders everything else, as it does today (KEP-2.3). What vela-agent takes over is the never-ending part: apply, drift correction, garbage collection and health polling.
 
 ---
 
-## Spoke: component-controller
+## Where Rendering Happens: the Hub
 
-- Runs on every target cluster (installed as part of spoke setup)
-- Loads `ComponentDefinition` definitions locally (standalone mode) or from hub-dispatched snapshots (application-driven mode)
-- Executes CUE rendering, trait pipeline, and lifecycle workflows
-- Has full in-cluster access — no proxy, no feedback rules, no constrained execution
-- Manages `ResourceTracker`, GC, health evaluation
-- Reflects `Component.status.isHealthy` back to hub
+Earlier drafts of this KEP had the spoke render from hub-shipped definition snapshots. That is settled the other way.
 
----
-
-## Why This Resolves the OCM Problem
-
-OCM wraps a single `Component` CR in a `ManifestWork`. The spoke component-controller does all the work locally. OCM feeds back `isHealthy: true` from `Component.status` — a single boolean field, trivially declared as a feedback rule. No complex status path declarations, no constrained workflow steps, no push proxies.
-
-```
-Hub application-controller
-  └─ dispatches Component CR (via OCM ManifestWork / cluster-gateway)
-       └─ Spoke component-controller
-            ├─ renders CUE template
-            ├─ executes workflow (full in-cluster access)
-            ├─ manages ResourceTracker + GC
-            └─ reflects Component.status.isHealthy
-  └─ watches Component.status.isHealthy
-  └─ manages dependsOn ordering
-```
-
----
-
-## Open Decision: Where Rendering Happens
-
-This KEP has the spoke render: it loads `ComponentDefinition`s locally or from hub-dispatched snapshots and does the CUE work itself. The alternative is for the hub to render and ship concrete resources, with the spoke applying, tracking and reporting but never evaluating a template. **Not yet decided**, and the choice has consequences beyond where the CPU cycles land.
-
-| | Spoke renders (this KEP) | Hub renders |
+| | Spoke renders (rejected) | Hub renders (adopted) |
 |---|---|---|
-| Definition governance | spoke needs the definition set; versions drift across the fleet | central, no skew |
-| Hub compute | distributed | the fleet bottleneck |
-| Payload | parameters and a signed snapshot | full rendered manifests, including rendered Secret material |
-| Authority bound | spoke RBAC **and** the local definition set | spoke RBAC alone |
-| Partition behaviour | spoke keeps rendering and reconciling | spoke keeps reconciling what it last received |
+| Workflows and hub-only inputs (configs, `fromSource`, hub Secrets) | Must move to the spoke, or be packaged and shipped | Stay where they are |
+| CUE engine and provider versions | Must match across the fleet | One place |
+| Definition governance | Spoke needs the definition set; versions drift | Central, no skew |
+| Hub compute | Distributed | Rendering stays on the hub; apply, drift and health polling move off it |
+| Payload | Parameters and a definition snapshot | Rendered resources, kept private (see [KEP-2.1](../2.1-core-api/README.md#payload)) |
+| Partition behaviour | Spoke keeps rendering | Spoke keeps reconciling what it last received |
 
-Neither is wrong. Spoke-renders distributes compute and keeps rendered Secret material out of an object that travels between clusters. Hub-renders is simpler and keeps definitions centrally governed, at the cost of hub scaling. The fourth row usually decides it: under spoke-renders the local definition set is part of the trust boundary, which argues for or against depending on who administers the spoke.
+The deciding row is the first. Workflows are designed to run on the hub and many of their inputs only exist there; moving rendering would drag all of that across. The traffic that actually hurts today is the apply and health polling through cluster-gateway, and that is what moves.
 
 ---
 
-## Keep the Spoke Controller Source-Agnostic
+## Keep the Controller Source-Agnostic
 
-**The spoke controller is a local controller over `Component` CRs in its own cluster, and nothing else.** It watches a namespace, renders, applies, tracks, evaluates health, and writes status back onto the object. It has no opinion about how those objects arrived.
+**vela-agent is a local controller over `Component` CRs in its own cluster, and nothing else.** It watches, verifies, applies, tracks, evaluates health, and writes status back onto the object. It has no opinion about how those objects arrived.
 
-This is what makes push versus pull a later delivery-layer swap rather than a rewrite. Three things would break it:
+That is what lets delivery change underneath it without a rewrite. Three things would break it:
 
-- an inbound endpoint the hub calls, rather than the spoke watching its own API
+- an inbound endpoint the hub calls, rather than the controller watching its own API
 - status reported anywhere other than the local object's status field
 - cluster context injected by the hub that only makes sense because the hub wrote it
 
@@ -72,418 +46,246 @@ The third is the one most easily done by accident.
 
 ---
 
-## Spoke Reconcile Pipeline
+## Delivery Phases
+
+The controller is the same in every phase. What changes is where the `Component` is written and who writes it.
+
+| Phase | Component lives on | Written by | Reconciled by |
+|---|---|---|---|
+| 1. Local | The hub, for components targeting the hub itself | vela-core | vela-agent, running inside vela-core |
+| 1. Push (with a stand-in) | The spoke, for remote targets | vela-core, through cluster-gateway | vela-core on the spoke, with only vela-agent enabled |
+| 2. Push | The spoke | vela-core, through cluster-gateway | vela-agent, as its own binary |
+| 3. Pull | The spoke | The spoke fetching its own (OCM work agent, or the agent pulling) | vela-agent |
 
 ```
-1. Verify definitionSnapshot signature (if present)
-2. Load Definition (from snapshot or local cluster)
-3. Diff current spec against previous generation → populate:
-   - context.event (create / upgrade / delete)
-   - context.paramsChanged (bool convenience)
-   - context.params.current / context.params.target (full parameter maps)
-   - context.apiVersion.current / context.apiVersion.target (from definitionSnapshot or live Definition)
-   - context.definitionChanged, context.traitsChanged
-4. Load context.workflow from Component.status.workflow
-5. If lifecycle event (create/upgrade/delete): execute pre-dispatch workflow steps
-   (context.parameters known; resources not yet rendered or applied)
-6. Resolve from* directives (fromParameter, fromSource, fromDependency)
-7. Run pre traits → mutated parameters
-8. Evaluate merged CUE (template + default traits) → outputs list
-   (context.workflow available to renderer)
-9. dispatch step → SSA-apply outputs to spoke cluster
-10. Execute post-dispatch workflow steps (context.outputs available)
-11. Persist context.workflow → Component.status.workflow
-12. Evaluate isHealthy → write to Component.status.isHealthy
-13. If healthy: evaluate exports → write to Component.status.exports
-14. Run post traits
+HUB (vela-core)                                       SPOKE
+Application ─► parse ─► policies ─► workflow
+                                      │
+                                    render
+                                      │
+                           sign + package ──► Component ──────► vela-agent
+                                      │   (local, gateway push,     ├─ verify signature + payload digest
+                                      │    or pulled)               ├─ apply (+ drift correction)
+                                      │                             ├─ ResourceTracker / GC
+                                      │                             └─ health, observe   
+                                      │                                        │
+            deploy step, status ◄─────┴──── reads Component.status ◄───────────┘
 ```
+
+No KubeVela component writes to the hub from a spoke. The hub reads `Component.status` back through cluster-gateway; under OCM, the work agent carries it back as `ManifestWork` status. That is OCM's transport, not ours, and it carries only what the hub asked for.
 
 ---
 
-## CUE Rendering Pipeline
+## Reconcile Pipeline
 
-The spoke evaluates the merged CUE package (all `.cue` files from the Definition directory unified together). The `context` object is the entry point — it carries input parameters, dispatcher metadata, and previously persisted workflow state.
+```
+1. Verify: signature over the whole spec, with a trusted hub key (see KEP-2.5)
+2. Verify: spec.target.cluster names this cluster
+3. Verify: spec.revision >= status.observedRevision
+4. If spec.delete (tombstone): garbage-collect everything tracked, release the finalizer, stop
+5. Read the payload, check its digest against spec.payload.sha256, decode
+6. Check every decoded resource against spec.resources (identity and sha256), and that none names a cluster
+   (`app.oam.dev/cluster`): a Component's resources apply only where it is delivered
+7. Apply through the ResourceKeeper, honouring spec.apply
+8. Evaluate health from spec.health against live resources
+9. Once the workload is healthy, render spec.postRender against it and apply the result the same way
+10. Garbage-collect resources tracked by earlier revisions and absent from this one, once step 9 has rendered
+11. Copy spec.observe from live resources into status.observed, sealing sensitive values into status.sealedObserved
+12. Write status: observedRevision, conditions, health, outputs
+```
 
-The rendering pass produces the `outputs` list. Each output entry has a `name`, an optional `type` (defaults to `resource`), a `value` (the Kubernetes object), and optional `statusPaths` for health field extraction.
+Any verification failure stops the reconcile before anything is applied, sets `Verified=False` and `Stalled=True` (see [Status](#status)) and emits a warning event. There is no fail-open mode.
 
-The renderer always has access to `context.workflow.*` — populated from `Component.status.workflow` before rendering begins, regardless of whether the current reconcile triggered a workflow execution.
+Between hub updates the controller re-runs steps 7 to 12 on its own resync, so drift is corrected and health stays current whether or not the hub is reachable.
 
 ---
 
-## Trait Pipeline
+## The Component It Reconciles
 
-Traits are resolved and injected by the hub before dispatch. The spoke component-controller executes them.
+The full type is in [KEP-2.1](../2.1-core-api/README.md). What the controller relies on:
+
+| Field | Used for |
+|---|---|
+| `spec.target.cluster` | Refusing Components addressed elsewhere |
+| `spec.revision` | Refusing replays of older revisions |
+| `spec.delete` | The signed tombstone that releases garbage collection |
+| `spec.resources` | The plaintext index of what will be applied, each with a sha256 |
+| `spec.payload` | Where the rendered resources are, their format and digest |
+| `spec.apply` | Apply-time behaviour: take-over, read-only, apply-once, shared resources, resource update, GC |
+| `spec.health` | Health, customStatus and details CUE for the workload and each trait, with the render-time context and parameters they read |
+| `spec.observe` | Fields the hub needs back from live resources, some of them sealed |
+| `spec.signature` | Key ID and signature over all of the above |
+
+---
+
+## Apply Behaviour
+
+The apply-time policies of a v1 Application are fields of `spec.apply`. The hub resolves them from the Application's policies at render time; policies themselves never reach the controller.
+
+| v1 policy | `spec.apply` |
+|---|---|
+| `garbage-collect` | `garbageCollect` |
+| `apply-once` | `applyOnce` |
+| `take-over` | `takeOver` |
+| `read-only` | `readOnly` |
+| `shared-resource` | `sharedResource` |
+| `resource-update` | `resourceUpdate` |
+
+`topology`, `override`, `replication`, `env-binding` and `debug` are resolved on the hub and never reach the controller.
+
+Shared resources are keyed by owner, so two Components (from one Application or two) may share a resource, and the last owner to let go deletes it.
+
+`apply.adoptFrom` names an owner key whose resources this Component takes over in place, with no delete or recreate. The hub sets it on the revisions of a Component that replaces an Application's in-process apply, until the Application has forgotten what the Component adopted (KEP-2.3, Opt-in and Handover). Being in the spec, it is signed like everything else.
+
+---
+
+## ResourceTracker
+
+Each Component owns its own trackers, through the same library the Application controller uses with a different owner.
 
 ```
-context.parameters
-   └─ [pre traits]              # mutate context.parameters before template evaluates
-        └─ CUE evaluation       # Definition template + default traits (CUE unification)
-             └─ context.outputs (rendered output list)
-                  └─ workflow execution (spoke-side, full in-cluster access)
-                       └─ health check (isHealthy — direct resource reads on spoke)
-                            └─ exports evaluated → Component.status.exports
-                                 └─ [post traits]
+HUB                                        COMPONENT'S CLUSTER
+Application                                Component shop-backend-prod-use1 (rev 7)
+  └─ ResourceTracker                         └─ ResourceTracker
+       ├─ Component shop-backend-prod-use1        ├─ Deployment team-a/backend
+       ├─ Component shop-backend-prod-euw1        ├─ Service    team-a/backend
+       └─ Component shop-frontend-prod-use1       └─ Secret     team-a/backend-db
 ```
 
-### Phase Behaviours
-
-| Phase | Input | Can do |
+| Tracker | Tracks | Garbage-collects when |
 |---|---|---|
-| `pre` | `context.parameters` | Mutate input properties; override dispatcher |
-| `default` | Full context except `context.status` | Patch existing outputs; add new outputs |
-| `post` | Full context including `context.status` | Dispatch additional resources after health confirmed |
+| Application's (hub) | The Components it dispatched, per cluster | A component leaves the Application, or a cluster leaves its topology |
+| Component's | The resources the controller applied | A resource drops out between revisions, or a tombstone arrives |
+
+A real tracker rather than an inventory in `Component.status`: status is not durable (backup and restore tools drop it, and by convention it is rebuildable), and this record decides what gets deleted. Versioned trackers also carry the history that `keepLegacyResource` and shared resources depend on.
+
+Component trackers carry `owner.oam.dev/{kind,name,namespace,uid}` labels and **not** `app.oam.dev/name`, so a same-named Application never adopts them. They are found by label, never by name.
 
 ---
 
-## Workflow Engine as Embedded Library
+## Deletion
 
-The workflow engine is a Go library embedded directly in the component-controller. It is not a separate controller, not an optional addon — it is part of the spoke installation. If a component-controller is running, the workflow engine is available. Definition authors can always rely on workflow steps.
+A Component disappearing is not enough to garbage-collect its resources: the controller cannot tell a hub-driven removal from a `kubectl delete`, and with broad apply rights behind it, an unsigned delete would be a way to tear down anything it manages.
 
-This means:
-- `WorkflowStepDefinition` is a guaranteed primitive — no capability detection required
-- `create`, `upgrade`, `delete` are first-class lifecycle concepts in the engine, not generic workflow runs
-- The engine has native access to Component context, outputs, status, and exports — it is purpose-built for the component lifecycle
+Deletion is two steps:
+
+1. The hub writes a **tombstone**: the next revision, `spec.delete: true`, signed as usual.
+2. The controller garbage-collects everything the Component applied, and only then sets `status.observedRevision` to the tombstone's revision (`Applied=False`, reason `Deleting` while it collects, `Deleted` once done).
+3. The hub sees the tombstone observed and removes the Component.
+
+The controller holds a finalizer and garbage-collects only after verifying a tombstone. A Component deleted without one keeps its resources in place, releases its finalizer, and raises a warning event naming what was left behind.
+
+---
+
+## Health
+
+Health is evaluated where the resources are, against live objects, using the health CUE the hub rendered into `spec.health`. It is plain CUE with no providers: the same evaluation the Application controller runs today, extracted so both share one implementation.
+
+The result is written to `Component.status.health` in the component status shape (`common.ApplicationComponentStatus`), so the hub copies it into `Application.status.services` as is.
+
+Health that today is special-cased in Go (Terraform's `Configuration` status) is expressed as health CUE by the hub instead, so the controller has no type-specific code.
+
+vela-agent does not watch what it applied, so it evaluates a Component that is not ready again on a timer: as long again as it has been not ready at this revision, from a second up to 10s (`HealthRecheck`). A workload that turns ready a moment after it is applied is seen a moment later, and one that takes minutes is evaluated every 10s, not every second. A ready Component is evaluated again on the resync.
+
+---
+
+## Status
+
+A Component says how far its revision got, one condition per stage, in the order it passes them:
+
+| Stage | `True` when |
+|---|---|
+| `Verified` | Signature, target cluster, revision and payload check out |
+| `Applied` | The payload is applied and tracked |
+| `WorkloadHealthy` | The workload's health policy passes |
+| `PostRendered` | PostDispatch traits are rendered and applied (`NoneDeclared` with none) |
+| `TraitsHealthy` | Every trait's health policy passes (`NoneDeclared` with none); the message names any that do not |
+| `Collected` | Nothing an earlier revision applied is left |
+
+Every reconcile writes every stage, against the current `metadata.generation`. A stage after the first that has not passed is `Unknown`, reason `NotReached`: it says nothing about this revision, so a refusal never leaves `Applied` or `WorkloadHealthy` reading `True` from the last one. `Healthy` stays as `WorkloadHealthy` and `TraitsHealthy` together.
+
+Three more conditions summarise them for kstatus, and so for `kubectl wait --for=condition=Ready`, Flux and Argo CD:
+
+| Condition | Rule |
+|---|---|
+| `Ready` | `True` when every stage has passed; otherwise `False`, with the first stage that has not as its reason and message |
+| `Reconciling` | `True` while that stage can still pass on its own: health, a render, collection |
+| `Stalled` | `True` when it cannot until something else changes: a refusal, a stale tracker, a render vela-agent will not do, an apply the API server rejects, health that does not evaluate |
+
+`status.observedGeneration` names the generation they describe. There is no phase field: `Ready`'s reason already names where a revision is, and `kubectl get components` shows it as `READY` and `REASON` (`MESSAGE` with `-o wide`).
+
+The hub reads `Ready` alongside the health report: when a Component is not ready for any reason but health, the Application's service message is vela-agent's ("vela-agent on cluster prod-use1: UntrustedKey: ..."), rather than a bare wait.
+
+---
+
+## Observations
+
+Some hub-side rendering reads a component's live state: `$(component.<name>)` reads in later components and workflow steps. The hub cannot read live objects once it no longer reaches the spoke, so it asks for exactly what it needs, by resource role:
+
+```yaml
+spec:
+  observe:
+    - {resource: output, name: readyReplicas, path: .status.readyReplicas}
+    - {resource: outputs.service, name: clusterIP, path: .spec.clusterIP}
+    - {resource: outputs.creds, name: password, path: .data.password, sensitive: true}
+status:
+  observed:
+    output:          {readyReplicas: 2}
+    outputs.service: {clusterIP: 10.0.0.5}
+  sealedObserved:
+    outputs.creds:   {password: <sealed>}
+  sealedWith: hub-2026-11
+```
+
+The observations are signed with the rest of the spec. They are small, explicit, and map directly onto OCM feedback rules when OCM delivery arrives. An empty `path` is the whole resource, without its managed fields.
+
+A sensitive observation (anything read from a Secret, or a path a definition marks `+sensitive`) never appears in plain text. vela-agent seals it to the sealing key of the hub key that signed the spec ([KEP-2.5](../2.5-credential-model/README.md#sealing-keys)), and only the hub can open it. Without that sealing key, the value is left out and a `CannotSeal` event says so.
+
+The names are deliberately not `outputs`: these are the hub's view of live fields, not a component's declared outputs.
+
+---
+
+## PostDispatch Traits
+
+A PostDispatch trait reads the workload once it is healthy, so vela-agent renders it, where the workload is, in the same revision as the rest:
+
+1. The hub signs the trait's templates, resolved parameters, metadata and render context into `spec.postRender` ([KEP-2.1](../2.1-core-api/README.md#postdispatch-traits)).
+2. Once `spec.health` reports the workload healthy, vela-agent renders each trait with the same trait engine the hub uses, against the workload as rendered with its live `.status`.
+3. It names and labels what it rendered as the hub would, then applies it through the same keeper as the payload, so drift correction, garbage collection, handover and `status.resources` treat it alike.
+4. It renders again on every health recheck and resync, so a trait follows the status it reads without a new revision. An unchanged render is skipped by its hash.
+
+Until the workload is healthy, nothing is rendered and `PostRendered` is `False` (`WaitingForWorkload`); what an earlier revision rendered stays in place, and garbage collection waits. A render that fails sets `PostRendered=False` with the error and an event, and keeps what was applied.
+
+vela-agent renders the CUE standard library only, and checks this again whatever the hub sent: a template that imports anything else or declares `processing` is refused. Running alone, it loads no external CUE packages, so its cluster need not serve `Package` CRs.
 
 ---
 
 ## Lifecycle Workflows
 
-### The `workflow:` Block
+Application workflows run on the hub, in the Application controller, as they do today. In the phases above, a Component carries no workflow and vela-agent embeds no workflow engine.
 
-The `workflow.cue` file in a ComponentDefinition declares two lifecycle blocks: `create` and `delete`.
+**Component-level workflows are planned as a later addition**: lifecycle steps a definition author attaches to a component (create, upgrade, delete), which earlier drafts of this KEP placed on the spoke. Where they run, how they relate to a Component's revisions, and what state they persist are left to that work. Until then, a step that needs a component's live state reads `status.observed` through `spec.observe`.
 
-`create` is a single unified lifecycle workflow that runs on every create or upgrade event. `context.event` and change flags let the author branch on what triggered the reconcile. `delete` remains separate — it has fundamentally different semantics and runs pre-render.
-
-```cue
-workflow: {
-  // Unified create/upgrade workflow — runs on create and upgrade events
-  // Steps before dispatch are pre-render; steps after have access to context.outputs
-  create: [
-    if context.event == "create" {
-      { type: "run-job", properties: {
-          image: "migrate:latest"
-          command: ["./migrate", "up"]
-        }
-      }
-    },
-    if context.event == "upgrade" && context.paramsChanged {
-      { type: "run-job", properties: {
-          image: "migrate:latest"
-          command: ["./migrate", "up"]
-        }
-      }
-    },
-    { type: "dispatch" },   // ← render + resource apply happens here
-    { type: "wait-healthy", selector: { names: ["database"] } },
-  ]
-  // delete runs pre-render with context.previousParams available
-  delete: [
-    { type: "run-job", properties: {
-        image: "migrate:latest"
-        command: ["./migrate", "down"]
-      }
-    },
-    { type: "dispatch-delete" },
-  ]
-}
-```
-
-If `workflow.cue` is absent the component-controller falls back to implicit dispatch — resources are applied immediately after rendering, preserving v1 behaviour.
-
-Since the component-controller runs on the spoke with full in-cluster access, workflow steps execute natively — reading resources, calling in-cluster APIs, checking health — without any dispatcher constraints. `run-job` is reserved for cases that genuinely require a container (migration scripts, tooling only available as a Docker image). All other spoke interactions are native workflow step operations.
-
-### Lifecycle Events
-
-There are two workflow blocks:
-
-- **`create`** — runs on every `create` or `upgrade` event. A single unified block; the author branches on `context.event` and change flags. Steps before `dispatch` are pre-render (parameters known, resources not yet applied). Steps after `dispatch` are post-render (`context.outputs` available).
-- **`delete`** — runs on deletion. Always pre-render; `context.previousParams` holds the last known parameter values.
-
-If no event has occurred (reconcile triggered by health check or external drift), no workflow runs — the controller evaluates health and applies StateKeep only.
-
-### Workflow Context
-
-The following context fields are available in workflow steps:
-
-| Field | Available | Description |
-|---|---|---|
-| `context.event` | Always | `create`, `upgrade`, `delete` |
-| `context.paramsChanged` | `create` | Convenience bool — true if any parameter value changed from previous generation |
-| `context.definitionChanged` | `create` | Definition revision changed |
-| `context.traitsChanged` | `create` | Trait set or trait properties changed |
-| `context.params.current` | `create`, `delete` | Full parameter map from the previous generation — for fine-grained diffing |
-| `context.params.target` | `create` | Full parameter map being applied this reconcile |
-| `context.apiVersion.current` | `create`, `delete` | `apiVersion` of the ComponentDefinition currently running on the cluster |
-| `context.apiVersion.target` | `create` | `apiVersion` of the ComponentDefinition being applied this reconcile |
-| `context.outputs` | Post-`dispatch` in `create` only | Rendered resource objects after apply; not available in `delete` |
-| `context.workflow` | Always | Persisted state map from previous workflow runs (see below) |
-| `context.steps.<name>` | After named step completes | Output values from a completed workflow step |
-
-`context.paramsChanged` is a convenience shorthand for `context.params.current != context.params.target`. For simple gates use `context.paramsChanged`; for branching on specific field changes use `context.params.current.<field>` vs `context.params.target.<field>` directly.
-
-`context.apiVersion.current` vs `context.apiVersion.target` enables Definition authors to detect API version migrations and run schema migration steps before upgrading. When both are equal no version change is in progress.
-
-```cue
-// Example: API version migration + targeted param diffing
-create: [
-  if context.apiVersion.current != context.apiVersion.target {
-    { type: "helm-migrate-schema", properties: {
-        fromVersion: context.apiVersion.current
-        toVersion:   context.apiVersion.target
-        fromParams:  context.params.current
-        toParams:    context.params.target
-      }
-    }
-  }
-  if context.event == "upgrade" && context.params.current.version != context.params.target.version {
-    { type: "helm-upgrade", properties: { ... } }
-  }
-  { type: "dispatch" }
-]
-```
+The KEP-2.15 Operations model, which runs steps spoke-side, is unresolved against this.
 
 ---
 
-## Workflow State Persistence
+## Deployment
 
-`context.workflow.*` is a user-facing key/value namespace persisted across reconciles. Workflow steps write to it via `set-workflow-state`; the component-controller persists it to `Component.status.workflow` after each workflow run and injects it into the CUE render context on every subsequent reconcile — whether or not the workflow re-executes.
-
-**This is a component-controller concern, not the workflow engine.** The workflow engine (`kubevela/workflow`) has its own internal context persistence (ConfigMap-backed `ContextBackend`) for step execution state, backoff timers, and suspend state. That is engine-internal plumbing and is not exposed to CUE templates. `context.workflow.*` is a separate, user-facing layer owned by the component-controller:
-
-```
-Workflow executes
-  → set-workflow-state step writes key/value pairs to step output
-  → component-controller collects output after workflow completes
-  → writes to Component.status.workflow
-  → cleared on next reconcile trigger from status, injected as context.workflow.*
-  → renderer and subsequent workflow runs have access to context.workflow.*
-```
-
-Between lifecycle events — when no workflow executes — the component-controller loads `Component.status.workflow` directly and injects it as `context.workflow.*` without running any workflow steps. The renderer always has access to the last persisted state.
-
-```cue
-// workflow.cue — helm-chart ComponentDefinition
-create: [
-  if context.event == "create" {
-    { type: "helm-install", properties: {
-        chart:   context.parameters.chart
-        version: context.parameters.version
-      }
-    }
-  }
-  if context.event == "upgrade" && context.paramsChanged {
-    { type: "helm-upgrade", properties: {
-        chart:   context.parameters.chart
-        version: context.parameters.version
-      }
-    }
-  }
-  // component-controller collects this output and writes to Component.status.workflow
-  { type: "set-workflow-state", properties: {
-      releaseName: context.steps["helm-install"].releaseName
-    }
-  }
-  { type: "dispatch" }
-]
-```
-
-```cue
-// template.cue — renderer consumes persisted workflow state
-// context.workflow.* is always available, populated from Component.status.workflow
-output: {
-  metadata: annotations: {
-    "helm.sh/release-name": context.workflow.releaseName
-  }
-}
-```
-
-**Execution contract:**
-- Workflow executes **once per lifecycle event** (create, upgrade, delete) — not on every reconcile
-- Between events: no workflow execution, `context.workflow.*` loaded from status
-- Definition authors are responsible for **idempotency** of their custom steps — the controller guarantees at-least-once execution per event on transient failures
-- The end consumer never sees any of this — they declare component type and properties only
-
-The end consumer never sees any of this — they simply declare the component type and properties. The Definition author encapsulates all workflow and state logic internally.
-
----
-
-## `set-workflow-state` Built-in Step
-
-`set-workflow-state` writes key/value pairs to `Component.status.workflow`, making them available as `context.workflow.*` on subsequent reconciles and in the renderer.
-
-```cue
-{ type: "set-workflow-state", properties: {
-    releaseName: context.name
-  }
-  inputs: [
-    { from: "helmResources", parameterKey: "resources" }
-  ]
-}
-```
-
----
-
-## Selective Step Execution
-
-The workflow author is responsible for deciding which steps run under which conditions — the controller does not attempt to infer this. The `context.event` and change flags (`context.paramsChanged`, `context.definitionChanged`, `context.traitsChanged`) give the author full visibility into what triggered the reconcile, and CUE `if` expressions gate steps accordingly.
-
-```cue
-create: [
-  // always runs — cheap data refresh, no side effects
-  { type: "refresh-catalog-metadata" }
-  { type: "set-workflow-state", properties: {
-      catalogData: context.steps["refresh-catalog-metadata"].result
-    }
-  }
-
-  // only runs when properties actually changed — has side effects
-  if context.paramsChanged {
-    { type: "helm-upgrade" }
-  }
-
-  { type: "dispatch" }
-]
-```
-
-The `dispatch` step itself is idempotent — the controller compares the rendered output hash against what is currently applied on the cluster and skips API calls if nothing has changed. Definition authors do not need to guard `dispatch` — unnecessary applies are prevented automatically regardless of how often the workflow runs.
-
-The key design principle: **workflow steps with side effects should be explicitly gated by the author; `dispatch` does not need to be**.
-
----
-
-## Built-in Step Types
-
-| Step | Effect |
+| Phase | vela-agent ships as |
 |---|---|
-| `dispatch` | Renders outputs and SSA-applies them to the spoke cluster. Acts as the pre/post render boundary in `create`. |
-| `dispatch-delete` | Tears down all ResourceTracker-owned resources. Acts as the pre/post delete boundary in `delete` — steps before it are pre-delete (resources still exist), steps after it are post-delete (resources gone). |
-| `wait-healthy` | Waits for specified outputs to reach healthy state before proceeding. |
-| `set-workflow-state` | Writes key/value pairs to `Component.status.workflow`, available as `context.workflow.*` on subsequent reconciles and in the renderer. |
-| `run-job` | Creates a Job on the spoke, waits for completion. Reserved for cases requiring a container (migration scripts, tooling only available as a Docker image). |
+| 1 | Part of vela-core, behind a feature gate. On spokes, vela-core runs with only vela-agent enabled. |
+| 2 onwards | Its own binary, image and chart, with no rendering, workflow or provider code. |
 
-**Custom steps** resolve a `WorkflowStepDefinition` by name. All steps execute spoke-side with full in-cluster access.
-
----
-
-## Helm via WorkflowStepDefinition
-
-Since workflow steps run natively on the spoke, Helm can be invoked via SDK rather than shelling out to a container:
-
-```cue
-// WorkflowStepDefinition: helm-install
-template: |
-  parameters: {
-    chart:   string
-    version: string
-  }
-  #do: "helm-install"
-  release:   context.name
-  chart:     parameters.chart
-  version:   parameters.version
-  namespace: context.namespace
-```
-
-```cue
-// workflow.cue — helm-chart ComponentDefinition
-workflow: {
-  create: [
-    // API version migration — run schema migration before upgrade if version changed
-    if context.apiVersion.current != context.apiVersion.target {
-      { type: "helm-migrate-schema", properties: {
-          fromVersion: context.apiVersion.current
-          toVersion:   context.apiVersion.target
-          fromParams:  context.params.current
-          toParams:    context.params.target
-        }
-      }
-    }
-    if context.event == "create" {
-      {
-        type: "helm-install"
-        properties: { ... }
-        outputs: [
-          { name: "helmResources", valueFrom: "resources" }
-        ]
-      }
-    }
-    if context.event == "upgrade" && context.paramsChanged {
-      {
-        type: "helm-upgrade"
-        properties: { ... }
-        outputs: [
-          { name: "helmResources", valueFrom: "resources" }
-        ]
-      }
-    }
-    {
-      type: "set-workflow-state"
-      properties: { releaseName: context.name }
-      inputs: [
-        { from: "helmResources", parameterKey: "resources" }
-      ]
-    }
-    { type: "dispatch" }
-  ]
-  delete: [
-    // pre-delete — resources still exist on cluster
-    { type: "helm-uninstall", properties: { ... } }
-    { type: "dispatch-delete" }   // ← KubeVela deletes resources here
-    // post-delete — resources gone; context.params.current and context.workflow still available
-    { type: "notify", properties: { message: "teardown complete" } }
-  ]
-}
-```
-
-Context available in `delete` workflow:
-
-| Phase | Available context |
-|---|---|
-| Pre-`dispatch-delete` | `context.params.current`, `context.workflow`, `context.event` |
-| Post-`dispatch-delete` | `context.params.current`, `context.workflow` — `context.outputs` is not available (resources are gone) |
-
----
-
-## Health Evaluation
-
-Health is evaluated on the spoke against `context.status` — direct resource reads, no feedback rules needed.
-
-`isHealthy` is written to `Component.status.isHealthy`. The hub reads this via the Dispatcher's `componentHealth` expression.
-
-See [KEP-2.1](../2.1-core-api/README.md) for the `isHealthy` expression format and `statusPaths` configuration.
-
----
-
-## ResourceTracker on Spoke
-
-The spoke component-controller maintains a `ResourceTracker` for each Component — tracking all spoke-side owned resources for GC lifecycle.
-
-```go
-// ResourceTracker tracks spoke-side owned resources for GC lifecycle
-type ResourceTracker interface {
-    Record(ctx context.Context, outputs []*unstructured.Unstructured) error
-    GarbageCollect(ctx context.Context) error
-    ContainsAll(ctx context.Context, outputs []*unstructured.Unstructured) (bool, error)
-}
-```
-
-When a Component is deleted or its outputs change, the ResourceTracker drives garbage collection — removing resources no longer declared in the current outputs list.
-
----
-
-## Deployment Summary
-
-| Component | Standalone | KubeVela bundle |
-|---|---|---|
-| component-controller + workflow engine | ✓ (spoke installation) | ✓ |
-| application-controller | — | ✓ |
-| WorkflowRun controller | ✓ (optional) | ✓ (bundled, default on) |
+Either way, the controller needs RBAC to apply what Components carry, which is broad. The signature (KEP-2.5) is what stops anyone but the hub directing it, and spoke-side guardrails (KEP-2.3) are what bound what the hub itself may direct.
 
 ---
 
 ## Cross-KEP References
 
-- **API types** — `Component`, `ComponentDefinition`, `TraitDefinition`, `WorkflowStepDefinition` CRDs are defined in [KEP-2.1](../2.1-core-api/README.md).
-- **Hub reconcile pipeline** — the hub's role in resolving Definitions, injecting traits, and dispatching Component CRs is in [KEP-2.3](../2.3-hub-controller/README.md).
-- **Dispatcher** — how the hub wraps and delivers Component CRs; how health is fed back — [KEP-2.4](../2.4-dispatchers/README.md).
-- **Credential model** — definitionSnapshot encryption, dispatch integrity HMAC — [KEP-2.5](../2.5-credential-model/README.md).
-- **WorkflowRun controller** — standalone WorkflowRun bundling (separate from the embedded workflow engine) — [KEP-2.7](../2.7-workflowrun/README.md).
+- **API types**: `Component` and the definition types, [KEP-2.1](../2.1-core-api/README.md).
+- **Hub pipeline**: rendering, signing and dispatching Components, [KEP-2.3](../2.3-hub-controller/README.md).
+- **Dispatchers**: how a Component is delivered and its status read back, [KEP-2.4](../2.4-dispatchers/README.md).
+- **Signing and keys**: [KEP-2.5](../2.5-credential-model/README.md).
+- **Operations**: conflicting spoke-side execution, [KEP-2.15](../2.15-operations/README.md).
+- **WorkflowRun controller**: standalone WorkflowRun bundling, [KEP-2.7](../2.7-workflowrun/README.md).

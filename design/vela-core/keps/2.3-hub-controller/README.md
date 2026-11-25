@@ -9,46 +9,43 @@
 
 ## Overview
 
-KEP-2.3 defines the hub application-controller: its responsibilities, the reconcile pipeline, how it parses Applications and resolves Definitions, how it snapshots Definitions and dispatches Component CRs, how it injects traits from policies, and how it watches Component health and manages ordering.
+KEP-2.3 defines the hub application-controller's side of Component dispatch: how it renders each component, packages and signs the result as a `Component`, delivers it, tracks it, and reads its status back to drive the workflow and the Application's status.
 
 ---
 
 ## Hub: application-controller
 
-- Resolves `ComponentDefinition` definitions and snapshots them at reconcile time
-- Injects traits from policies into Component specs
-- Dispatches `Component` CRs to spokes — one resource per component, via the Dispatcher
-- Watches `Component.status.isHealthy` for orchestration decisions (dependsOn, workflow gating)
-- Manages Application-level concerns: ordering, policies, exports aggregation
-- Minimal RBAC — only needs permission to create/watch `Component` CRs on spokes
+- Parses Applications, applies policies, runs workflows and renders definitions, as today
+- Packages each rendered component, per target cluster, as a signed `Component` ([KEP-2.1](../2.1-core-api/README.md))
+- Delivers Components to their cluster through a Dispatcher ([KEP-2.4](../2.4-dispatchers/README.md))
+- Tracks the Components it dispatched in the Application's `ResourceTracker`, and garbage-collects them with signed tombstones
+- Reads `Component.status` for orchestration (workflow steps, dependsOn) and for `Application.status`
 
 ---
 
 ## Architectural Principle
 
-The fundamental architectural insight is that **trying to control everything from the hub is not an effective model**. Workflows, health evaluation, and resource dispatch all benefit from running on the spoke with full in-cluster access. The hub's job is orchestration — not execution.
+**Render where the inputs are; apply where the resources are.** Workflows, policies, configs, `fromSource` and hub Secrets live on the hub, so rendering stays there. Applying, drift correction, garbage collection and health polling are the work that never ends, and doing them from the hub through cluster-gateway is what costs. They move to vela-agent in the target cluster ([KEP-2.2](../2.2-spoke-controller/README.md)).
 
 ```
 Hub application-controller
-  └─ dispatches Component CR (via OCM ManifestWork / cluster-gateway)
-       └─ Spoke component-controller
-            ├─ renders CUE template
-            ├─ executes workflow (full in-cluster access)
-            ├─ manages ResourceTracker + GC
-            └─ reflects Component.status.isHealthy
-  └─ watches Component.status.isHealthy
-  └─ manages dependsOn ordering
+  ├─ parse, policies, workflow, render            (unchanged)
+  ├─ sign + package ──► Component ──► vela-agent (target cluster)
+  │                                     ├─ apply, drift correction
+  │                                     ├─ ResourceTracker + GC
+  │                                     └─ health, observe ──► Component.status    
+  └─ reads Component.status ──► workflow, dependsOn, Application.status
 ```
 
-The application-controller's job shrinks dramatically: resolve Definitions, inject traits, dispatch Component CRs, watch health, manage ordering. All execution moves to the spoke.
+The application-controller's programming model does not move. What changes is who applies and who checks health.
 
 ---
 
 ## Effective Authority Is Bounded by the Spoke, Not by the Grant
 
-The hub's RBAC on each spoke narrows to a single GVK: create and watch `Component` CRs. That improves accidental scope and audit legibility: a reviewer can see at a glance what the hub is permitted to do, and a bug in hub code cannot write a ClusterRoleBinding.
+The hub's RBAC on each spoke narrows to `Component` CRs and their payload Secrets. That improves accidental scope and audit legibility: a reviewer can see at a glance what the hub is permitted to do, and a bug in hub code cannot write a ClusterRoleBinding.
 
-**It is not a reduction in what an attacker can do.** A credential that can create `Component` CRs is exactly as powerful as whatever the spoke component-controller will apply on its behalf, and the spoke applies whatever the rendered definition emits. Narrow grant, unchanged blast radius.
+**It is not a reduction in what an attacker can do.** A credential that can create `Component` CRs is exactly as powerful as whatever vela-agent will apply on its behalf, and the spoke applies whatever the rendered definition emits. Narrow grant, unchanged blast radius.
 
 What actually bounds authority is the spoke refusing things: a GVK allowlist, namespace scoping, and a policy over what a rendered Component may apply. Until that exists, "minimal RBAC, only needs permission to create/watch Component CRs" describes the shape of the grant rather than its power, and the phrase will be quoted in a security review as though the narrow grant were the protection.
 
@@ -56,10 +53,12 @@ This matters for sequencing, because the steps are independently deliverable and
 
 | Step | Buys | Security? |
 |---|---|---|
-| 1. Ship the spoke controller and `Component` CR | status fidelity, partition tolerance | no |
-| 2. Narrow the hub's RBAC to one GVK | audit legibility, accidental scope | no |
+| 1. Ship vela-agent and `Component` CR | status fidelity, partition tolerance | no |
+| 2. Narrow the hub's RBAC to Components | audit legibility, accidental scope | no |
 | 3. Add the spoke's apply policy | **bounded authority** | **yes** |
 | 4. Optionally revisit pull-based delivery | removes the hub credential entirely | marginal, given 3 |
+
+The hub signature ([KEP-2.5](../2.5-credential-model/README.md)) does not change this either: it proves a Component came from the hub, not that the hub should have asked for it.
 
 Steps 1 and 2 are worth doing on their own merits, and each is useful without the next. Nobody should declare the credential problem solved after step 2.
 
@@ -70,48 +69,109 @@ Step 4 is not free with today's transport. cluster-gateway proxies with an upgra
 ## Hub Reconcile Pipeline
 
 ```
-1. Resolve ComponentDefinition + snapshot → sign with (name + namespace + revision) salt
-2. Resolve dependsOn Component.status.exports → inject into Component spec
-3. Inject policy-driven traits into Component spec
-4. Dispatcher.Dispatch(Component CR) → spoke
-5. Watch Component.status.isHealthy
-6. When healthy: read Component.status.exports → pass to dependent Components
+1. Parse the Application, apply policies, run the workflow          (unchanged)
+2. deploy / apply-component step, per component per target cluster:
+   a. render workload and traits; ship PostDispatch traits in spec.postRender (see below)
+   b. resolve apply-time policies into spec.apply
+   c. render health into spec.health; collect what to observe into spec.observe
+   d. write the payload Secret, then the Component, signed, at the next revision
+3. Record the Component in the Application's ResourceTracker
+4. Read Component.status: observedRevision, health, outputs
+   - step completes when observedRevision == revision and health is healthy
+   - status.health ──► Application.status.services
+5. Components no longer wanted: signed tombstone, then delete
 ```
+
+Only `deploy` and `apply-component` dispatch Components. `apply-object`, `read-object` and other raw-resource steps keep running in-process, since there is no component to name or check health on.
+
+---
+
+## Opt-in and Handover
+
+Component dispatch is behind a feature gate (off by default) and, per Application, an annotation (`app.oam.dev/dispatch: component`). One Application can move across without moving every Application.
+
+An existing Application that takes the annotation **hands over** its resources: each new Component adopts the resources its own Application already tracks, ownership labels move to the Component, and the resources leave the Application's tracker without being deleted or recreated. Removing the annotation hands them back the same way.
+
+A change of dispatch mode is a new ApplicationRevision, so the workflow runs again in the new mode. Trackers follow the Application's generation, which an annotation does not move, so both owners' records can sit in one tracker; the hub finishes the handover explicitly:
+
+| Direction | While the workflow runs | Once it succeeds |
+|---|---|---|
+| To Components | Each Component carries `spec.apply.adoptFrom: Application/<ns>/<app>`, and vela-agent takes the resources over in place | The Application forgets the records of resources its Components now control, and collects any no Component carries, as resources no longer rendered. It then dispatches each Component again without `adoptFrom`, so outside a handover vela-agent refuses the Application's resources |
+| Back to the Application | The in-process apply adopts from that component's Components | Once the component is healthy, payload Secrets are deleted, and each Component goes through its tombstone; vela-agent finds the resources are no longer its own and leaves them |
+
+The hub finishes what it safely can before every state keep, a suspended workflow's included, since forgetting only drops records of resources the other owner already controls. The Application's `Handover` condition is `False` (`InProgress`) while a handover has work left, naming what it waits on (vela-agent adopting, the component's health, a tombstone), and `True` (`Complete`) once it has none.
 
 ---
 
 ## Hub Dispatcher Interface
 
-The hub dispatcher is dramatically simplified — it only needs to deliver a single `Component` CR.
+Delivery is where a Dispatcher ([KEP-2.4](../2.4-dispatchers/README.md)) plugs in: its templates choose targets and the shape written for each, and the backend below writes it and reads status back. The backend only needs to deliver a `Component` (and its payload) and read its status back.
 
 ```go
-// Dispatcher delivers a Component CR to a target spoke
+// Dispatcher delivers a Component and its payload to the Component's target cluster.
 type Dispatcher interface {
-    Dispatch(ctx context.Context, component *Component) error
-    Watch(ctx context.Context, component *Component) (StatusWatcher, error)
+    Dispatch(ctx context.Context, component *Component, payload *corev1.Secret) error
+    Status(ctx context.Context, component *Component) (*ComponentStatus, error)
     Delete(ctx context.Context, component *Component) error
-}
-
-// StatusWatcher watches Component.status.isHealthy on the spoke
-type StatusWatcher interface {
-    IsHealthy() (bool, error)
-    Exports() (map[string]any, error)
 }
 ```
 
 ---
 
-## Resolving Definitions and Snapshotting
+## Rendering
 
-At reconcile time the hub:
+Rendering is today's: the hub resolves each component's `ComponentDefinition` and `TraitDefinition`s, renders them with the Application's context, and gets back the workload and trait resources. The result is packaged rather than applied:
 
-1. Resolves the `ComponentDefinition` referenced by each component entry in the Application
-2. Snapshots the resolved Definition — the full CUE package (component template, referenced trait CUE, any referenced WorkflowStepDefinition CUE)
-3. Encrypts the snapshot with the per-spoke AES-256-GCM symmetric key (see KEP-2.5)
-4. Embeds the encrypted snapshot in `Component.spec.definitionSnapshot.inline`
-5. Signs the snapshot with the per-spoke Definition signing key — the signature annotation `component.oam.dev/snapshot-signature` is set on the Component CR
+| Rendered | Goes to |
+|---|---|
+| Workload and trait resources | Compressed into the payload; identities and sha256 into `spec.resources` |
+| Apply-time policies (`garbage-collect`, `apply-once`, `take-over`, `read-only`, `shared-resource`, `resource-update`) | `spec.apply` |
+| Health, customStatus and details CUE, their parameters and context | `spec.health` |
+| PostDispatch traits: templates, resolved parameters, metadata and context | `spec.postRender`, rendered by vela-agent |
+| Live fields that `$(component.<name>)` reads and exports need | `spec.observe` (sensitive ones sealed) |
 
-This means the spoke always renders against the Definition that was current at the time the hub last reconciled. Definition upgrades on the hub propagate to spokes on the next reconcile.
+`topology`, `override`, `replication`, `env-binding` and `debug` are resolved here and never reach the Component.
+
+Health that today is special-cased in Go (Terraform's `Configuration` status) is rendered as health CUE, so vela-agent has no type-specific code.
+
+### PostDispatch traits
+
+A PostDispatch trait reads the live workload, so the hub does not render it: it ships the trait in `spec.postRender` with the rest of the revision, and vela-agent renders it once the workload is healthy ([KEP-2.2](../2.2-spoke-controller/README.md#postdispatch-traits)). The hub resolves what only it can read first: `$(source.x)` and `$(component.x)` in the trait's parameters, the `extends` chain, and the labels and annotations it would stamp. A later change to a component read reaches the trait with the next revision, where an in-process Application re-reads it on every reconcile.
+
+What vela-agent cannot render as the hub would is refused at dispatch, naming the trait:
+
+| Refused | Because |
+|---|---|
+| A template importing anything but the CUE standard library, or declaring `processing` | Providers run on the hub |
+| `controlPlaneOnly` | Its resources live on the hub, away from the workload it reads |
+| `podDisruptive` | It changes the signed workload |
+| `workloadRefPath` | The hub writes the reference during its own render |
+| An override policy patching trait outputs | The patch is applied during the hub's render |
+| Another component reading one of its outputs | The hub observes only the resources it rendered |
+
+A component is dispatched again only when the Application's current revision has not yet recorded its Components and payloads, as an in-process component is applied again only when its revision's tracker lacks its resources. A change that cuts no revision, such as an annotation, dispatches nothing.
+
+### Component reads
+
+The hub no longer reads live objects, so `$(component.<name>)` reads in later components and workflow steps go through what the producer's Component reports: each read's path becomes an observation on the producer's Component, and a read of a Secret (or a `+sensitive` path) is sealed, so only the hub reads it. A read waits while vela-agent has not reported on the producer's current revision.
+
+---
+
+## Tracking
+
+The Application's `ResourceTracker` records the Components it dispatched, per cluster. Each Component's own tracker records the resources vela-agent applied.
+
+| Change | Hub action | Result |
+|---|---|---|
+| A component leaves the Application | Tombstone, then delete its Components | Their resources are garbage-collected |
+| A cluster leaves the topology | Tombstone, then delete the Component for that cluster | Same, on that cluster |
+| The Application is deleted | Tombstones for every Component | Same, everywhere |
+
+The delete waits on vela-agent: the hub holds it until the tombstone's revision is observed, which vela-agent reports only once it has collected everything. A cluster that never answers (no agent, or unreachable) keeps its Component and its resources, and the Application's `Deleting` condition and a `WaitingForTombstone` event name the Component and cluster it waits on. Nothing is orphaned silently; an operator who gives up on a cluster removes the Component by hand, which leaves its resources in place.
+
+A Component's name is `<app>-<component>[-<replica>]-<cluster>-<hash>`, the readable parts trimmed so the name stays a valid label value (vela-agent labels what it applies with it), and the hash over the Application's namespace and name, the component, replica key and cluster, so dash-joined parts that read the same still name different Components. A hub control-plane Component puts the placement's cluster and namespace in place of the cluster and ends `-cp`. The hub still refuses to update a Component whose labels name a different Application, component or cluster.
+
+Tooling that walks the Application's tracker to list resources (`vela status --tree`, prism's `ApplicationResourceTracker`, VelaUX resource views) will find Components there, and must follow each into its resources. `vela status` and `Application.status.services` work unchanged, since they come from `Component.status.health`.
 
 ---
 
@@ -133,57 +193,21 @@ The three trait phases:
 
 ## Dispatching Component CRs
 
-The hub creates one `Component` CR per component in the Application. Each Component CR carries:
+One `Component` per component, per target cluster. The full shape is in [KEP-2.1](../2.1-core-api/README.md#component-crd).
 
-> **On the name.** `Component` is free at the API level — no `Component` kind is registered under `core.oam.dev` and no such CRD ships today; `component_types.go` holds only constants, and the inline type in `spec.components[]` is `ApplicationComponent`. The ambiguity is in prose rather than in the API: "component" will mean both an entry in `spec.components[]` and a dispatched CR, and the two are one-to-one but not the same object. `ComponentWork` was considered and rejected as needless once the collision turned out not to exist.
+> **On the name.** `Component` is free at the API level: no `Component` kind is registered under `core.oam.dev` and no such CRD ships today; `component_types.go` holds only constants, and the inline type in `spec.components[]` is `ApplicationComponent`. The ambiguity is in prose rather than in the API: "component" will mean both an entry in `spec.components[]` and a dispatched CR, and the two are one-to-many (one per cluster) but not the same object. `ComponentWork` was considered and rejected as needless once the collision turned out not to exist.
 
-
-- `spec.type` — the ComponentDefinition name
-- `spec.properties` — the resolved properties (after `fromParameter` substitution)
-- `spec.traits` — the merged trait list (user-declared + policy-injected)
-- `spec.dispatcher` — the resolved Dispatcher reference and parameters
-- `spec.dependsOn` — the dependency list with resolved imports
-- `spec.definitionSnapshot` — the encrypted, signed Definition snapshot
-
-```yaml
-apiVersion: core.oam.dev/v2alpha1
-kind: Component
-metadata:
-  name: my-postgres
-  namespace: team-a
-  annotations:
-    component.oam.dev/snapshot-signature: "<sig>"
-spec:
-  type: postgres-database
-  dispatcher:
-    name: ocm-prod
-    parameters:
-      cluster: "prod-cluster-1"
-      placement: "prod"
-  properties:
-    version: "14"
-    storage: "10Gi"
-    dbName:  "appdb"
-  traits:
-    - type: apply-once
-      properties:
-        selector: { resourceTypes: ["StatefulSet"] }
-  dependsOn:
-    - name: my-config-service
-      imports:
-        dbPassword: secretValue
-  definitionSnapshot:
-    revision: 3
-    inline: "<AES-256-GCM ciphertext>"
-```
+The payload Secret is written before the Component. A reader that sees the new Secret under the previous spec fails the digest check and retries.
 
 ---
 
-## Watching Component.status.health
+## Watching Component.status
 
-The hub watches `Component.status.isHealthy` via the Dispatcher's `status` CUE transform — which maps the dispatcher's wrapping structure (e.g. ManifestWork status) back to a normalised `componentHealth` boolean.
+The hub reads `Component.status` through the Dispatcher. For cluster-gateway that is a direct read of the Component through the proxy; for OCM, `ManifestWork` feedback rules carry `observedRevision`, `health` and `status.observed` back.
 
-For OCM the `status` transform maps `ManifestWork.status.resourceStatuses` → `componentHealth`. For cluster-gateway it reads `Component.status.isHealthy` directly via the proxy. Definition authors never need to think about this — it is a Dispatcher concern.
+The hub reads it again on the Application's next reconcile. While vela-agent has yet to report a Component healthy, the hub renders the Application no more often than `--component-agent-render-interval` (default 5s), with the workflow's backoff above it, since every render costs the whole Application. Between renders it reads only the Components it waits on, every `--component-agent-health-interval` (default 1s), and renders as soon as one changes, so the Application reports running about a second after vela-agent does. Any change to the Application itself renders at once. Once the backoff passes the render interval, the backoff alone paces it, so a cluster whose vela-agent is down is not read every second.
+
+The hub stamps each Component revision it writes with `component.oam.dev/dispatched-at`. If vela-agent has not applied that revision within `--component-reconciler-timeout` (default 2m), the Application says so by cluster, in the component's service message, the deploy step's message and a `ComponentNotApplied` event, rather than waiting silently: "waiting since T for anything on cluster X to reconcile Component ns/name: is vela-agent running there?" when `observedRevision` is empty, or "waiting since T for vela-agent on cluster X to apply revision N of Component ns/name (last applied M)" when it is behind. T is when the revision was written, so the report stays the same until something changes and its events aggregate. The Application keeps waiting, so an agent that comes back carries on with no manual step.
 
 ---
 
@@ -197,14 +221,14 @@ status:
     my-postgres:
       - cluster: prod-cluster-1
         namespace: team-a
-        isHealthy: true
+        healthy: true
     my-cache:
       - cluster: prod-cluster-1
         namespace: team-a
-        isHealthy: true
+        healthy: true
 ```
 
-This is populated from `Component.status.isHealthy` as read through the Dispatcher's `componentHealth` expression.
+This is populated from `Component.status.health` as read through the Dispatcher.
 
 ---
 
@@ -213,14 +237,14 @@ This is populated from `Component.status.isHealthy` as read through the Dispatch
 `fromDependency` wires a component's input properties to an upstream component's exported values. The hub mediates this:
 
 1. The hub dispatches upstream components first (determined by the dependency graph)
-2. The hub watches the upstream `Component.status.isHealthy`
-3. Once healthy, the hub reads `Component.status.exports` from the upstream Component
+2. The hub watches the upstream `Component.status.health`
+3. Once healthy, the hub evaluates the upstream's `exports` from its `Component.status.observed`
 4. The hub injects the imported values into the downstream Component's `spec.properties` (replacing the `fromDependency` directives)
 5. The hub dispatches the downstream Component
 
 Dependent Components receive their imports in `context.parameters` — transparent to the Definition template.
 
-For OCM, exports are declared as ManifestWork feedback rules on `Component.status.exports.*` fields. The hub reads them from ManifestWork status.
+For OCM, the `statusPaths` behind those exports are `ManifestWork` feedback rules on `Component.status.observed`.
 
 **Schema validation at admission:** The `from*` family is validated at admission time — the hub admission webhook resolves both the consuming component's `parameter{}` schema and the supplying Definition's `exports{}` schema and validates type compatibility between the two. See the cross-KEP section below.
 
@@ -343,28 +367,27 @@ spec:
 
 ```
 Hub application-controller
-  └─ dispatches Component CR (via OCM ManifestWork / cluster-gateway)
-       └─ Spoke component-controller
-            ├─ renders CUE template
-            ├─ executes workflow (full in-cluster access)
-            ├─ manages ResourceTracker + GC
-            └─ reflects Component.status.isHealthy
-  └─ watches Component.status.isHealthy
-  └─ manages dependsOn ordering
+  ├─ renders, signs, dispatches Component (local, cluster-gateway push, or OCM)
+  │    └─ vela-agent in the target cluster
+  │         ├─ verifies signature and payload digest
+  │         ├─ applies, corrects drift
+  │         ├─ manages ResourceTracker + GC (on signed tombstones)
+  │         └─ writes Component.status: health, outputs
+  └─ reads Component.status ──► workflow, dependsOn, PostDispatch traits, Application.status
 ```
 
 ### Why the OCM Problem Is Resolved
 
-OCM wraps a single `Component` CR in a `ManifestWork`. The spoke component-controller does all the work locally. OCM feeds back `isHealthy: true` from `Component.status` — a single boolean field, trivially declared as a feedback rule. No complex status path declarations, no constrained workflow steps, no push proxies.
+OCM wraps a single `Component` in a `ManifestWork`. vela-agent does the applying and health evaluation locally. OCM feeds back a handful of declared fields from `Component.status` (`observedRevision`, health, and the `statusPaths` outputs). No per-resource status path declarations and no push proxies. Before OCM delivery, the payload moves from a Secret into the Component, encrypted, so the `ManifestWork` stored on the hub only ever holds ciphertext ([KEP-2.1](../2.1-core-api/README.md#payload)).
 
 ---
 
 ## Cross-KEP References
 
 - **API types** — `Component`, `ComponentDefinition`, `Dispatcher` CRDs — [KEP-2.1](../2.1-core-api/README.md).
-- **Spoke reconcile pipeline** — what the spoke does after receiving a Component CR — [KEP-2.2](../2.2-spoke-controller/README.md).
+- **vela-agent**: what happens after a Component lands, [KEP-2.2](../2.2-spoke-controller/README.md).
 - **Dispatcher implementations** — local, cluster-gateway, OCM — [KEP-2.4](../2.4-dispatchers/README.md).
-- **Credential model** — AES-256-GCM snapshot encryption, dispatch integrity HMAC, per-spoke signing keys — [KEP-2.5](../2.5-credential-model/README.md).
+- **Credential model**: hub signing key, trust distribution, rotation, [KEP-2.5](../2.5-credential-model/README.md).
 - **App Templates (`ApplicationDefinition`)** — [KEP-2.9](../2.9-app-templates/README.md).
 - **fromSource** — SourceDefinition and lazy render-scoped resolution — [KEP-2.16](../2.16-source-definition/README.md).
 - **fromDependency** — Component exports and dependency graph — [KEP-2.17](../2.17-component-exports/README.md).

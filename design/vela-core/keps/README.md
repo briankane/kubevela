@@ -7,8 +7,8 @@
 > **vNext** is the codename for KubeVela's next major architectural programme. These KEPs collectively define vNext, which will culminate in a KubeVela 2.0 release. Individual features may land in 1.x releases in advance of that milestone — the 2.0 release marks the point at which the full set is complete and supported.
 
 > This is an umbrella KEP capturing the full vNext Roadmap design. It will be decomposed into focused sub-KEPs for implementation. Sub-KEPs planned:
-> - `KEP-2.1`: `core.oam.dev/v2alpha1` API types & CRDs (`ComponentDefinition`, `TraitDefinition`, `WorkflowStepDefinition`, `Component`, `Dispatcher`)
-> - `KEP-2.2`: Spoke component-controller & workflow engine
+> - `KEP-2.1`: `core.oam.dev/v2alpha1` API types & CRDs (`ComponentDefinition`, `TraitDefinition`, `WorkflowStepDefinition`, `Dispatcher`), and the `core.oam.dev/v1alpha1` `Component`
+> - `KEP-2.2`: vela-agent: applies, tracks and health-checks dispatched Components
 > - `KEP-2.3`: Hub application-controller integration
 > - `KEP-2.4`: Dispatcher implementations (local, cluster-gateway, OCM)
 > - `KEP-2.5`: Credential model & token rotation
@@ -50,25 +50,28 @@ The vNext Roadmap is an ambitious architectural evolution across nine major area
 - **Definition authoring as directories** — like Terraform modules; `metadata.cue` is the required entrypoint, all other files merged via CUE unification; supports inline and OCI source modes
 
 ### 2. Hub / Spoke Architecture
-- **Hub (application-controller)** — resolves Definitions, snapshots at reconcile time, injects traits from policies, dispatches `Component` CRs, watches health. Minimal RBAC — only needs permission to create/watch `Component` CRs.
-- **Spoke (component-controller)** — runs on every target cluster, executes CUE rendering, trait pipeline, workflows, health evaluation. Full in-cluster access. No OCM constraints.
-- **OCM drastically simplified** — hub dispatches a single `Component` CR via ManifestWork; spoke does all the work; hub watches one feedback field (`isHealthy`) — no complex statusPaths or feedback rules
-- **Workflow engine embedded** in component-controller — always present, no optional addon required; `WorkflowStepDefinition` is a guaranteed primitive
+- **Hub (application-controller)**: parses, applies policies, runs workflows and renders, as today; packages each rendered component per target cluster as a signed `Component`, dispatches it, reads its status back
+- **vela-agent**: runs in each target cluster (inside vela-core first, then as its own binary); verifies, applies, corrects drift, keeps the `ResourceTracker`, garbage-collects on signed tombstones, evaluates health. No rendering
+- **Delivery phases**: local (hub dispatches to itself), then push through cluster-gateway, then pull (OCM, agent pull); the controller is the same in each
+- **OCM simplified**: hub wraps one `Component` in a `ManifestWork`; feedback carries `observedRevision`, health and the declared observations
 
 ### 3. Trait & Policy Model
 - **Traits own behaviour** — anything that modifies a component's operational behaviour is a trait (`apply-once`, `gc`, `read-only`, `ownership`)
 - **Three phases** — `pre` (mutate inputs before CUE evaluation), `default` (CUE unification with template), `post` (dispatched after health check)
 - **Policies inject traits** — purely application-layer concerns; pure functions over application state that attach traits to matching Components before dispatch
-- **Policies never reach the spoke** — Component controller only sees traits, regardless of whether they were user-declared or policy-injected
+- **Policies never reach the spoke**: the hub resolves them at render time; a Component carries only rendered resources and apply options
 
 ### 4. Dispatcher Model
 - **Two-phase lookup** — local namespace → `vela-system`; `ComponentDefinition.defaultDispatcher` as final fallback
 - **`dispatch:` CUE transform** — wraps `context.outputs` into dispatcher-specific format (e.g. ManifestWork); parameters schema declared inline
 - **`status:` CUE transform** — maps dispatcher's wrapping structure back to normalised `context.outputs[x].status` and `componentHealth` boolean
 - **Three built-in types** — `local` (SSA direct), `cluster-gateway` (proxy), `ocm` (ManifestWork)
-- **`force-local` annotation removed** — spoke always has local access; no longer needed
+- **`force-local` annotation removed**: vela-agent always runs in the cluster its resources go to
 
 ### 5. Workflow & Lifecycle
+
+> Application workflows run on the hub (KEP-2.2). The component lifecycle items below were drafted for spoke-side execution; component-level workflows are a planned later addition and will revisit them.
+
 - **`create` / `delete`** — first-class lifecycle concepts; `create` is a unified workflow covering both create and upgrade events, branching on `context.event` and change flags (`context.paramsChanged`, `context.definitionChanged`); `dispatch` step within the workflow controls when resources are applied, acting as the pre/post render boundary
 - **`context.workflow.*` persistence** — workflow steps write to `context.workflow`, persisted to `Component.status.workflow` and available to the renderer on subsequent reconciles; Definition authors encapsulate workflow complexity internally, consumers see only component type and properties
 - **Built-in steps** — `dispatch`, `dispatch-delete`, `wait-healthy`, `run-job`
@@ -78,7 +81,8 @@ The vNext Roadmap is an ambitious architectural evolution across nine major area
 
 ### 6. Security & Credential Model
 - **No long-lived static tokens** — all credentials short-lived and rotated automatically
-- **Bi-directional trust** — spoke controls its own identity (hub cannot mint spoke tokens); hub issues unique per-spoke Definition signing keys (one compromise doesn't affect other spokes)
+- **Bi-directional trust**: spoke controls its own identity (hub cannot mint spoke tokens)
+- **Signed dispatch**: every `Component` is signed by the hub over its whole spec; the hub keeps its trusted public keys reconciled onto every cluster; rotation is manual with an overlap window (KEP-2.5)
 - **Three-factor token refresh** — requires (1) spoke cluster write access + (2) hub per-spoke signing key (signs the request Secret) + (3) secure channel; compromising any two is insufficient
 - **Spoke-initiated secure channel** — spoke drives all credential refreshes; hub is purely reactive; no hub-held spoke kubeconfigs after bootstrap
 - **Kubernetes Events for audit** — `SpokeRegistered`, `ComponentDispatched`, `SigningKeyRotated`, `WorkflowStarted/Completed/Failed`, `ComponentHealthy/Degraded` etc.; standard log pipelines scrape automatically
@@ -115,8 +119,8 @@ The vNext Roadmap is an ambitious evolution of the KubeVela platform. It introdu
 The core primitives are:
 - `ComponentDefinition` — a CUE-templated, schema-validated definition of a composable Kubernetes component, authored as a directory of CUE files
 - `TraitDefinition` — a named, reusable trait with a declared execution phase (pre/default/post)
-- `WorkflowStepDefinition` — a reusable workflow step type executed spoke-side with full in-cluster access
-- `Component` — a standalone instance of a ComponentDefinition that manages its own full lifecycle on the spoke
+- `WorkflowStepDefinition`: a reusable workflow step type, executed on the hub
+- `Component` (`core.oam.dev/v1alpha1`): one component's rendered resources for one cluster, signed by the hub, applied and health-checked in that cluster
 - `Dispatcher` — a CUE-parameterised delivery mechanism that abstracts how Component CRs are delivered to spokes and how status is retrieved
 - `ApplicationDefinition` — a CUE-parameterised composition of components, traits, and policies into an opinionated application construct
 - `PolicyDefinition` — a named, reusable policy definition that ApplicationDefinitions and Applications reference by name
@@ -160,40 +164,35 @@ OAM Scopes are not addressed in this proposal. Topology (placement) is handled v
 
 ## Architecture: Hub / Spoke Split
 
-The fundamental architectural insight is that **trying to control everything from the hub is not an effective model**. Workflows, health evaluation, and resource dispatch all benefit from running on the spoke with full in-cluster access. The hub's job is orchestration — not execution.
+**Render where the inputs are; apply where the resources are.** Workflows, policies and hub-only inputs stay on the hub, so rendering stays there. Applying, drift correction, garbage collection and health polling are the never-ending work, and they move to the cluster the resources live in.
 
 ### Hub: application-controller
 
-- Resolves `ComponentDefinition` definitions and snapshots them at reconcile time
-- Injects traits from policies into Component specs
-- Dispatches `Component` CRs to spokes — one resource per component, via the Dispatcher
-- Watches `Component.status.isHealthy` for orchestration decisions (dependsOn, workflow gating)
-- Manages Application-level concerns: ordering, policies, exports aggregation
-- Minimal RBAC — only needs permission to create/watch `Component` CRs on spokes
+- Parses Applications, applies policies, runs workflows, renders definitions
+- Packages each rendered component, per target cluster, as a signed `Component`
+- Dispatches it through a Dispatcher; tracks it in the Application's `ResourceTracker`
+- Reads `Component.status` (health, `observed` fields) for workflow gating, dependsOn, PostDispatch traits and `Application.status`
 
-### Spoke: component-controller
+### vela-agent
 
-- Runs on every target cluster (installed as part of spoke setup)
-- Loads `ComponentDefinition` definitions locally (standalone mode) or from hub-dispatched snapshots (application-driven mode)
-- Executes CUE rendering, trait pipeline, and lifecycle workflows
-- Has full in-cluster access — no proxy, no feedback rules, no constrained execution
-- Manages `ResourceTracker`, GC, health evaluation
-- Reflects `Component.status.isHealthy` back to hub
+- Runs in each target cluster: inside vela-core first, then as its own binary
+- Verifies the hub signature and payload digest; refuses replays, misaddressed and unsigned Components
+- Applies, corrects drift, keeps the `ResourceTracker`, garbage-collects on signed tombstones
+- Evaluates health from the rendered health CUE; writes `Component.status`
 
 ### Why this resolves the OCM problem
 
-OCM wraps a single `Component` CR in a `ManifestWork`. The spoke component-controller does all the work locally. OCM feeds back `isHealthy: true` from `Component.status` — a single boolean field, trivially declared as a feedback rule. No complex status path declarations, no constrained workflow steps, no push proxies.
+OCM wraps a single `Component` in a `ManifestWork`. vela-agent applies and evaluates health locally. OCM feeds back a handful of declared fields from `Component.status`. No per-resource status declarations, no push proxies.
 
 ```
 Hub application-controller
-  └─ dispatches Component CR (via OCM ManifestWork / cluster-gateway)
-       └─ Spoke component-controller
-            ├─ renders CUE template
-            ├─ executes workflow (full in-cluster access)
-            ├─ manages ResourceTracker + GC
-            └─ reflects Component.status.isHealthy
-  └─ watches Component.status.isHealthy
-  └─ manages dependsOn ordering
+  ├─ parse, policies, workflow, render
+  ├─ sign + dispatch Component (local / cluster-gateway / OCM)
+  │    └─ vela-agent (target cluster)
+  │         ├─ verify, apply, drift correction
+  │         ├─ ResourceTracker + GC
+  │         └─ Component.status: health, outputs
+  └─ reads Component.status ──► workflow, dependsOn, Application.status
 ```
 
 ---
@@ -315,15 +314,14 @@ This subsumes the current workaround of maintaining manual RBAC groups per defin
 ## Open Questions
 
 - [ ] Definition registry design (OCI artifact format, versioning, discovery)
-- [ ] `type: component` nested instance ownership and lifecycle — does parent Component deletion cascade to child Components on the spoke?
+- [ ] `type: component` nested instance ownership and lifecycle: does parent Component deletion cascade to child Components?
 - [ ] OAM Scope alignment — network and health scopes not addressed in this proposal
 - [ ] CLI tooling for Definition authoring, linting, testing, and publishing
-- [ ] Admission webhook strategy for `Component` property validation against Definition schema on the spoke
 - [ ] Multi-tenancy: RBAC model for Definition consumption across namespaces
-- [ ] Key storage strategy — where hub stores per-spoke signing keys (k8s Secret per spoke vs KMS)
+- [ ] Key storage strategy: hub signing key in a `vela-system` Secret today; KMS-backed later?
 - [ ] `run-job` output capture — convention for Jobs writing structured results back to the controller (ConfigMap written by job, read by controller after completion)
-- [ ] Spoke component-controller installation and upgrade lifecycle — how is it distributed to spokes?
-- [ ] Export federation for OCM — ManifestWork feedback rules for `Component.status.exports.*` fields
+- [ ] vela-agent installation and upgrade lifecycle: how is it distributed to spokes?
+- [ ] Export federation for OCM: ManifestWork feedback rules for `Component.status.observed`
 - [ ] `fromSource` / `fromDependency` / `fromParameter` in trait and policy properties — currently specified for component properties only; determine whether the same substitution model applies throughout. KEP-2.16 shipped `$( )` property expressions in place of `fromSource`, covering components, traits, workflow steps and resource-rendering policies, so the `from*` family needs revisiting against what that established
 - [ ] Config distribution alignment (KEP-2.18 × KEP-2.4) — the existing Config distribution mechanism (push to target clusters) is a parallel delivery path to the Dispatcher; needs rationalisation: should platform-engineer-authored `Config` CRDs be dispatched via the same Dispatcher path as Components, or retain a separate distribution reconciler? Spoke access model (hub read via cluster-gateway vs replica on spoke), ownership when a spoke has GitOps-applied Configs of its own, and whether `SourceDefinition` cache Configs (hub-local by definition) should be excluded from distribution entirely all need design decisions before KEP-2.18 is complete.
 
@@ -334,7 +332,7 @@ This subsumes the current workaround of maintaining manual RBAC groups per defin
 | KEP | Title | Priority | README |
 |---|---|---|---|
 | KEP-2.1 | `core.oam.dev/v2alpha1` API types & CRDs | Core | [2.1-core-api/README.md](2.1-core-api/README.md) |
-| KEP-2.2 | Spoke component-controller & workflow engine | Core | [2.2-spoke-controller/README.md](2.2-spoke-controller/README.md) |
+| KEP-2.2 | vela-agent | Core | [2.2-spoke-controller/README.md](2.2-spoke-controller/README.md) |
 | KEP-2.3 | Hub application-controller integration | Core | [2.3-hub-controller/README.md](2.3-hub-controller/README.md) |
 | KEP-2.4 | Dispatcher implementations (local, cluster-gateway, OCM) | Core | [2.4-dispatchers/README.md](2.4-dispatchers/README.md) |
 | KEP-2.5 | Credential model & token rotation | Core | [2.5-credential-model/README.md](2.5-credential-model/README.md) |
