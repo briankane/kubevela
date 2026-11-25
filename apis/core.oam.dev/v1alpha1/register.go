@@ -55,8 +55,15 @@ var (
 	WorkflowGroupVersionKind = SchemeGroupVersion.WithKind(WorkflowKind)
 )
 
+// Component meta
+var (
+	ComponentKind             = "Component"
+	ComponentGroupVersionKind = SchemeGroupVersion.WithKind(ComponentKind)
+)
+
 func init() {
 	SchemeBuilder.Register(&Policy{}, &PolicyList{})
+	SchemeBuilder.Register(&Component{}, &ComponentList{})
 	SchemeBuilder.Register(&wfTypesv1alpha1.Workflow{}, &wfTypesv1alpha1.WorkflowList{})
 	_ = SchemeBuilder.AddToScheme(k8sscheme.Scheme)
 }

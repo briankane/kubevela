@@ -1,0 +1,970 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: components.core.oam.dev
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: Component
+    listKind: ComponentList
+    plural: components
+    singular: component
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.target.cluster
+      name: CLUSTER
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: READY
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+      name: REASON
+      type: string
+    - jsonPath: .spec.revision
+      name: REVISION
+      type: integer
+    - jsonPath: .status.observedRevision
+      name: OBSERVED
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    - jsonPath: .status.conditions[?(@.type=="Ready")].message
+      name: MESSAGE
+      priority: 1
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Component is one component's rendered resources for one cluster, signed by the hub that
+          rendered them. vela-agent in the target cluster verifies, applies, tracks and health-checks
+          them, and reports back through status.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ComponentSpec is everything the hub signs. vela-agent refuses a spec whose signature does
+              not verify, so every field here is covered by spec.signature.
+            properties:
+              apply:
+                description: Apply holds the apply-time policies the hub resolved
+                  for this component.
+                properties:
+                  adoptFrom:
+                    description: |-
+                      AdoptFrom is the owner key (<kind>/<namespace>/<name>) whose resources this Component
+                      takes over in place, as when it replaces the Application that applied them.
+                    type: string
+                  applyOnce:
+                    description: ApplyOncePolicySpec defines the spec of preventing
+                      configuration drift
+                    properties:
+                      enable:
+                        type: boolean
+                      rules:
+                        items:
+                          description: ApplyOncePolicyRule defines a single apply-once
+                            policy rule
+                          properties:
+                            selector:
+                              description: |-
+                                ResourcePolicyRuleSelector select the targets of the rule
+                                if multiple conditions are specified, combination logic is AND
+                              properties:
+                                componentNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                componentTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                oamTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                traitTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                            strategy:
+                              description: ApplyOnceStrategy the strategy for resource
+                                path to allow configuration drift
+                              properties:
+                                affect:
+                                  description: |-
+                                    ApplyOnceAffectStrategy Decide when the strategy will take effect
+                                    like affect:onUpdate/onStateKeep/always
+                                  type: string
+                                path:
+                                  description: |-
+                                    Path the specified path that allow configuration drift
+                                    like 'spec.template.spec.containers[0].resources' and '*' means the whole target allow configuration drift
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - affect
+                              - path
+                              type: object
+                          type: object
+                        type: array
+                    required:
+                    - enable
+                    type: object
+                  garbageCollect:
+                    description: GarbageCollectPolicySpec defines the spec of configuration
+                      drift
+                    properties:
+                      applicationRevisionLimit:
+                        description: |-
+                          ApplicationRevisionLimit if set, this application will use this number for application revision instead of
+                          the global configuration
+                        type: integer
+                      continueOnFailure:
+                        description: ContinueOnFailure if is set, continue to execute
+                          gc when the workflow fails, by default gc will be executed
+                          only after the workflow succeeds
+                        type: boolean
+                      keepLegacyResource:
+                        description: |-
+                          KeepLegacyResource if is set, outdated versioned resourcetracker will not be recycled automatically
+                          outdated resources will be kept until resourcetracker be deleted manually
+                        type: boolean
+                      order:
+                        description: Order defines the order of garbage collect
+                        type: string
+                      rules:
+                        description: |-
+                          Rules defines list of rules to control gc strategy at resource level
+                          if one resource is controlled by multiple rules, first rule will be used
+                        items:
+                          description: GarbageCollectPolicyRule defines a single garbage-collect
+                            policy rule
+                          properties:
+                            propagation:
+                              description: GarbageCollectPropagation the deletion
+                                propagation setting similar to metav1.DeletionPropagation
+                              type: string
+                            selector:
+                              description: |-
+                                ResourcePolicyRuleSelector select the targets of the rule
+                                if multiple conditions are specified, combination logic is AND
+                              properties:
+                                componentNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                componentTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                oamTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                traitTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                            strategy:
+                              description: GarbageCollectStrategy the strategy for
+                                target resource to recycle
+                              type: string
+                          required:
+                          - propagation
+                          - selector
+                          - strategy
+                          type: object
+                        type: array
+                    type: object
+                  readOnly:
+                    description: ReadOnlyPolicySpec defines the spec of read-only
+                      policy
+                    properties:
+                      rules:
+                        items:
+                          description: ReadOnlyPolicyRule defines the rule for read-only
+                            resources
+                          properties:
+                            selector:
+                              description: |-
+                                ResourcePolicyRuleSelector select the targets of the rule
+                                if multiple conditions are specified, combination logic is AND
+                              properties:
+                                componentNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                componentTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                oamTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                traitTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                          required:
+                          - selector
+                          type: object
+                        type: array
+                    required:
+                    - rules
+                    type: object
+                  resourceUpdate:
+                    description: ResourceUpdatePolicySpec defines the spec of resource-update
+                      policy
+                    properties:
+                      rules:
+                        items:
+                          description: ResourceUpdatePolicyRule defines the rule for
+                            resource-update resources
+                          properties:
+                            selector:
+                              description: Selector picks which resources should be
+                                affected
+                              properties:
+                                componentNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                componentTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                oamTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                traitTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                            strategy:
+                              description: Strategy the strategy for updating resources
+                              properties:
+                                op:
+                                  description: Op the update op for selected resources
+                                  type: string
+                                recreateFields:
+                                  description: RecreateFields the field path which
+                                    will trigger recreate if changed
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                          required:
+                          - selector
+                          type: object
+                        type: array
+                    required:
+                    - rules
+                    type: object
+                  sharedResource:
+                    description: SharedResourcePolicySpec defines the spec of shared-resource
+                      policy
+                    properties:
+                      rules:
+                        items:
+                          description: SharedResourcePolicyRule defines the rule for
+                            sharing resources
+                          properties:
+                            selector:
+                              description: |-
+                                ResourcePolicyRuleSelector select the targets of the rule
+                                if multiple conditions are specified, combination logic is AND
+                              properties:
+                                componentNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                componentTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                oamTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                traitTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                          required:
+                          - selector
+                          type: object
+                        type: array
+                    required:
+                    - rules
+                    type: object
+                  takeOver:
+                    description: TakeOverPolicySpec defines the spec of take-over
+                      policy
+                    properties:
+                      rules:
+                        items:
+                          description: TakeOverPolicyRule defines the rule for taking
+                            over resources
+                          properties:
+                            selector:
+                              description: |-
+                                ResourcePolicyRuleSelector select the targets of the rule
+                                if multiple conditions are specified, combination logic is AND
+                              properties:
+                                componentNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                componentTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                oamTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceNames:
+                                  items:
+                                    type: string
+                                  type: array
+                                resourceTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                                traitTypes:
+                                  items:
+                                    type: string
+                                  type: array
+                              type: object
+                          required:
+                          - selector
+                          type: object
+                        type: array
+                    required:
+                    - rules
+                    type: object
+                type: object
+              delete:
+                description: 'Delete marks a tombstone: vela-agent garbage-collects
+                  what this Component tracks.'
+                type: boolean
+              health:
+                description: Health is evaluated against the live resources.
+                properties:
+                  context:
+                    additionalProperties:
+                      type: string
+                    description: Context holds the render-time values health CUE reads
+                      as context.*.
+                    type: object
+                  traits:
+                    items:
+                      description: ComponentTraitHealth is a trait's health subject,
+                        with its type.
+                      properties:
+                        ancestors:
+                          description: Ancestors are the snippets of the definitions
+                            this one extends, nearest parent first.
+                          items:
+                            description: HealthSnippets are one definition's health,
+                              customStatus and details CUE.
+                            properties:
+                              customStatus:
+                                type: string
+                              details:
+                                type: string
+                              healthPolicy:
+                                type: string
+                            type: object
+                          type: array
+                        customStatus:
+                          type: string
+                        details:
+                          type: string
+                        healthPolicy:
+                          type: string
+                        parameter:
+                          description: Parameter is what the health CUE reads as parameter.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        type:
+                          type: string
+                      required:
+                      - type
+                      type: object
+                    type: array
+                  workload:
+                    description: Workload is absent when the workload is not applied
+                      (a trait manages it).
+                    properties:
+                      ancestors:
+                        description: Ancestors are the snippets of the definitions
+                          this one extends, nearest parent first.
+                        items:
+                          description: HealthSnippets are one definition's health,
+                            customStatus and details CUE.
+                          properties:
+                            customStatus:
+                              type: string
+                            details:
+                              type: string
+                            healthPolicy:
+                              type: string
+                          type: object
+                        type: array
+                      customStatus:
+                        type: string
+                      details:
+                        type: string
+                      healthPolicy:
+                        type: string
+                      parameter:
+                        description: Parameter is what the health CUE reads as parameter.
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                type: object
+              observe:
+                description: |-
+                  Observe names live fields vela-agent reports in status.observed (or sealed, in
+                  status.sealedObserved) for the hub to read.
+                items:
+                  description: ComponentObservation names one live field to report,
+                    under its resource's role and name.
+                  properties:
+                    name:
+                      type: string
+                    path:
+                      description: Path is a JSONPath into the live resource, e.g.
+                        ".status.readyReplicas".
+                      type: string
+                    resource:
+                      description: 'Resource is the role of a resource in spec.resources:
+                        "output", or "outputs.<name>".'
+                      type: string
+                    sensitive:
+                      description: |-
+                        Sensitive values are sealed to the hub's sealing key and reported in
+                        status.sealedObserved, never in plain text.
+                      type: boolean
+                  required:
+                  - name
+                  - path
+                  - resource
+                  type: object
+                type: array
+              payload:
+                description: Payload locates the rendered resources. Absent on a tombstone.
+                properties:
+                  format:
+                    description: Format names the encoding, e.g. "gzip+json/v1".
+                    type: string
+                  secretRef:
+                    description: ComponentSecretReference names a Secret in the Component's
+                      namespace.
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  sha256:
+                    description: SHA256 is the hash of the payload data; vela-agent
+                      refuses a payload that differs.
+                    type: string
+                required:
+                - format
+                - secretRef
+                - sha256
+                type: object
+              postRender:
+                description: |-
+                  PostRender holds the PostDispatch traits vela-agent renders against the live
+                  workload once it is healthy.
+                properties:
+                  context:
+                    description: |-
+                      Context is what the templates read as context, without output and outputs, which
+                      vela-agent fills from the workload it applied and its live status.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  namespace:
+                    description: |-
+                      Namespace, when set, is where every rendered resource goes, as a topology policy's
+                      namespace override places it. Unset, a resource whose template names no namespace
+                      goes to the context's.
+                    type: string
+                  traits:
+                    items:
+                      description: |-
+                        ComponentPostRenderTrait is one PostDispatch trait: its templates, its parameter, and the
+                        metadata the hub stamps on what it renders.
+                      properties:
+                        annotations:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        filterAnnotationKeys:
+                          description: |-
+                            FilterAnnotationKeys are annotations a rendered resource never carries, even when its
+                            template sets them: the hub's filtered keys for this Application.
+                          items:
+                            type: string
+                          type: array
+                        labels:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            Labels and Annotations are set on each resource the trait renders, after the labels
+                            vela-agent derives from the context and the name it gives a resource with none.
+                          type: object
+                        parameter:
+                          description: Parameter is what the templates read as parameter,
+                            with every expression resolved.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        templates:
+                          description: |-
+                            Templates are the trait's own template, named as the Application names the trait, then
+                            those of the definitions it extends, nearest parent first.
+                          items:
+                            description: ComponentTemplate is one definition's CUE
+                              template.
+                            properties:
+                              name:
+                                description: Name is the definition's name, which
+                                  render errors cite.
+                                type: string
+                              template:
+                                type: string
+                            required:
+                            - name
+                            - template
+                            type: object
+                          minItems: 1
+                          type: array
+                        type:
+                          description: 'Type is the trait-type label its resources
+                            carry: the installed definition''s name.'
+                          type: string
+                      required:
+                      - templates
+                      - type
+                      type: object
+                    minItems: 1
+                    type: array
+                required:
+                - traits
+                type: object
+              resources:
+                description: Resources lists what the payload holds, so the applied
+                  set is readable without it.
+                items:
+                  description: ComponentResource identifies one rendered resource
+                    and its content hash.
+                  properties:
+                    apiVersion:
+                      type: string
+                    definition:
+                      description: Definition is the definition that rendered the
+                        resource.
+                      properties:
+                        kind:
+                          enum:
+                          - Component
+                          - Trait
+                          type: string
+                        type:
+                          description: Type is the ComponentDefinition or TraitDefinition
+                            name.
+                          type: string
+                      required:
+                      - kind
+                      - type
+                      type: object
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    role:
+                      description: 'Role is how health CUE refers to the resource:
+                        "output", or "outputs.<name>".'
+                      type: string
+                    sha256:
+                      description: SHA256 is the hash of the resource as it appears
+                        in the payload.
+                      type: string
+                  required:
+                  - apiVersion
+                  - definition
+                  - kind
+                  - name
+                  - sha256
+                  type: object
+                type: array
+              revision:
+                description: |-
+                  Revision increases with every change the hub dispatches. vela-agent refuses a
+                  revision lower than the last one it applied.
+                format: int64
+                minimum: 1
+                type: integer
+              signature:
+                description: Signature is the hub's signature over the rest of the
+                  spec.
+                properties:
+                  keyID:
+                    type: string
+                  value:
+                    type: string
+                required:
+                - keyID
+                - value
+                type: object
+              target:
+                description: Target is the cluster this Component is addressed to.
+                properties:
+                  cluster:
+                    minLength: 1
+                    type: string
+                required:
+                - cluster
+                type: object
+            required:
+            - revision
+            - signature
+            - target
+            type: object
+            x-kubernetes-validations:
+            - message: payload is required unless delete is set
+              rule: (has(self.delete) && self.delete) || has(self.payload)
+          status:
+            description: ComponentStatus is what vela-agent reports.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              health:
+                description: Health is in the shape of an Application's status.services
+                  entry.
+                properties:
+                  cluster:
+                    type: string
+                  details:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  env:
+                    type: string
+                  healthy:
+                    type: boolean
+                  message:
+                    type: string
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  scopes:
+                    items:
+                      description: ObjectReference contains enough information to
+                        let you inspect or modify the referred object.
+                      properties:
+                        apiVersion:
+                          description: API version of the referent.
+                          type: string
+                        fieldPath:
+                          description: |-
+                            If referring to a piece of an object instead of an entire object, this string
+                            should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
+                            For example, if the object reference is to a container within a pod, this would take on a value like:
+                            "spec.containers{name}" (where "name" refers to the name of the container that triggered
+                            the event) or if no container name is specified "spec.containers[2]" (container with
+                            index 2 in this pod). This syntax is chosen only to have some well-defined way of
+                            referencing a part of an object.
+                          type: string
+                        kind:
+                          description: |-
+                            Kind of the referent.
+                            More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+                          type: string
+                        name:
+                          description: |-
+                            Name of the referent.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                        namespace:
+                          description: |-
+                            Namespace of the referent.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                          type: string
+                        resourceVersion:
+                          description: |-
+                            Specific resourceVersion to which this reference is made, if any.
+                            More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
+                          type: string
+                        uid:
+                          description: |-
+                            UID of the referent.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    type: array
+                  traits:
+                    items:
+                      description: ApplicationTraitStatus records the trait health
+                        status
+                      properties:
+                        details:
+                          additionalProperties:
+                            type: string
+                          type: object
+                        healthy:
+                          type: boolean
+                        message:
+                          type: string
+                        pending:
+                          type: boolean
+                        type:
+                          type: string
+                      required:
+                      - healthy
+                      - type
+                      type: object
+                    type: array
+                  workloadDefinition:
+                    description: WorkloadDefinition is the definition of a WorkloadDefinition,
+                      such as deployments/apps.v1
+                    properties:
+                      apiVersion:
+                        type: string
+                      kind:
+                        type: string
+                    required:
+                    - apiVersion
+                    - kind
+                    type: object
+                  workloadHealthy:
+                    description: WorkloadHealthy indicates the workload health without
+                      considering trait health.
+                    type: boolean
+                required:
+                - healthy
+                - name
+                type: object
+              observed:
+                additionalProperties:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: |-
+                  Observed holds the fields spec.observe asked for that are not sensitive: by resource
+                  role, an object of name to value.
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              observedGeneration:
+                description: ObservedGeneration is the metadata.generation this status
+                  describes.
+                format: int64
+                type: integer
+              observedRevision:
+                description: ObservedRevision is the last revision vela-agent verified
+                  and applied.
+                format: int64
+                type: integer
+              resources:
+                description: |-
+                  Resources are the resources vela-agent applied and tracks for the observed revision, in
+                  the cluster the Component is delivered to. Tools list an Application's resources from
+                  here, since the hub may not be able to reach that cluster's ResourceTrackers.
+                items:
+                  description: ComponentAppliedResource identifies one resource vela-agent
+                    applied.
+                  properties:
+                    apiVersion:
+                      type: string
+                    definition:
+                      description: Definition is the definition that rendered the
+                        resource.
+                      properties:
+                        kind:
+                          enum:
+                          - Component
+                          - Trait
+                          type: string
+                        type:
+                          description: Type is the ComponentDefinition or TraitDefinition
+                            name.
+                          type: string
+                      required:
+                      - kind
+                      - type
+                      type: object
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    role:
+                      description: 'Role is the resource''s role in spec.resources:
+                        "output", or "outputs.<name>".'
+                      type: string
+                  required:
+                  - apiVersion
+                  - definition
+                  - kind
+                  - name
+                  type: object
+                type: array
+              sealedObserved:
+                additionalProperties:
+                  additionalProperties:
+                    type: string
+                  type: object
+                description: |-
+                  SealedObserved holds the sensitive ones: by resource role, then name, the value's JSON
+                  sealed to the sealing key of SealedWith.
+                type: object
+              sealedWith:
+                description: |-
+                  SealedWith is the hub key ID whose sealing key the sealed values are sealed to: the key
+                  that signed the spec they were observed for.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
