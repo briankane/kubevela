@@ -39,6 +39,14 @@ const (
 	LabelAppNamespace = "app.oam.dev/namespace"
 	// LabelAppCluster records the cluster of Application
 	LabelAppCluster = "app.oam.dev/cluster"
+	// LabelComponentCluster records the cluster a dispatched Component is addressed to.
+	LabelComponentCluster = "component.oam.dev/cluster"
+	// LabelControlPlaneFor marks a hub Component holding the control-plane-only resources of
+	// the component dispatched to the named cluster.
+	LabelControlPlaneFor = "component.oam.dev/control-plane-for"
+	// AnnotationDispatchedAt records when the hub wrote a Component's current revision
+	// (RFC 3339), so the hub can tell how long vela-agent has had to apply it.
+	AnnotationDispatchedAt = "component.oam.dev/dispatched-at"
 	// LabelAppUID records the uid of Application
 	LabelAppUID = "app.oam.dev/uid"
 
@@ -189,6 +197,13 @@ const (
 
 	// AnnotationPublishVersion is annotation that record the application workflow version.
 	AnnotationPublishVersion = "app.oam.dev/publishVersion"
+
+	// AnnotationDispatch chooses how an Application's components reach their clusters. With
+	// DispatchComponent, and the EnableComponentDispatch feature gate, each is delivered as a
+	// signed Component that vela-agent applies.
+	AnnotationDispatch = "app.oam.dev/dispatch"
+	// DispatchComponent is the AnnotationDispatch value for Component dispatch.
+	DispatchComponent = "component"
 
 	// AnnotationAutoUpdate is annotation that let application auto update when it finds definition changes
 	AnnotationAutoUpdate = "app.oam.dev/autoUpdate"

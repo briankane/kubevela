@@ -18,16 +18,21 @@ package application
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"fmt"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/tools/record"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
@@ -38,6 +43,8 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	common2 "github.com/oam-dev/kubevela/pkg/controller/common"
+	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1alpha1/component"
+	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 )
@@ -474,6 +481,48 @@ output: labels: {"gwcp/tag": _source.$returns.data.tag}
 			source("gp-data-src-on", "v2")
 			applicationPolicyCache.InvalidateApplication(namespace, app.Name) // as the cache TTL would
 			reconcileUntil(key, func() bool { return cmLabel("gp-data-on-cm") == "v2" })
+
+			after := getApp(key)
+			Expect(after.Status.LatestRevision.Name).Should(Equal(firstRev), "a data change is not a new revision")
+			Expect(after.Status.Workflow.StartTime).Should(Equal(firstRun), "a metadata data change does not re-run the workflow")
+		})
+
+		It("applies changed data to a dispatched component's resources through its next Component revision", func() {
+			featuregatetesting.SetFeatureGateDuringTest(GinkgoT(), utilfeature.DefaultFeatureGate, features.EnableComponentDispatch, true)
+			pub, priv, err := ed25519.GenerateKey(rand.Reader)
+			Expect(err).NotTo(HaveOccurred())
+			reconciler.ComponentKeys = newRingKeys(priv)
+			DeferCleanup(func() { reconciler.ComponentKeys = nil })
+			agent := &component.Reconciler{Client: k8sClient, Keys: component.StaticKeys{"hub-1": pub}, Cluster: "local", Recorder: record.NewFakeRecorder(100)}
+
+			source("gp-data-src-dispatch", "v1")
+			createPolicyDefAndIndex(ctx, dataPolicy("gwcp-data-dispatch", "gp-data-src-dispatch"))
+			app := newConfigMapApp("gp-data-dispatch", map[string]string{
+				oam.AnnotationApplyDataChanges: "true", oam.AnnotationDispatch: oam.DispatchComponent})
+			Expect(k8sClient.Create(ctx, app)).Should(Succeed())
+			key := client.ObjectKeyFromObject(app)
+			compKey := types.NamespacedName{Namespace: namespace, Name: componentName(namespace, "gp-data-dispatch", "gp-data-dispatch-comp")}
+			// The hub reconciles, then vela-agent applies what it dispatched.
+			until := func(cond func() bool) {
+				GinkgoHelper()
+				reconcileUntilOK(key, func() error {
+					if _, err := agent.Reconcile(ctx, reconcile.Request{NamespacedName: compKey}); err != nil && !kerrors.IsNotFound(err) {
+						return err
+					}
+					if cond() {
+						return nil
+					}
+					return fmt.Errorf("phase=%s configMapLabel=%q", getApp(key).Status.Phase, cmLabel("gp-data-dispatch-cm"))
+				})
+			}
+
+			until(func() bool { return deployed(key) && cmLabel("gp-data-dispatch-cm") == "v1" })
+			before := getApp(key)
+			firstRev, firstRun := before.Status.LatestRevision.Name, before.Status.Workflow.StartTime
+
+			source("gp-data-src-dispatch", "v2")
+			applicationPolicyCache.InvalidateApplication(namespace, app.Name)
+			until(func() bool { return cmLabel("gp-data-dispatch-cm") == "v2" })
 
 			after := getApp(key)
 			Expect(after.Status.LatestRevision.Name).Should(Equal(firstRev), "a data change is not a new revision")

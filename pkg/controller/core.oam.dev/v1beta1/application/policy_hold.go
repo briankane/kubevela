@@ -67,7 +67,7 @@ func (h *AppHandler) holdResourceKeeper(ctx monitorContext.Context, app *v1beta1
 			delete(running.Annotations, oam.AnnotationPublishVersion)
 		}
 	}
-	keeper, err := appkeeper.New(ctx, h.Client, running)
+	keeper, err := appkeeper.New(ctx, h.Client, running, h.keeperOptions)
 	if err != nil {
 		return err
 	}

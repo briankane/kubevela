@@ -68,12 +68,14 @@ import (
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/appkeeper"
 	"github.com/oam-dev/kubevela/pkg/auth"
+	"github.com/oam-dev/kubevela/pkg/componentdispatch"
 	common2 "github.com/oam-dev/kubevela/pkg/controller/common"
 	core "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/helm"
 	"github.com/oam-dev/kubevela/pkg/cue/cuex/providers/velaconfig"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
+	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/resourcekeeper"
@@ -108,6 +110,28 @@ type Reconciler struct {
 	// APIReader reads Applications from the API server, past the cache. Without it a reconcile
 	// trusts the cache, and a status write that conflicts is not retried.
 	APIReader client.Reader
+	// ClusterReader reads past the cache from the cluster a context names, as reads of
+	// dispatched Components must. Without it they go through APIReader, which reads the hub.
+	ClusterReader client.Reader
+	// ComponentReconcilerTimeout is how long a dispatched Component may wait for vela-agent
+	// before its Application reports it; defaultComponentReconcilerTimeout when zero.
+	ComponentReconcilerTimeout time.Duration
+	// ComponentAgentRenderInterval is the least time between renders of an Application waiting
+	// on vela-agent; defaultComponentAgentRenderInterval when zero.
+	ComponentAgentRenderInterval time.Duration
+	// ComponentAgentHealthInterval is how often such an Application reads its Components between
+	// renders; defaultComponentAgentHealthInterval when zero.
+	ComponentAgentHealthInterval time.Duration
+	// agentWaits is what each Application waiting on vela-agent waits on, by namespaced name;
+	// nil reads no Component between renders.
+	agentWaits *sync.Map
+	// ComponentKeys signs the Components dispatched for Applications that opt in
+	// (oam.AnnotationDispatch), and opens what vela-agent sealed. Nil when Component
+	// dispatch is off.
+	ComponentKeys ComponentKeys
+	// componentKeysNamespace holds the signing keys Secret, watched so that a new active key
+	// re-signs every dispatched Application's Components.
+	componentKeysNamespace string
 	options
 	// ownWrites holds, per existing Application, the resourceVersion of the last copy a reconcile
 	// finished with, its own status write included. Nil turns the read-your-writes check off.
@@ -143,8 +167,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.
 	}, app); err != nil {
 		if !kerrors.IsNotFound(err) {
 			logCtx.Error(err, "get application")
-		} else if r.ownWrites != nil {
-			r.ownWrites.Delete(req.NamespacedName)
+		} else {
+			r.forgetAgentWait(req.NamespacedName)
+			if r.ownWrites != nil {
+				r.ownWrites.Delete(req.NamespacedName)
+			}
 		}
 		return r.result(client.IgnoreNotFound(err)).ret()
 	}
@@ -169,6 +196,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.
 	if !r.matchControllerRequirement(app) {
 		logCtx.Info("skip app: not match the controller requirement of app")
 		return ctrl.Result{}, nil
+	}
+	if r.waitOnlyOnAgent(ctx, app) {
+		return ctrl.Result{RequeueAfter: r.agentHealthInterval()}, nil
 	}
 
 	timeReporter := timeReconcile(app)
@@ -332,7 +362,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.
 		if postDispatchApplied || !feature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
 			return nil
 		}
-		if err := handler.applyPostDispatchTraits(logCtx, appParser, appFile); err != nil {
+		if err := handler.delivery().applyPostDispatch(logCtx, appParser, appFile); err != nil {
 			logCtx.Error(err, "Failed to apply PostDispatch traits")
 			r.Recorder.Event(app, event.Warning(velatypes.ReasonFailedApply, err))
 			return err
@@ -351,7 +381,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.
 			return r.result(err).requeue(duration).ret()
 		}
 		if !workflow.IsFailedAfterRetry(app) || !feature.DefaultMutableFeatureGate.Enabled(wffeatures.EnableSuspendOnFailure) {
-			r.stateKeep(logCtx, handler, app)
+			r.handoverAndStateKeep(logCtx, handler, appParser, appFile, app)
 		}
 		return r.gcResourceTrackers(logCtx, handler, common.ApplicationWorkflowSuspending, false, workflowUpdated)
 	case workflowv1alpha1.WorkflowStateTerminated:
@@ -369,7 +399,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.
 			return r.endWithNegativeCondition(logCtx, app, condition.ReconcileError(err), common.ApplicationRunningWorkflow)
 		}
 		_, err = r.gcResourceTrackers(logCtx, handler, common.ApplicationRunningWorkflow, false, workflowUpdated)
-		return r.result(err).requeue(workflowExecutor.GetBackoffWaitTime()).ret()
+		backoff := workflowExecutor.GetBackoffWaitTime()
+		if err == nil {
+			backoff = r.requeueOnAgent(app, handler, backoff)
+		}
+		return r.result(err).requeue(backoff).ret()
 	case workflowv1alpha1.WorkflowStateSucceeded:
 		if workflowInstance.Status.EndTime.IsZero() {
 			r.doWorkflowFinish(logCtx, app, handler, workflowState)
@@ -417,7 +451,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.
 		phase = common.ApplicationUnhealthy
 	}
 
-	r.stateKeep(logCtx, handler, app)
+	r.handoverAndStateKeep(logCtx, handler, appParser, appFile, app)
 
 	opts := []resourcekeeper.GCOption{
 		resourcekeeper.RevisionLimitGCOption(r.appRevisionLimit),
@@ -505,6 +539,10 @@ func (r *Reconciler) reapplyComponents(logCtx monitorContext.Context, handler *A
 	// All-or-nothing per component. A partial view of what a component renders
 	// would make a transient render error look like a deletion, so a component
 	// with any failed placement is skipped entirely and retried next reconcile.
+	//
+	if !handler.delivery().prunesOnRefresh() {
+		return len(incomplete) == 0
+	}
 	for name, keep := range rendered {
 		if _, partial := incomplete[name]; partial {
 			logCtx.Info("skipping prune, the rendered set is incomplete", "component", name)
@@ -760,6 +798,47 @@ func withoutKeys(values map[string]string, keys []string) map[string]string {
 	return out
 }
 
+// handoverCondition reports a change of dispatch mode still in progress, and what it waits on.
+const handoverCondition condition.ConditionType = "Handover"
+
+// handoverAndStateKeep finishes what it can of a change of dispatch mode, then keeps state, so
+// state keep applies only what the Application still owns. The Handover condition says what is
+// left, including Components whose tombstones state keep found still waiting.
+func (r *Reconciler) handoverAndStateKeep(logCtx monitorContext.Context, handler *AppHandler, appParser *appfile.Parser, af *appfile.Appfile, app *v1beta1.Application) {
+	inProgress, waits, err := handler.completeHandover(logCtx, appParser, af)
+	if err != nil {
+		logCtx.Error(err, "Failed to complete a change of dispatch mode")
+		r.Recorder.Event(app, event.Warning(velatypes.ReasonFailedGC, err))
+	}
+	if err := handler.delivery().resign(logCtx, appParser, af); err != nil {
+		logCtx.Error(err, "Failed to sign Components with the active key")
+		r.Recorder.Event(app, event.Warning(velatypes.ReasonFailedApply, err))
+	}
+	r.stateKeep(logCtx, handler, app)
+
+	var previous *condition.Condition
+	for i := range app.Status.Conditions {
+		if app.Status.Conditions[i].Type == handoverCondition {
+			previous = &app.Status.Conditions[i]
+		}
+	}
+	if previous != nil && previous.Status != corev1.ConditionTrue {
+		waits = append(waits, handler.tombstoneWaits...)
+	}
+	switch {
+	case inProgress || err != nil || len(waits) > 0:
+		message := strings.Join(waits, "; ")
+		if message == "" {
+			message = "moving resources to their new owner"
+		}
+		app.Status.SetConditions(condition.Condition{Type: handoverCondition, Status: corev1.ConditionFalse,
+			Reason: "InProgress", Message: message, LastTransitionTime: metav1.Now()})
+	case previous != nil:
+		app.Status.SetConditions(condition.Condition{Type: handoverCondition, Status: corev1.ConditionTrue,
+			Reason: "Complete", LastTransitionTime: metav1.Now()})
+	}
+}
+
 func (r *Reconciler) stateKeep(logCtx monitorContext.Context, handler *AppHandler, app *v1beta1.Application) {
 	if feature.DefaultMutableFeatureGate.Enabled(features.ApplyOnce) {
 		return
@@ -817,6 +896,10 @@ func (r *Reconciler) gcResourceTrackers(logCtx monitorContext.Context, handler *
 		cond := condition.Deleting()
 		if len(waiting) > 0 {
 			cond.Message = fmt.Sprintf("Waiting for %s to delete. (At least %d resources are deleting.)", waiting[0].DisplayName(), len(waiting))
+		}
+		if len(handler.tombstoneWaits) > 0 {
+			cond.Message = handler.tombstoneWaits[0]
+			r.Recorder.Event(handler.app, event.Normal(velatypes.ReasonWaitingForTombstone, handler.tombstoneWaits[0]))
 		}
 		handler.app.Status.SetConditions(cond)
 		now := time.Now()
@@ -1248,7 +1331,7 @@ func isHealthy(services []common.ApplicationComponentStatus) bool {
 
 // SetupWithManager install to manager
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	b := ctrl.NewControllerManagedBy(mgr).
 		Watches(
 			&v1beta1.ResourceTracker{},
 			ctrlHandler.EnqueueRequestsFromMapFunc(findObjectForResourceTracker)).
@@ -1267,8 +1350,15 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			},
 		}).
 		Watches(&v1beta1.PolicyDefinition{}, r.policyDefinitionEventHandler()).
-		For(&v1beta1.Application{}).
-		Complete(r)
+		For(&v1beta1.Application{})
+	if r.componentKeysNamespace != "" {
+		keys, err := r.watchSigningKeys(mgr, r.componentKeysNamespace)
+		if err != nil {
+			return err
+		}
+		b = b.WatchesRawSource(keys)
+	}
+	return b.Complete(r)
 }
 
 // applicationUpdateNeedsReconcile filters Application update events: workflow status changes are
@@ -1348,6 +1438,19 @@ func Setup(mgr ctrl.Manager, args core.Args) error {
 		APIReader: mgr.GetAPIReader(),
 		options:   parseOptions(args),
 		ownWrites: &sync.Map{},
+	}
+	if args.ComponentKeysNamespace != "" {
+		reconciler.ComponentKeys = componentdispatch.HubKeys{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: args.ComponentKeysNamespace}
+		reconciler.componentKeysNamespace = args.ComponentKeysNamespace
+		clusterReader, err := multicluster.NewClusterReader(mgr.GetConfig(), mgr.GetRESTMapper())
+		if err != nil {
+			return err
+		}
+		reconciler.ClusterReader = clusterReader
+		reconciler.ComponentReconcilerTimeout = args.ComponentReconcilerTimeout
+		reconciler.ComponentAgentRenderInterval = args.ComponentAgentRenderInterval
+		reconciler.ComponentAgentHealthInterval = args.ComponentAgentHealthInterval
+		reconciler.agentWaits = &sync.Map{}
 	}
 	return reconciler.SetupWithManager(mgr)
 }

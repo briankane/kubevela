@@ -18,7 +18,11 @@ package resourcekeeper
 
 import (
 	"context"
+	"slices"
 
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
+	"github.com/pkg/errors"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,6 +30,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/oam"
+	"github.com/oam-dev/kubevela/pkg/resourcetracker"
 )
 
 // ContainsResources check if resources all exist
@@ -68,6 +73,62 @@ func (h *resourceKeeper) ComponentResources(component string) []v1beta1.ManagedR
 		}
 	}
 	return out
+}
+
+// TrackedComponentResources is every resource any of the owner's trackers records for a
+// component, outdated revisions' included: what a change of owner hands over from.
+func (h *resourceKeeper) TrackedComponentResources(component string) []v1beta1.ManagedResource {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []v1beta1.ManagedResource
+	for _, rt := range append([]*v1beta1.ResourceTracker{h._currentRT, h._rootRT}, h._historyRTs...) {
+		if rt == nil {
+			continue
+		}
+		for _, mr := range rt.Spec.ManagedResources {
+			if !mr.Deleted && mr.Component == component {
+				mr.Data = nil
+				out = append(out, mr)
+			}
+		}
+	}
+	return out
+}
+
+// ForgetTakenOver removes from every tracker the records of those of mrs whose resources
+// another owner now controls, and leaves the resources alone. A record of a resource this
+// owner still controls, or of one that is gone, is kept. It returns the records removed.
+func (h *resourceKeeper) ForgetTakenOver(ctx context.Context, mrs []v1beta1.ManagedResource) ([]v1beta1.ManagedResource, error) {
+	var taken []v1beta1.ManagedResource
+	for _, mr := range mrs {
+		obj := mr.ToUnstructured()
+		err := h.Client.Get(asSelf(pkgmulticluster.WithCluster(ctx, mr.Cluster)), mr.NamespacedName(), obj)
+		if kerrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, errors.Wrapf(err, "reading resource %s", mr.ResourceKey())
+		}
+		if !IsResourceManaged(obj, h.owner) {
+			taken = append(taken, mr)
+		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, rt := range append([]*v1beta1.ResourceTracker{h._currentRT, h._rootRT}, h._historyRTs...) {
+		if rt == nil {
+			continue
+		}
+		for _, mr := range taken {
+			if !slices.ContainsFunc(rt.Spec.ManagedResources, func(r v1beta1.ManagedResource) bool { return r.ResourceKey() == mr.ResourceKey() }) {
+				continue
+			}
+			if err := resourcetracker.DeletedManifestInResourceTracker(localCluster(ctx), h.Client, rt, mr.ToUnstructured(), true); err != nil {
+				return nil, errors.Wrapf(err, "forgetting resource %s in resourcetracker %s", mr.ResourceKey(), rt.Name)
+			}
+		}
+	}
+	return taken, nil
 }
 
 // MetadataRemoval names labels and annotations to take off resources: a key and the value it

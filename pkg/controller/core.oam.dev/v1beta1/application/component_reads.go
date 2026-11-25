@@ -453,7 +453,8 @@ func normaliseCluster(c string) string {
 }
 
 // componentReads is this reconcile's delivery, reading producers from what the
-// resource tracker records and resolving policies as the deploy step does.
+// resource tracker records, or for dispatched components from what vela-agent
+// observed, and resolving policies as the deploy step does.
 func (h *AppHandler) componentReads() *componentReadDelivery {
 	h.readDeliveryOnce.Do(func() {
 		// A component whose step finished in an earlier reconcile is placed but only
@@ -461,7 +462,7 @@ func (h *AppHandler) componentReads() *componentReadDelivery {
 		// Taken on first use, during the workflow, by which time a restart for a
 		// new revision has already cleared the stored status.
 		stored := append([]common.ApplicationComponentStatus(nil), h.app.Status.Services...)
-		controlPlaneOnly := controlPlaneOnlyTraits(h.currentAppRev)
+		delivery := h.delivery()
 		h.readDelivery = newComponentReadDelivery(sources.ExpressionsEnabledFor(h.app.GetAnnotations()), h.app.Namespace,
 			func() []common.ApplicationComponentStatus {
 				h.mu.Lock()
@@ -470,7 +471,7 @@ func (h *AppHandler) componentReads() *componentReadDelivery {
 				return mergePlacements(h.services, stored)
 			},
 			func(ctx context.Context, component, cluster, ns string, counts placementCounts) ([]*unstructured.Unstructured, []*unstructured.Unstructured, error) {
-				return h.componentObjects(ctx, component, cluster, ns, counts, controlPlaneOnly)
+				return delivery.placementObjects(ctx, component, cluster, ns, counts)
 			})
 		h.readDelivery.clusterRegistered = h.clusterRegistered()
 	})

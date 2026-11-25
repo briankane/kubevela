@@ -374,7 +374,7 @@ func TestPolicyContextHashes(t *testing.T) {
 			{PolicyType: "disabled", Enabled: false, AdditionalContext: map[string]interface{}{"x": "y"}},
 		}
 	}
-	eu, us := policyContextHashes(results("eu")), policyContextHashes(results("us"))
+	eu, us := policyContextHashes(results("eu"), false), policyContextHashes(results("us"), false)
 	if len(eu) != 2 || eu["region"] == "" || eu["tier"] == "" {
 		t.Fatalf("expected a hash per policy that sets context, by definition name, got %v", eu)
 	}
@@ -422,7 +422,7 @@ func TestPolicyContextHashesPerInstance(t *testing.T) {
 				AdditionalContext: map[string]interface{}{"region": "us"}},
 		}
 	}
-	before, after := policyContextHashes(results("eu")), policyContextHashes(results("ap"))
+	before, after := policyContextHashes(results("eu"), false), policyContextHashes(results("ap"), false)
 	if len(before) != 2 {
 		t.Fatalf("expected a hash per policy instance, got %v", before)
 	}
@@ -940,5 +940,26 @@ func TestCheckPolicyContextReads(t *testing.T) {
 				t.Fatalf("expected an error naming %s, got %v", tc.unknown, err)
 			}
 		})
+	}
+}
+
+// For components delivered as Components a policy's labels and annotations are hashed with its
+// context, so a label-only policy's change refreshes them; in-process its labels are not hashed.
+func TestPolicyContextHashesWithMetadata(t *testing.T) {
+	setRolloutDefaults(t, false, false, false)
+	app := appWithAnnotations(nil)
+	results := func(tag string) []RenderedPolicyResult {
+		return []RenderedPolicyResult{{PolicyType: "tagger", Enabled: true, Settings: policySettings{settingApplyDataChanges: ptrBool(true)},
+			Transforms: &PolicyOutput{Labels: map[string]string{"tag": tag}}}}
+	}
+	if got := policyContextHashes(results("v1"), false); len(got) != 0 {
+		t.Fatalf("in-process, a label-only policy has no context hash, got %v", got)
+	}
+	before, after := policyContextHashes(results("v1"), true), policyContextHashes(results("v2"), true)
+	if len(before) != 1 || before["tagger"] == after["tagger"] {
+		t.Fatalf("expected one hash that changes with the label, got %v and %v", before, after)
+	}
+	if !contextRefreshNeeded(app, before, after, results("v2"), nil) {
+		t.Fatal("a label change under apply-data-changes should refresh dispatched components")
 	}
 }

@@ -41,13 +41,18 @@ import (
 	"github.com/oam-dev/kubevela/pkg/resourcekeeper"
 )
 
-// New creates a ResourceKeeper for app, with the resource policies in its spec.
-func New(ctx context.Context, cli client.Client, app *v1beta1.Application) (resourcekeeper.ResourceKeeper, error) {
+// New creates a ResourceKeeper for app, with the resource policies in its spec. Each of with
+// adjusts the keeper's options after KeeperOptions has set them.
+func New(ctx context.Context, cli client.Client, app *v1beta1.Application, with ...func(*resourcekeeper.Options)) (resourcekeeper.ResourceKeeper, error) {
 	policies, err := Policies(app)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse resource policy")
 	}
-	return resourcekeeper.New(ctx, cli, NewAppResourceTracker(app), policies, KeeperOptions(cli, app))
+	opts := KeeperOptions(cli, app)
+	for _, w := range with {
+		w(&opts)
+	}
+	return resourcekeeper.New(ctx, cli, NewAppResourceTracker(app), policies, opts)
 }
 
 // KeeperOptions backs the keeper's switches with KubeVela's feature gates (read on each

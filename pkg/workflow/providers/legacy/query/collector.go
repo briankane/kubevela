@@ -31,6 +31,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/appkeeper"
+	"github.com/oam-dev/kubevela/pkg/componentdispatch"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/utils/types"
@@ -92,7 +93,7 @@ func (c *AppCollector) ListApplicationResources(ctx context.Context, app *v1beta
 	}
 	for _, rt := range append(historyRTs, rootRT, currentRT) {
 		if rt != nil {
-			for _, managedResource := range rt.Spec.ManagedResources {
+			for _, managedResource := range componentdispatch.ExpandComponents(ctx, c.k8sClient, rt.Spec.ManagedResources) {
 				if isResourceInTargetCluster(c.opt.Filter, managedResource.ClusterObjectReference) &&
 					isResourceInTargetComponent(c.opt.Filter, managedResource.Component) &&
 					(c.opt.WithTree || isResourceMatchKindAndVersion(c.opt.Filter, managedResource.Kind, managedResource.APIVersion)) {
@@ -214,7 +215,7 @@ func (c *AppCollector) FindResourceFromResourceTrackerSpec(ctx context.Context, 
 	existResources := make(map[common.ClusterObjectReference]bool, len(app.Spec.Components))
 	for _, rt := range append([]*v1beta1.ResourceTracker{rootRT, currentRT}, historyRTs...) {
 		if rt != nil {
-			for _, managedResource := range rt.Spec.ManagedResources {
+			for _, managedResource := range componentdispatch.ExpandComponents(ctx, c.k8sClient, rt.Spec.ManagedResources) {
 				if isResourceInTargetCluster(c.opt.Filter, managedResource.ClusterObjectReference) &&
 					isResourceInTargetComponent(c.opt.Filter, managedResource.Component) &&
 					isResourceMatchKindAndVersion(c.opt.Filter, managedResource.Kind, managedResource.APIVersion) {

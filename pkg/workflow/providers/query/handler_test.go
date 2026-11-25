@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	helmapi "github.com/oam-dev/kubevela/pkg/appfile/helm/flux2apis"
 	"github.com/oam-dev/kubevela/pkg/oam"
@@ -347,6 +348,65 @@ var _ = Describe("Test Query Provider", func() {
 			resList3 := (*res3).Returns.List
 			Expect(len(resList3)).Should(Equal(1))
 			Expect(resList3[0].Kind).Should((Equal("Service")))
+		})
+
+		It("lists what vela-agent applied for a dispatched component, not its Component or payload", func() {
+			app := v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{Name: "dispatched", Namespace: "default"},
+				Spec: v1beta1.ApplicationSpec{Components: []common.ApplicationComponent{{
+					Name: "web", Type: "webservice", Properties: util.Object2RawExtension(map[string]string{"image": "busybox"}),
+				}}},
+			}
+			Expect(k8sClient.Create(ctx, &app)).Should(Succeed())
+			comp := &v1alpha1.Component{
+				ObjectMeta: metav1.ObjectMeta{Name: "dispatched-web-local", Namespace: "default"},
+				Spec: v1alpha1.ComponentSpec{
+					Target:    v1alpha1.ComponentTarget{Cluster: "local"},
+					Revision:  1,
+					Payload:   &v1alpha1.ComponentPayload{SecretRef: v1alpha1.ComponentSecretReference{Name: "dispatched-web-local-payload"}, Format: "gzip+json/v1", SHA256: "0"},
+					Signature: v1alpha1.ComponentSignature{KeyID: "hub", Value: "unchecked here"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, comp)).Should(Succeed())
+			comp.Status.Resources = []v1alpha1.ComponentAppliedResource{
+				{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "default", Name: "web", Role: "output", Definition: v1alpha1.ComponentResourceDefinition{Kind: v1alpha1.DefinitionComponent, Type: "webservice"}},
+				{APIVersion: "v1", Kind: "Service", Namespace: "default", Name: "web", Role: "outputs.service", Definition: v1alpha1.ComponentResourceDefinition{Kind: v1alpha1.DefinitionTrait, Type: "expose"}},
+			}
+			Expect(k8sClient.Status().Update(ctx, comp)).Should(Succeed())
+			record := func(apiVersion, kind, name string) v1beta1.ManagedResource {
+				return v1beta1.ManagedResource{
+					ClusterObjectReference: common.ClusterObjectReference{ObjectReference: corev1.ObjectReference{
+						APIVersion: apiVersion, Kind: kind, Namespace: "default", Name: name,
+					}},
+					OAMObjectReference: common.OAMObjectReference{Component: "web"},
+				}
+			}
+			rt := &v1beta1.ResourceTracker{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "dispatched-v1-default",
+					Labels: map[string]string{oam.LabelAppName: app.Name, oam.LabelAppNamespace: app.Namespace},
+				},
+				Spec: v1beta1.ResourceTrackerSpec{
+					Type: v1beta1.ResourceTrackerTypeRoot,
+					ManagedResources: []v1beta1.ManagedResource{
+						record(v1alpha1.SchemeGroupVersion.String(), v1alpha1.ComponentKind, comp.Name),
+						record("v1", "Secret", "dispatched-web-local-payload"),
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, rt)).Should(Succeed())
+
+			res, err := ListAppliedResources(context.Background(), &ListParams{
+				Params:        ListVars{App: Option{Name: app.Name, Namespace: app.Namespace}},
+				RuntimeParams: oamprovidertypes.RuntimeParams{KubeClient: k8sClient},
+			})
+			Expect(err).Should(BeNil())
+			Expect(res.Returns.Error).Should(BeEmpty())
+			var listed []string
+			for _, r := range res.Returns.List {
+				listed = append(listed, fmt.Sprintf("%s %s/%s %s %s", r.Kind, r.Namespace, r.Name, r.Cluster, r.Trait))
+			}
+			Expect(listed).Should(ConsistOf("Deployment default/web local ", "Service default/web local expose"))
 		})
 	})
 

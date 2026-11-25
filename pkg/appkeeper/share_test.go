@@ -119,3 +119,38 @@ func TestAComponentAdoptsItsApplicationsResources(t *testing.T) {
 	r.Equal("Component", after.Labels[oam.LabelOwnerKind])
 	r.Equal("backend", after.Labels[oam.LabelOwnerName])
 }
+
+// An Application forgets what another owner has taken over, leaving it in place, and keeps
+// what it still controls.
+func TestAnApplicationForgetsWhatWasTakenOver(t *testing.T) {
+	r := require.New(t)
+	ctx := context.Background()
+	cli := fake.NewClientBuilder().WithScheme(common.Scheme).Build()
+	app, err := New(ctx, cli, shopApp(1))
+	r.NoError(err)
+	backend := func(name string) *unstructured.Unstructured {
+		cm := renderedConfigMap(name)
+		cm.SetLabels(map[string]string{oam.LabelAppName: "shop", oam.LabelAppNamespace: "default", oam.LabelAppComponent: "backend"})
+		return cm
+	}
+	r.NoError(app.Dispatch(ctx, []*unstructured.Unstructured{backend("settings"), backend("flags")}, nil))
+	component, err := resourcekeeper.New(ctx, cli, resourcetracker.NewBase(resourcetracker.Owner{Kind: "Component", Namespace: "default", Name: "backend", UID: "uid-backend", Generation: 1}),
+		resourcekeeper.Policies{AdoptFrom: "Application/default/shop"}, resourcekeeper.Options{})
+	r.NoError(err)
+	r.NoError(component.Dispatch(ctx, []*unstructured.Unstructured{backend("settings")}, nil))
+
+	forgotten, err := app.ForgetTakenOver(ctx, app.TrackedComponentResources("backend"))
+	r.NoError(err)
+	r.Len(forgotten, 1)
+	r.Equal("settings", forgotten[0].Name)
+
+	app, err = New(ctx, cli, shopApp(1))
+	r.NoError(err)
+	var names []string
+	for _, mr := range app.TrackedComponentResources("backend") {
+		names = append(names, mr.Name)
+	}
+	r.Equal([]string{"flags"}, names, "the record of what it still controls stays")
+	r.NoError(cli.Get(ctx, client.ObjectKey{Namespace: "default", Name: "settings"}, &corev1.ConfigMap{}), "the resource stays")
+	r.NoError(app.StateKeep(ctx), "and state keep no longer reaches for it")
+}

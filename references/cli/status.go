@@ -47,6 +47,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/types"
 	pkgappfile "github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/appkeeper"
+	"github.com/oam-dev/kubevela/pkg/componentdispatch"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/policy"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
@@ -587,6 +588,11 @@ func printApplicationTree(c common.Args, cmd *cobra.Command, appName string, app
 	_, currentRT, historyRTs, _, err := appkeeper.ListApplicationResourceTrackers(ctx, cli, app)
 	if err != nil {
 		return err
+	}
+	for _, rt := range append([]*v1beta1.ResourceTracker{currentRT}, historyRTs...) {
+		if rt != nil {
+			rt.Spec.ManagedResources = componentdispatch.ExpandComponents(ctx, cli, rt.Spec.ManagedResources)
+		}
 	}
 
 	clusterNameMapper, err := multicluster.NewClusterNameMapper(context.Background(), cli)

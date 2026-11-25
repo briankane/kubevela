@@ -43,6 +43,8 @@ type ResourceKeeper interface {
 	PolicyContextHash() (string, bool)
 	SetPolicyContextHash(ctx context.Context, hash string) error
 	ComponentResources(component string) []v1beta1.ManagedResource
+	TrackedComponentResources(component string) []v1beta1.ManagedResource
+	ForgetTakenOver(context.Context, []v1beta1.ManagedResource) ([]v1beta1.ManagedResource, error)
 	// PruneComponentResources deletes what a component no longer renders. See
 	// the implementation for why this is not part of Dispatch.
 	PruneComponentResources(context.Context, string, []*unstructured.Unstructured) ([]v1beta1.ManagedResource, error)

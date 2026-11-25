@@ -69,3 +69,64 @@ jobs:
         with:
           codecov-enable: true
           codecov-token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Component dispatch on its own pair of clusters: the hub with the gate, and the worker running the
+  # same chart as vela-agent alone, which the multicluster job's hub (authentication, sharding) is not.
+  e2e-component-dispatch-tests:
+    runs-on: ubuntu-22.04
+    needs: [ detect-noop ]
+    if: needs.detect-noop.outputs.noop != 'true'
+    strategy:
+      matrix:
+        k8s-version: ["v1.37.0"]
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.k8s-version }}-component-dispatch
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Setup worker cluster kinD
+        uses: ./.github/actions/setup-kind-cluster
+        with:
+          name: worker
+          k8s-version: ${{ matrix.k8s-version }}
+
+      - name: Setup master cluster kinD
+        uses: ./.github/actions/setup-kind-cluster
+        with:
+          k8s-version: ${{ matrix.k8s-version }}
+
+      - name: Configure environment setup
+        uses: ./.github/actions/env-setup
+        with:
+          install-ginkgo: 'true'
+          install-setup-envtest: 'false'
+          install-kustomize: 'false'
+
+      - name: Load the e2e image into the worker
+        run: |
+          mkdir -p $HOME/tmp/
+          TMPDIR=$HOME/tmp/ make image-load KIND_CLUSTER_NAME=worker
+
+      - name: Install the hub and vela-agent on the worker
+        run: |
+          make vela-cli
+          make e2e-setup-component-dispatch
+
+      - name: Run component dispatch e2e tests
+        run: |
+          export PATH=$(pwd)/bin:$PATH
+          make e2e-component-dispatch-test
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          for ctx in kind-kind kind-worker; do
+            echo "=== $ctx ==="
+            kubectl --context $ctx get pods -A || true
+            kubectl --context $ctx logs -n vela-system -l app.kubernetes.io/name=vela-core --tail=200 || true
+            kubectl --context $ctx get components.core.oam.dev -A -o wide || true
+            kubectl --context $ctx get events -A --sort-by='.lastTimestamp' --field-selector type!=Normal || true
+          done

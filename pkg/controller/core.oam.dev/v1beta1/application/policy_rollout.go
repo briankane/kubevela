@@ -329,14 +329,26 @@ func contextHashKey(result RenderedPolicyResult) string {
 }
 
 // policyContextHashes hashes each enabled policy's own context output, by contextHashKey.
-// Policies that set no context are left out.
-func policyContextHashes(results []RenderedPolicyResult) map[string]string {
+// Policies that set no context are left out. withMetadata adds each policy's labels and
+// annotations, for components delivered as Components: a resource vela-agent applied changes
+// only through the next signed revision, so a metadata change re-dispatches as context does.
+func policyContextHashes(results []RenderedPolicyResult, withMetadata bool) map[string]string {
 	hashes := map[string]string{}
 	for _, result := range results {
-		if !result.Enabled || len(result.AdditionalContext) == 0 {
+		if !result.Enabled {
 			continue
 		}
-		hash, err := apply.ComputeSpecHash(result.AdditionalContext)
+		var data interface{} = result.AdditionalContext
+		if withMetadata {
+			output := appliedOutputOf(result)
+			if len(output.Context) == 0 && len(output.Labels) == 0 && len(output.Annotations) == 0 {
+				continue
+			}
+			data = output
+		} else if len(result.AdditionalContext) == 0 {
+			continue
+		}
+		hash, err := apply.ComputeSpecHash(data)
 		if err != nil {
 			continue
 		}

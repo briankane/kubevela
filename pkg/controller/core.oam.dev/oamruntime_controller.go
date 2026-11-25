@@ -16,6 +16,8 @@ limitations under the License.
 
 package core_oam_dev
 
+import "time"
+
 // Args args used by controller
 type Args struct {
 
@@ -49,4 +51,20 @@ type Args struct {
 	// the first GetWebhookServer call adds the server to the manager, and without the
 	// serving certificates the manager fails to start.
 	UseWebhook bool
+
+	// ComponentKeysNamespace holds the hub's component signing keys. Set when Component
+	// dispatch is on; the Application controller signs what it dispatches with them.
+	ComponentKeysNamespace string
+
+	// ComponentReconcilerTimeout is how long a dispatched Component may wait for vela-agent
+	// to apply its revision before its Application reports that nothing is applying it.
+	ComponentReconcilerTimeout time.Duration
+
+	// ComponentAgentRenderInterval is the least time between renders of an Application that
+	// waits on vela-agent to report a dispatched Component healthy.
+	ComponentAgentRenderInterval time.Duration
+
+	// ComponentAgentHealthInterval is how often such an Application reads its Components
+	// between renders.
+	ComponentAgentHealthInterval time.Duration
 }

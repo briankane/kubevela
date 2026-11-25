@@ -18,7 +18,10 @@ package resourcekeeper
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"k8s.io/apiserver/pkg/endpoints/request"
 
@@ -54,7 +57,16 @@ type Options struct {
 	// garbage collection deletes dependents first. Default: none, so dependency order is
 	// plain order (KubeVela: from the Application's dependsOn, inputs and outputs).
 	Dependents func(component string) []string
+	// BeforeDelete runs before the keeper deletes a resource, and holds the delete until it
+	// reports ready: garbage collection leaves the resource for a later pass, and Delete
+	// returns ErrDeletePending. It is not run when a resource is handed to another sharer or
+	// released rather than deleted. Default: delete at once (KubeVela: Components get a
+	// signed tombstone first).
+	BeforeDelete func(ctx context.Context, obj *unstructured.Unstructured) (ready bool, err error)
 }
+
+// ErrDeletePending is returned by Delete when Options.BeforeDelete holds a delete.
+var ErrDeletePending = errors.New("delete is waiting on BeforeDelete")
 
 // CollectState is what the keeper knows at the end of a garbage-collection pass, for
 // Options.Collect.

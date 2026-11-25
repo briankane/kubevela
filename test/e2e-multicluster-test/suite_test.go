@@ -18,6 +18,7 @@ package e2e_multicluster_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -42,10 +43,16 @@ import (
 	"github.com/oam-dev/kubevela/references/cli"
 )
 
-const (
-	WorkerClusterName           = "cluster-worker"
-	WorkerClusterKubeConfigPath = "/tmp/worker.kubeconfig"
-)
+const WorkerClusterName = "cluster-worker"
+
+// WorkerClusterKubeConfigPath is the kubeconfig the worker cluster joins with:
+// E2E_WORKER_KUBECONFIG, else /tmp/worker.kubeconfig.
+var WorkerClusterKubeConfigPath = func() string {
+	if path := os.Getenv("E2E_WORKER_KUBECONFIG"); path != "" {
+		return path
+	}
+	return "/tmp/worker.kubeconfig"
+}()
 
 var (
 	k8sClient client.Client

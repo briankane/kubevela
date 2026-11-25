@@ -463,7 +463,52 @@ e2e-addon-test:
 
 .PHONY: e2e-multicluster-test
 e2e-multicluster-test:
-	cd ./test/e2e-multicluster-test && go test -timeout=30m -v -ginkgo.v -ginkgo.trace -coverpkg=./... -coverprofile=/tmp/e2e_multicluster_test.out
+	cd ./test/e2e-multicluster-test && go test -timeout=30m -v -ginkgo.v -ginkgo.trace -ginkgo.label-filter='!component-dispatch' -coverpkg=./... -coverprofile=/tmp/e2e_multicluster_test.out
+	@$(OK) tests pass
+
+# The hub and the worker for e2e-component-dispatch-test: the hub with the EnableComponentDispatch gate,
+# the worker with the same chart as vela-agent alone. The worker allows the identity the hub joins it
+# with to write Components; on kind that is the admin kubeconfig's user.
+E2E_HUB_CONTEXT ?= kind-kind
+E2E_WORKER_CONTEXT ?= kind-worker
+E2E_WORKER_PRODUCER ?= kubernetes-admin
+E2E_IMAGE_REPOSITORY ?= vela-core-test
+E2E_IMAGE_TAG ?= $(GIT_COMMIT)
+
+.PHONY: e2e-setup-component-dispatch e2e-setup-component-dispatch-install
+e2e-setup-component-dispatch: e2e-setup-core-pre-hook e2e-setup-component-dispatch-install
+
+# Installs the chart without patching it: e2e-setup-core-pre-hook adds the arguments the e2e image's
+# coverage binary needs, which a plain vela-core image refuses.
+e2e-setup-component-dispatch-install:
+	helm upgrade --install kubevela ./charts/vela-core \
+		--kube-context $(E2E_HUB_CONTEXT) \
+		--create-namespace --namespace vela-system \
+		--set image.repository=$(E2E_IMAGE_REPOSITORY) \
+		--set image.tag=$(E2E_IMAGE_TAG) \
+		--set image.pullPolicy=IfNotPresent \
+		--set applicationRevisionLimit=5 \
+		--set multicluster.clusterGateway.image.repository=ghcr.io/oam-dev/cluster-gateway \
+		--set featureGates.enableComponentDispatch=true \
+		--set featureGates.enableCelExpressions=true \
+		--wait --timeout 5m
+	helm upgrade --install kubevela ./charts/vela-core \
+		--kube-context $(E2E_WORKER_CONTEXT) \
+		--create-namespace --namespace vela-system \
+		--set image.repository=$(E2E_IMAGE_REPOSITORY) \
+		--set image.tag=$(E2E_IMAGE_TAG) \
+		--set image.pullPolicy=IfNotPresent \
+		--set featureGates.enableComponentDispatch=true \
+		--set agent.only=true \
+		--set agent.clusterName=cluster-worker \
+		--set 'agent.producers={$(E2E_WORKER_PRODUCER)}' \
+		--wait --timeout 5m
+
+# Needs e2e-setup-component-dispatch, or the same by hand: the gate on the hub and vela-agent on the
+# worker (--agent-only --agent-cluster-name=cluster-worker).
+.PHONY: e2e-component-dispatch-test
+e2e-component-dispatch-test:
+	cd ./test/e2e-multicluster-test && go test -timeout=30m -v -ginkgo.v -ginkgo.trace -ginkgo.label-filter='component-dispatch'
 	@$(OK) tests pass
 
 .PHONY: e2e-cleanup

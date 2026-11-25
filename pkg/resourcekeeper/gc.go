@@ -390,7 +390,10 @@ func (h *gcHandler) deleteManagedResource(ctx context.Context, mr v1beta1.Manage
 	if !entry.exists {
 		return nil
 	}
-	return DeleteManagedResource(ctx, h.Client, mr, entry.obj, h.owner, h.policies.GarbageCollect)
+	// A delete held by BeforeDelete leaves the resource, so its tracker keeps its finalizer
+	// and garbage collection reports unfinished until a later pass deletes it.
+	_, err := letGo(ctx, h.Client, mr, entry.obj, h.owner, h.policies.GarbageCollect, h.opts.BeforeDelete)
+	return err
 }
 
 // DeleteManagedResource lets owner go of a resource it manages: if others share it, owner
@@ -398,14 +401,22 @@ func (h *gcHandler) deleteManagedResource(ctx context.Context, mr v1beta1.Manage
 // an orphaning owner, or the garbage-collect policy), owner's marks are removed; otherwise it
 // is deleted. garbageCollectPolicy may be nil.
 func DeleteManagedResource(ctx context.Context, cli client.Client, mr v1beta1.ManagedResource, obj *unstructured.Unstructured, owner resourcetracker.Tracked, garbageCollectPolicy *v1alpha1.GarbageCollectPolicySpec) error {
+	_, err := letGo(ctx, cli, mr, obj, owner, garbageCollectPolicy, nil)
+	return err
+}
+
+// letGo is DeleteManagedResource with a BeforeDelete hook, run only when the resource is to be
+// deleted. pending reports that the hook held the delete.
+func letGo(ctx context.Context, cli client.Client, mr v1beta1.ManagedResource, obj *unstructured.Unstructured, owner resourcetracker.Tracked,
+	garbageCollectPolicy *v1alpha1.GarbageCollectPolicySpec, beforeDelete func(context.Context, *unstructured.Unstructured) (bool, error)) (pending bool, err error) {
 	_ctx := pkgmulticluster.WithCluster(ctx, mr.Cluster)
 	if annotations := obj.GetAnnotations(); annotations != nil && annotations[oam.AnnotationAppSharedBy] != "" {
 		sharedBy := apply.RemoveSharer(annotations[oam.AnnotationAppSharedBy], owner.Key())
 		if sharedBy != "" {
 			if err := UpdateSharedManagedResourceOwner(_ctx, cli, obj, sharedBy); err != nil {
-				return errors.Wrapf(err, "failed to remove sharer from resource %s", mr.ResourceKey())
+				return false, errors.Wrapf(err, "failed to remove sharer from resource %s", mr.ResourceKey())
 			}
-			return nil
+			return false, nil
 		}
 		kubeutil.RemoveAnnotations(obj, []string{oam.AnnotationAppSharedBy})
 	}
@@ -418,13 +429,22 @@ func DeleteManagedResource(ctx context.Context, cli client.Client, mr v1beta1.Ma
 
 	if mr.SkipGC || owner.Orphaning() || isOrphan {
 		owner.Release(obj)
-		return errors.Wrapf(cli.Update(_ctx, obj), "skipping deletion for resource")
+		return false, errors.Wrapf(cli.Update(_ctx, obj), "skipping deletion for resource")
 	}
 
-	if err := cli.Delete(_ctx, obj, opts...); err != nil && !kerrors.IsNotFound(err) {
-		return errors.Wrapf(err, "failed to delete resource %s", mr.ResourceKey())
+	if beforeDelete != nil {
+		ready, err := beforeDelete(_ctx, obj)
+		if err != nil {
+			return false, errors.Wrapf(err, "before deleting resource %s", mr.ResourceKey())
+		}
+		if !ready {
+			return true, nil
+		}
 	}
-	return nil
+	if err := cli.Delete(_ctx, obj, opts...); err != nil && !kerrors.IsNotFound(err) {
+		return false, errors.Wrapf(err, "failed to delete resource %s", mr.ResourceKey())
+	}
+	return false, nil
 }
 
 func (h *gcHandler) Finalize(ctx context.Context) error {

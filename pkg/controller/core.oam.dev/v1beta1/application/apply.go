@@ -23,7 +23,10 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,10 +43,12 @@ import (
 	terraforv1beta2 "github.com/oam-dev/terraform-controller/api/v1beta2"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/appkeeper"
+	"github.com/oam-dev/kubevela/pkg/componentdispatch"
 	"github.com/oam-dev/kubevela/pkg/componenthealth"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
 	"github.com/oam-dev/kubevela/pkg/features"
@@ -61,6 +66,31 @@ type AppHandler struct {
 	client.Client
 	// apiReader reads past the cache: the Reconciler's, nil when it has none.
 	apiReader client.Reader
+	// clusterReader reads past the cache from the cluster a context names: the
+	// Reconciler's, nil when it has none.
+	clusterReader client.Reader
+	// componentReconcilerTimeout and recorder report dispatched Components vela-agent has
+	// not applied in time: the Reconciler's.
+	componentReconcilerTimeout time.Duration
+	recorder                   event.Recorder
+	// agentRenderInterval is the least time between renders while vela-agent has yet to report
+	// a Component healthy: the Reconciler's.
+	agentRenderInterval time.Duration
+	// waitingOnAgent is set when this reconcile found a dispatched Component not yet healthy,
+	// and waitedOn holds those Components as last read or written.
+	waitingOnAgent atomic.Bool
+	waitedOn       []waitedComponent
+	// componentKeys signs dispatched Components and opens sealed observations: the
+	// Reconciler's, nil when dispatch is off.
+	componentKeys ComponentKeys
+	keyRingMu     sync.Mutex
+	ring          *componentdispatch.KeyRing
+	// live holds this reconcile's reads and writes of dispatched Components, by cluster/namespace/name.
+	liveMu sync.Mutex
+	live   map[string]*v1alpha1.Component
+	// tombstoneWaits names, in the order met, the Components whose delete waits on vela-agent
+	// collecting their resources.
+	tombstoneWaits []string
 
 	app            *v1beta1.Application
 	currentAppRev  *v1beta1.ApplicationRevision
@@ -145,23 +175,29 @@ func NewAppHandler(ctx context.Context, r *Reconciler, app *v1beta1.Application)
 		}))
 		defer subCtx.Commit("finish create appHandler")
 	}
-	resourceHandler, err := appkeeper.New(ctx, r.Client, app)
+	h := &AppHandler{
+		Client:                      r.Client,
+		apiReader:                   r.APIReader,
+		clusterReader:               r.ClusterReader,
+		componentReconcilerTimeout:  r.ComponentReconcilerTimeout,
+		agentRenderInterval:         r.ComponentAgentRenderInterval,
+		recorder:                    r.Recorder,
+		componentKeys:               r.ComponentKeys,
+		app:                         app,
+		applicationScopedPolicyDefs: make(map[string]*v1beta1.PolicyDefinition),
+	}
+	resourceHandler, err := appkeeper.New(ctx, r.Client, app, h.keeperOptions)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create resourceKeeper")
 	}
-	return &AppHandler{
-		Client:                      r.Client,
-		apiReader:                   r.APIReader,
-		app:                         app,
-		resourceKeeper:              resourceHandler,
-		applicationScopedPolicyDefs: make(map[string]*v1beta1.PolicyDefinition),
-	}, nil
+	h.resourceKeeper = resourceHandler
+	return h, nil
 }
 
 // Dispatch apply manifests into k8s.
 func (h *AppHandler) Dispatch(ctx context.Context, _ client.Client, cluster string, owner string, manifests ...*unstructured.Unstructured) error {
 	manifests = multicluster.ResourcesWithClusterName(cluster, manifests...)
-	if err := h.resourceKeeper.Dispatch(ctx, manifests, nil); err != nil {
+	if err := h.resourceKeeper.Dispatch(ctx, manifests, adoptFromContext(ctx)); err != nil {
 		return err
 	}
 	for _, mf := range manifests {
@@ -1072,6 +1108,9 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 		if err != nil {
 			return errors.WithMessagef(err, "failed to generate manifest for PostDispatch traits of component %s", comp.Name)
 		}
+		if err := af.SetOAMContract(manifest); err != nil {
+			return errors.WithMessagef(err, "failed to set the OAM contract on PostDispatch traits of component %s", comp.Name)
+		}
 
 		// Render traits
 		_, readyTraits, err := renderComponentsAndTraits(manifest, h.currentAppRev, svc.Cluster, svc.Namespace)
@@ -1087,8 +1126,8 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 			})
 		}
 
-		// Dispatch the traits
-		dispatchCtx := multicluster.ContextWithClusterName(ctx.GetContext(), svc.Cluster)
+		// Dispatch the traits, adopting any a Component of this component still controls.
+		dispatchCtx := contextWithAdoptFrom(multicluster.ContextWithClusterName(ctx.GetContext(), svc.Cluster), h.dispatchedFrom(comp.Name))
 		if err := h.Dispatch(dispatchCtx, h.Client, svc.Cluster, common.WorkflowResourceCreator, readyTraits...); err != nil {
 			return errors.WithMessagef(err, "failed to dispatch PostDispatch traits for component %s", comp.Name)
 		}

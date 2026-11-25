@@ -17,6 +17,8 @@ limitations under the License.
 package config
 
 import (
+	"time"
+
 	"github.com/spf13/pflag"
 
 	oamcontroller "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
@@ -42,6 +44,9 @@ func NewControllerConfig() *ControllerConfig {
 			ConcurrentReconciles:                         4,
 			IgnoreAppWithoutControllerRequirement:        false,
 			IgnoreDefinitionWithoutControllerRequirement: false,
+			ComponentReconcilerTimeout:                   2 * time.Minute,
+			ComponentAgentRenderInterval:                 5 * time.Second,
+			ComponentAgentHealthInterval:                 time.Second,
 		},
 	}
 }
@@ -64,4 +69,10 @@ func (c *ControllerConfig) AddFlags(fs *pflag.FlagSet) {
 		"If true, application controller will not process the app without 'app.oam.dev/controller-version-require' annotation")
 	fs.BoolVar(&c.IgnoreDefinitionWithoutControllerRequirement, "ignore-definition-without-controller-version", c.IgnoreDefinitionWithoutControllerRequirement,
 		"If true, trait/component/workflowstep definition controller will not process the definition without 'definition.oam.dev/controller-version-require' annotation")
+	fs.DurationVar(&c.ComponentReconcilerTimeout, "component-reconciler-timeout", c.ComponentReconcilerTimeout,
+		"How long a dispatched Component may wait for vela-agent to apply its revision before its Application reports, by cluster, that nothing is applying it. The Application keeps waiting.")
+	fs.DurationVar(&c.ComponentAgentRenderInterval, "component-agent-render-interval", c.ComponentAgentRenderInterval,
+		"The least time between renders of an Application that waits on vela-agent to report a dispatched Component healthy. The workflow's backoff applies above it.")
+	fs.DurationVar(&c.ComponentAgentHealthInterval, "component-agent-health-interval", c.ComponentAgentHealthInterval,
+		"How often an Application that waits on vela-agent reads its dispatched Components between renders, rendering again as soon as one changes.")
 }

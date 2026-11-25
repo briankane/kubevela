@@ -756,6 +756,9 @@ func prepareManager(ctx context.Context, manager ctrl.Manager, coreOptions *opti
 	}
 
 	controllerNamespace := resolveControllerNamespace(coreOptions.Server.LeaderElectionNamespace)
+	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableComponentDispatch) {
+		coreOptions.Controller.Args.ComponentKeysNamespace = controllerNamespace
+	}
 	httpguard.SetEnhancer(controllerHTTPPolicy)
 	// Use APIReader: GetClient() is cache-backed and is not ready before mgr.Start.
 	if err := httpguard.LoadConfigMaps(ctx, manager.GetAPIReader(), coreOptions.Workflow.HTTPDenyConfigTemplateName, controllerNamespace); err != nil {

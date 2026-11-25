@@ -253,6 +253,9 @@ func (h *AppHandler) gatherRevisionSpec(af *appfile.Appfile) (*v1beta1.Applicati
 	appRev.Spec.Workflow = af.ExternalWorkflow
 
 	appRevisionHash, err := ComputeAppRevisionHash(appRev)
+	if err == nil {
+		appRevisionHash, err = withDispatchMode(appRevisionHash, dispatchMode(h.app))
+	}
 	if err != nil {
 		klog.ErrorS(err, "Failed to compute hash of appRevision for application", "application", klog.KObj(h.app))
 		return appRev, "", errors.Wrapf(err, "failed to compute app revision hash")
@@ -390,6 +393,9 @@ func (h *AppHandler) currentAppRevIsNew(ctx context.Context) (bool, bool, error)
 	if h.latestAppRev != nil && oam.GetPublishVersion(h.app) != oam.GetPublishVersion(h.latestAppRev) {
 		isLatestRev = false
 	}
+	if h.latestAppRev != nil && dispatchMode(h.app) != dispatchMode(h.latestAppRev) {
+		isLatestRev = false
+	}
 	if h.policyUpdatesAdopted {
 		isLatestRev = false
 	}
@@ -420,8 +426,9 @@ func (h *AppHandler) currentAppRevIsNew(ctx context.Context) (bool, bool, error)
 		hashMatches := rev.GetLabels()[oam.LabelAppRevisionHash] == h.currentRevHash
 		deepEqual := DeepEqualRevision(rev, h.currentAppRev)
 		publishVersionMatches := oam.GetPublishVersion(rev) == oam.GetPublishVersion(h.app)
+		dispatchMatches := dispatchMode(rev) == dispatchMode(h.app)
 
-		if hashMatches && deepEqual && publishVersionMatches {
+		if hashMatches && deepEqual && publishVersionMatches && dispatchMatches {
 			// we set currentAppRev to existRevision
 			h.currentAppRev = rev
 			return true, false, nil
@@ -711,4 +718,20 @@ func withoutPinnedSources(data map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+// dispatchMode is how an Application's components reach their clusters, as its
+// app.oam.dev/dispatch annotation says; empty for in-process. A change of mode is a new
+// revision, so the workflow runs again and each mode's records sit in their own tracker.
+func dispatchMode(obj metav1.Object) string {
+	return obj.GetAnnotations()[oam.AnnotationDispatch]
+}
+
+// withDispatchMode folds a dispatch mode into a revision hash. An in-process Application's
+// hash is left as it is.
+func withDispatchMode(hash, mode string) (string, error) {
+	if mode == "" {
+		return hash, nil
+	}
+	return utils.ComputeSpecHash(struct{ Hash, Dispatch string }{hash, mode})
 }

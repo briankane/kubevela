@@ -51,6 +51,7 @@ import (
 
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
+	corev1alpha1 "github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/appfile"
 	common2 "github.com/oam-dev/kubevela/pkg/controller/common"
@@ -115,6 +116,8 @@ var _ = BeforeSuite(func() {
 	Expect(cfg).ToNot(BeNil())
 
 	err = v1beta1.SchemeBuilder.AddToScheme(testScheme)
+	Expect(err).NotTo(HaveOccurred())
+	err = corev1alpha1.SchemeBuilder.AddToScheme(testScheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = scheme.AddToScheme(testScheme)

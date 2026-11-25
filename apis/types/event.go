@@ -24,6 +24,9 @@ const (
 	ReasonRevisoned       = "Revisioned"
 	ReasonApplied         = "Applied"
 	ReasonDeployed        = "Deployed"
+	// ReasonWaitingForTombstone: a dispatched Component's delete waits on vela-agent
+	// collecting its resources.
+	ReasonWaitingForTombstone = "WaitingForTombstone"
 
 	ReasonFailedParse     = "FailedParse"
 	ReasonFailedRevision  = "FailedRevision"

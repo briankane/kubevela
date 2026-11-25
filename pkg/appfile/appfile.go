@@ -22,8 +22,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"maps"
-	"reflect"
 	"strings"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -97,6 +95,8 @@ type Component struct {
 	CapabilityCategory types.CapabilityCategory
 	Params             map[string]interface{}
 	Traits             []*Trait
+	// PostDispatchTraits are the PostDispatch traits held back from Traits for this render.
+	PostDispatchTraits []*Trait
 	FullTemplate       *Template
 	Ctx                process.Context
 	Patch              *cue.Value
@@ -584,70 +584,13 @@ func splitKeys(list string) []string {
 	return keys
 }
 
-// workload and trait both have these annotations
-//
-// The annotation map is read once and written once. util.AddAnnotations and
-// util.RemoveAnnotations would each fetch and set it again, and GetAnnotations
-// deep-copies on every call, so doing the merge and the filtering in one pass here
-// halves the allocations per rendered object.
+// filterAndSetAnnotations passes the Application's annotations to obj, less the filtered keys.
 func (af *Appfile) filterAndSetAnnotations(obj *unstructured.Unstructured) {
-	ann := obj.GetAnnotations()
-	if ann == nil && af.AppAnnotations == nil {
-		// Nothing to merge and nothing to filter. Matches util.AddAnnotations, whose
-		// MergeMapOverrideWithDst returns nil when both sides are nil, so the
-		// metadata.annotations field stays absent rather than becoming an empty map.
-		return
-	}
-	if ann == nil {
-		ann = map[string]string{}
-	}
-
-	// The "-"/"skip" value of app.oam.dev/last-applied-configuration is a statement
-	// an object makes about itself (see pkg/utils/apply), so it must not be
-	// inherited. The addon-as-component flow sets it on the Application it renders
-	// because that single object can exceed Kubernetes' annotation size limit;
-	// letting it pass down would disable three-way merge for every resource inside
-	// the addon and break `vela status --tree --format raw`, which feeds this value
-	// to a JSON parser (pkg/resourcetracker/tree.go).
-	//
-	// Read before the merge below, because the Application's value would otherwise
-	// overwrite the component's own.
-	own := ann[oam.AnnotationLastAppliedConfig]
-
-	// pass application's all annotations
-	maps.Copy(ann, af.AppAnnotations)
-	for _, k := range FilteredAnnotationKeys(af.AppAnnotations) {
-		delete(ann, k)
-	}
-
-	switch {
-	case own != "":
-		// The component set this key on its own output. Whatever it says, it is a
-		// statement about the component's own resource, so it wins over the copy
-		// inherited from the Application above -- including a recorded
-		// configuration, not just the "-"/"skip" opt-out.
-		ann[oam.AnnotationLastAppliedConfig] = own
-	case oam.IsSkipLastAppliedConfig(ann[oam.AnnotationLastAppliedConfig]):
-		// inherited from the parent Application; drop it
-		delete(ann, oam.AnnotationLastAppliedConfig)
-	}
-
-	obj.SetAnnotations(ann)
+	util.InheritAnnotations(obj, af.AppAnnotations, FilteredAnnotationKeys(af.AppAnnotations))
 }
 
 func (af *Appfile) setNamespace(obj *unstructured.Unstructured) {
-
-	// we should not set namespace for namespace resources
-	gvk := obj.GetObjectKind().GroupVersionKind()
-	if gvk == corev1.SchemeGroupVersion.WithKind(reflect.TypeOf(corev1.Namespace{}).Name()) {
-		return
-	}
-
-	// only set app's namespace when namespace is unspecified
-	// it's by design to set arbitrary namespace in render phase
-	if len(obj.GetNamespace()) == 0 {
-		obj.SetNamespace(af.Namespace)
-	}
+	util.SetDefaultNamespace(obj, af.Namespace)
 }
 
 func (af *Appfile) assembleWorkload(comp *unstructured.Unstructured, compName string, labels map[string]string) {
@@ -680,14 +623,7 @@ func (af *Appfile) setWorkloadLabels(comp *unstructured.Unstructured, commonLabe
 }
 
 func (af *Appfile) assembleTrait(trait *unstructured.Unstructured, compName string, labels map[string]string) {
-	if len(trait.GetName()) == 0 {
-		traitType := trait.GetLabels()[oam.TraitTypeLabel]
-		cpTrait := trait.DeepCopy()
-		// remove labels that should not be calculated into hash
-		util.RemoveLabels(cpTrait, []string{oam.LabelAppRevision})
-		traitName := util.GenTraitName(compName, cpTrait, traitType)
-		trait.SetName(traitName)
-	}
+	util.NameTraitOutput(trait, compName)
 	af.setTraitLabels(trait, labels)
 	af.filterAndSetAnnotations(trait)
 	af.setNamespace(trait)
@@ -882,19 +818,9 @@ func evalWorkloadWithContext(pCtx process.Context, comp *Component, ns, appName 
 	compManifest.ComponentOutput = workload
 
 	_, assists := pCtx.Output()
-	compManifest.ComponentOutputsAndTraits = make([]*unstructured.Unstructured, len(assists))
-	commonLabels := definition.GetCommonLabels(definition.GetBaseContextLabels(pCtx))
-	for i, assist := range assists {
-		tr, err := assist.Ins.Unstructured()
-		if err != nil {
-			return nil, errors.Wrapf(err, "evaluate trait=%s template for component=%s app=%s", assist.Name, comp.Name, appName)
-		}
-		labels := util.MergeMapOverrideWithDst(commonLabels, map[string]string{oam.TraitTypeLabel: assist.Type})
-		if assist.Name != "" {
-			labels[oam.TraitResource] = assist.Name
-		}
-		util.AddLabels(tr, labels)
-		compManifest.ComponentOutputsAndTraits[i] = tr
+	compManifest.ComponentOutputsAndTraits, err = definition.TraitOutputs(pCtx, assists)
+	if err != nil {
+		return nil, errors.Wrapf(err, "evaluate trait templates for component=%s app=%s", comp.Name, appName)
 	}
 	return compManifest, nil
 }

@@ -162,7 +162,7 @@ func (h *AppHandler) ApplyApplicationScopeTransforms(ctx monitorContext.Context,
 	renderedSpec := extractRenderedSpec(renderedResults)
 	renderedMetadata := extractRenderedMetadata(renderedResults)
 	h.dataLabels, h.dataAnnotations = dataChangeMetadata(app, renderedResults)
-	h.contextHashes = policyContextHashes(renderedResults)
+	h.contextHashes = policyContextHashes(renderedResults, h.delivery().policyContextCoversMetadata())
 	h.policyResults = renderedResults
 
 	applyMetadataToApp(app, renderedMetadata)

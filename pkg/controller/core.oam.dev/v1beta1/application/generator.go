@@ -18,6 +18,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -321,22 +322,35 @@ func (h *AppHandler) checkComponentHealth(appParser *appfile.Parser, af *appfile
 			return false, nil, nil, nil, err
 		}
 		checkSkipApplyWorkload(wl)
-
-		dispatchResources := readyTraits
-		if !wl.SkipApplyWorkload {
-			dispatchResources = append([]*unstructured.Unstructured{readyWorkload}, readyTraits...)
-		}
-		if !h.resourceKeeper.ContainsResources(dispatchResources) {
-			return false, nil, nil, nil, err
-		}
-
-		status, output, outputs, isHealth, err := h.collectHealthStatus(auth.ContextWithUserInfo(ctx, h.app), wl, overrideNamespace, false)
-		if err != nil {
-			return false, nil, nil, nil, err
-		}
-
-		return isHealth, status, output, outputs, err
+		return h.delivery().health(ctx, renderedPlacement{af: af, wl: wl, manifest: manifest, workload: readyWorkload, traits: readyTraits,
+			cluster: clusterName, namespace: overrideNamespace, replicaKey: comp.ReplicaKey})
 	}
+}
+
+func (d inProcessDelivery) health(ctx context.Context, p renderedPlacement) (bool, *common.ApplicationComponentStatus, *unstructured.Unstructured, []*unstructured.Unstructured, error) {
+	h := d.h
+	dispatchResources := p.traits
+	if !p.wl.SkipApplyWorkload {
+		dispatchResources = append([]*unstructured.Unstructured{p.workload}, p.traits...)
+	}
+	if !h.resourceKeeper.ContainsResources(dispatchResources) {
+		return false, nil, nil, nil, nil
+	}
+	status, output, outputs, isHealth, err := h.collectHealthStatus(auth.ContextWithUserInfo(ctx, h.app), p.wl, p.namespace, false)
+	if err != nil {
+		return false, nil, nil, nil, err
+	}
+	return isHealth, status, output, outputs, nil
+}
+
+func (d dispatchedDelivery) health(ctx context.Context, p renderedPlacement) (bool, *common.ApplicationComponentStatus, *unstructured.Unstructured, []*unstructured.Unstructured, error) {
+	h := d.h
+	dispatched, err := h.componentDispatched(p.af, p.wl, p.workload, p.traits, p.af.Components, p.cluster, p.namespace, p.replicaKey)
+	if err != nil || !dispatched {
+		return false, nil, nil, nil, err
+	}
+	isHealth, status, err := h.componentHealthCheck(ctx, p.wl, p.cluster, p.namespace, p.replicaKey)
+	return isHealth, status, nil, nil, err
 }
 
 func (h *AppHandler) applyComponentFunc(appParser *appfile.Parser, af *appfile.Appfile) oamprovidertypes.ComponentApply {
@@ -368,41 +382,60 @@ func (h *AppHandler) applyComponentFunc(appParser *appfile.Parser, af *appfile.A
 			return nil, nil, false, "", err
 		}
 		checkSkipApplyWorkload(wl)
-
-		isHealth := true
-		if utilfeature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
-			manifestDispatchers, err := h.generateDispatcher(appRev, h.latestAppRev, readyWorkload, readyTraits, overrideNamespace, af.AppAnnotations,
-				autoUpdatingSources(af.Sources, sourceAutoUpdateDefault(), metav1.HasAnnotation(h.app.ObjectMeta, oam.AnnotationPublishVersion)))
-			if err != nil {
-				return nil, nil, false, "", errors.WithMessage(err, "generateDispatcher")
-			}
-
-			for _, dispatcher := range manifestDispatchers {
-				if isHealth, err := dispatcher.run(ctx, wl, appRev, clusterName); !isHealth || err != nil {
-					return nil, nil, false, "", err
-				}
-			}
-		} else {
-			dispatchResources := readyTraits
-			if !wl.SkipApplyWorkload {
-				dispatchResources = append([]*unstructured.Unstructured{readyWorkload}, readyTraits...)
-			}
-
-			if err := h.Dispatch(ctx, h.Client, clusterName, common.WorkflowResourceCreator, dispatchResources...); err != nil {
-				return nil, nil, false, "", errors.WithMessage(err, "Dispatch")
-			}
-			_, _, _, isHealth, err = h.collectHealthStatus(ctx, wl, overrideNamespace, false)
-			if err != nil {
-				return nil, nil, false, "", errors.WithMessage(err, "CollectHealthStatus")
-			}
-		}
-
-		if DisableResourceApplyDoubleCheck {
-			return readyWorkload, readyTraits, isHealth, "", nil
-		}
-		workload, traits, err := getComponentResources(auth.ContextWithUserInfo(ctx, h.app), manifest, wl.SkipApplyWorkload, h.Client)
-		return workload, traits, isHealth, "", err
+		return h.delivery().apply(ctx, renderedPlacement{af: af, wl: wl, manifest: manifest, workload: readyWorkload, traits: readyTraits,
+			cluster: clusterName, namespace: overrideNamespace, replicaKey: comp.ReplicaKey})
 	}
+}
+
+func (d inProcessDelivery) apply(ctx context.Context, p renderedPlacement) (*unstructured.Unstructured, []*unstructured.Unstructured, bool, string, error) {
+	h := d.h
+	appRev := h.currentAppRev
+	af, wl, readyWorkload, readyTraits, clusterName, overrideNamespace := p.af, p.wl, p.workload, p.traits, p.cluster, p.namespace
+	// Resources a Component of this component still controls are adopted, not refused.
+	ctx = contextWithAdoptFrom(ctx, h.dispatchedFrom(wl.Name))
+
+	isHealth := true
+	if utilfeature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
+		manifestDispatchers, err := h.generateDispatcher(appRev, h.latestAppRev, readyWorkload, readyTraits, overrideNamespace, af.AppAnnotations,
+			autoUpdatingSources(af.Sources, sourceAutoUpdateDefault(), metav1.HasAnnotation(h.app.ObjectMeta, oam.AnnotationPublishVersion)))
+		if err != nil {
+			return nil, nil, false, "", errors.WithMessage(err, "generateDispatcher")
+		}
+
+		for _, dispatcher := range manifestDispatchers {
+			if isHealth, err := dispatcher.run(ctx, wl, appRev, clusterName); !isHealth || err != nil {
+				return nil, nil, false, "", err
+			}
+		}
+	} else {
+		dispatchResources := readyTraits
+		if !wl.SkipApplyWorkload {
+			dispatchResources = append([]*unstructured.Unstructured{readyWorkload}, readyTraits...)
+		}
+
+		if err := h.Dispatch(ctx, h.Client, clusterName, common.WorkflowResourceCreator, dispatchResources...); err != nil {
+			return nil, nil, false, "", errors.WithMessage(err, "Dispatch")
+		}
+		var err error
+		_, _, _, isHealth, err = h.collectHealthStatus(ctx, wl, overrideNamespace, false)
+		if err != nil {
+			return nil, nil, false, "", errors.WithMessage(err, "CollectHealthStatus")
+		}
+	}
+
+	if DisableResourceApplyDoubleCheck {
+		return readyWorkload, readyTraits, isHealth, "", nil
+	}
+	workload, traits, err := getComponentResources(auth.ContextWithUserInfo(ctx, h.app), p.manifest, wl.SkipApplyWorkload, h.Client)
+	return workload, traits, isHealth, "", err
+}
+
+func (d dispatchedDelivery) apply(ctx context.Context, p renderedPlacement) (*unstructured.Unstructured, []*unstructured.Unstructured, bool, string, error) {
+	isHealth, late, err := d.h.dispatchComponent(ctx, p.af, p.wl, p.workload, p.traits, p.af.Components, p.cluster, p.namespace, p.replicaKey)
+	if err != nil {
+		return nil, nil, false, "", errors.WithMessage(err, "DispatchComponent")
+	}
+	return p.workload, p.traits, isHealth, late, nil
 }
 
 // redirectTraitToLocalIfNeed will override cluster field to be local for traits which are control plane only
@@ -429,35 +462,14 @@ func (h *AppHandler) prepareWorkloadAndManifests(ctx context.Context,
 	}
 	wl.Patch = patcher
 	allTraits := wl.Traits
-
-	// Add all traits to the workload if MultiStageComponentApply is disabled
-	if utilfeature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
-		serviceHealthy := false
-		needPostDispatchOutputs := componentOutputsConsumed(comp, af.Components)
-		for _, svc := range h.services {
-			if svc.Name == comp.Name {
-				serviceHealthy = svc.WorkloadHealthy
-				if !serviceHealthy && svc.Healthy {
-					serviceHealthy = true
-				}
-				break
-			}
-		}
-		// not including PostDispatch type traits in the workload if the component service is not healthy
-		// because PostDispatch type traits might have references to fields that are only populated when the service is healthy
-		if !serviceHealthy && !needPostDispatchOutputs {
-			nonPostDispatchTraits := []*appfile.Trait{}
-			for _, trait := range wl.Traits {
-				if trait.FullTemplate.TraitDefinition.Spec.Stage != v1beta1.PostDispatch {
-					nonPostDispatchTraits = append(nonPostDispatchTraits, trait)
-				}
-			}
-			wl.Traits = nonPostDispatchTraits
-		}
+	delivery := h.delivery()
+	rendered, err := delivery.selectTraits(ctx, comp, wl, af)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	readNamespace, _ := readPlacementFrom(ctx)
-	scope, err := h.componentReads().deliver(ctx, withRenderedTraits(comp, allTraits, wl.Traits), af.Components,
+	scope, err := h.componentReads().deliver(ctx, withRenderedTraits(comp, allTraits, rendered), af.Components,
 		multicluster.ClusterNameInContext(ctx), readNamespace)
 	if sources.IsComponentReadNotReady(err) {
 		// Unwrapped: its reason is what the component's status shows.
@@ -496,6 +508,9 @@ func (h *AppHandler) prepareWorkloadAndManifests(ctx context.Context,
 			}
 			if componentWorkload.GetName() == "" {
 				componentWorkload.SetName(ctxData.CompName)
+			}
+			if !delivery.readsLiveWorkload() {
+				return
 			}
 			_ctx := util.WithCluster(tempCtx.GetCtx(), componentWorkload)
 			object, err := util.GetResourceFromObj(_ctx, tempCtx, componentWorkload, h.Client, ctxData.Namespace, map[string]string{
@@ -539,6 +554,72 @@ func renderComponentsAndTraits(manifest *types.ComponentManifest, appRev *v1beta
 	}
 	readyTraits = redirectTraitToLocalIfNeed(appRev, readyTraits)
 	return readyWorkload, readyTraits, nil
+}
+
+// selectTraits holds the PostDispatch traits back until the workload is healthy, unless
+// another component reads their outputs.
+func (d inProcessDelivery) selectTraits(_ context.Context, comp common.ApplicationComponent, wl *appfile.Component, af *appfile.Appfile) ([]*appfile.Trait, error) {
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
+		return wl.Traits, nil
+	}
+	needPostDispatchOutputs := componentOutputsConsumed(comp, af.Components)
+	serviceHealthy := d.h.postDispatchReady(wl)
+	// not including PostDispatch type traits in the workload if the component service is not healthy
+	// because PostDispatch type traits might have references to fields that are only populated when the service is healthy
+	if !serviceHealthy && !needPostDispatchOutputs {
+		nonPostDispatchTraits := []*appfile.Trait{}
+		for _, trait := range wl.Traits {
+			if trait.FullTemplate.TraitDefinition.Spec.Stage != v1beta1.PostDispatch {
+				nonPostDispatchTraits = append(nonPostDispatchTraits, trait)
+			}
+		}
+		wl.Traits = nonPostDispatchTraits
+	}
+	return wl.Traits, nil
+}
+
+// selectTraits leaves the PostDispatch traits to vela-agent, which renders them against the
+// live workload from what the Component ships in spec.postRender. Their reads are delivered
+// now, since the parameters it ships are resolved.
+func (d dispatchedDelivery) selectTraits(_ context.Context, comp common.ApplicationComponent, wl *appfile.Component, af *appfile.Appfile) ([]*appfile.Trait, error) {
+	all := wl.Traits
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.MultiStageComponentApply) {
+		return all, nil
+	}
+	if componentOutputsConsumed(comp, af.Components) {
+		return nil, fmt.Errorf("component %s: another component reads an output of its PostDispatch traits, which a dispatched component cannot offer yet", comp.Name)
+	}
+	wl.Traits, wl.PostDispatchTraits = splitPostDispatch(wl.Traits)
+	return all, nil
+}
+
+func (inProcessDelivery) readsLiveWorkload() bool { return true }
+
+// readsLiveWorkload is false: the hub never reads a dispatched workload; vela-agent renders
+// what needs it.
+func (dispatchedDelivery) readsLiveWorkload() bool { return false }
+
+// postDispatchReady reports whether a component's workload is healthy enough for its
+// PostDispatch traits to render.
+func (h *AppHandler) postDispatchReady(wl *appfile.Component) bool {
+	for _, svc := range h.services {
+		if svc.Name == wl.Name {
+			return svc.WorkloadHealthy || svc.Healthy
+		}
+	}
+	return false
+}
+
+// splitPostDispatch separates the PostDispatch traits from the rest.
+func splitPostDispatch(traits []*appfile.Trait) (rest, post []*appfile.Trait) {
+	for _, t := range traits {
+		if def := t.FullTemplate.TraitDefinition; def != nil && def.Spec.Stage == v1beta1.PostDispatch {
+			post = append(post, t)
+			continue
+		}
+		rest = append(rest, t)
+	}
+	return rest, post
 }
 
 // componentOutputsConsumed returns true if any other component depends on outputs produced

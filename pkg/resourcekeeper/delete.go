@@ -125,5 +125,9 @@ func (h *resourceKeeper) delete(ctx context.Context, manifest *unstructured.Unst
 		},
 		SkipGC: cfg.skipGC,
 	}
-	return DeleteManagedResource(deleteCtx, h.Client, mr, live, h.owner, h.policies.GarbageCollect)
+	pending, err := letGo(deleteCtx, h.Client, mr, live, h.owner, h.policies.GarbageCollect, h.opts.BeforeDelete)
+	if err == nil && pending {
+		return errors.Wrapf(ErrDeletePending, "resource %s", mr.ResourceKey())
+	}
+	return err
 }
